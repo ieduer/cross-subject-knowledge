@@ -55,7 +55,7 @@
     │               ├── 前端 (HTML/CSS/JS)
     │               └── SQLite FTS5 索引 (148MB, baked in image)
     │
-    └── HTTPS → ai.bdfz.net (Cloudflare Worker)
+    └── HTTPS → Cloudflare Worker
                 └── Gemini API → AI 跨学科综合解读
 ```
 
@@ -85,8 +85,7 @@
 
 **脚本**：`scripts/01_download_textbooks_via_images.py`
 
-- 通过智慧教育平台 API 获取教材页面图片 URL
-- 使用 `img2pdf` 将页面图片合成 PDF
+- 通过智慧教育平台 API 直接下载原始教材 PDF
 - 按 `学段/学科/书名` 目录结构存储
 
 **产物**：`data/raw_pdf/` → **31 GB**，316 本 PDF
@@ -175,7 +174,7 @@ CREATE VIRTUAL TABLE chunks_fts USING fts5(text, content=chunks, content_rowid=i
 - 原生 HTML/CSS/JS，无框架依赖
 - 暗色主题 + glassmorphism 设计
 - SVG 知识图谱（无 D3 依赖）
-- AI 解读面板：调用 `ai.bdfz.net`（Cloudflare Worker → Gemini API）
+- AI 解读面板：通过 Cloudflare Worker 调用 Gemini API
 
 ### Phase 5: 部署
 
@@ -208,7 +207,7 @@ certbot --nginx -d sun.bdfz.net
 | `platform/` | **187 MB** | 代码 + 索引副本 | ✅ GitHub |
 | **合计** | **~209 GB** | | |
 
-### VPS（23.19.231.173）
+### VPS
 
 | 项 | 大小 |
 |---|---|
@@ -311,7 +310,7 @@ certbot --nginx -d sun.bdfz.net
 | 全文检索 | SQLite FTS5 | - |
 | 后端 | FastAPI + uvicorn | Python 3.13 |
 | 前端 | Vanilla HTML/CSS/JS | 无框架 |
-| AI 解读 | Gemini (via Cloudflare Worker) | ai.bdfz.net |
+| AI 解读 | Gemini (via Cloudflare Worker) | - |
 | 容器 | Docker | 29.2 |
 | 反代 / SSL | nginx + Let's Encrypt | - |
 | 数据备份 | rclone → Google Drive | v1.73 |
