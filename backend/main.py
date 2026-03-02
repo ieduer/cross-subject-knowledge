@@ -83,7 +83,7 @@ def search(
                 "book_key": r["book_key"],
                 "section": r["section"],
                 "snippet": r["snippet"],
-                "text": r["text"][:500],
+                "text": r["text"][:2000],
             })
             by_subject[s]["count"] += 1
 
