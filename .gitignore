@@ -1,20 +1,11 @@
-# Data (large FTS database, not in repo)
 data/
 *.db
-
-# Python
 __pycache__/
 *.pyc
 *.pyo
 .venv*/
-
-# OS
 .DS_Store
 Thumbs.db
-
-# Docker
 *.tar.gz
-
-# Logs
 *.log
 logs/
