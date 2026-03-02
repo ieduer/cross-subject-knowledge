@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="北大附中 孙玉磊">
+    <title>跨学科教材知识平台 · 北大附中</title>
+    <meta name="robots" content="index, follow">
+    <link rel="icon" href="https://img.bdfz.net/20250503004.webp" type="image/jpeg">
+    <link rel="icon" href="/favicon.ico" sizes="any">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="assets/style.css">
+</head>
+
+<body>
+    <div id="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-inner">
+                <div class="logo">
+                    <span class="logo-icon">🔗</span>
+                    <span class="logo-text">跨学科知识平台</span>
+                    <span class="logo-badge">BETA</span>
+                </div>
+                <nav class="nav">
+                    <button class="nav-btn active" data-view="search">搜索</button>
+                    <button class="nav-btn" data-view="graph">知识图谱</button>
+                    <button class="nav-btn" data-view="about">关于</button>
+                </nav>
+            </div>
+        </header>
+
+        <!-- Search View -->
+        <main id="view-search" class="view active">
+            <section class="hero">
+                <h1>发现教材中<span class="gradient-text">隐藏的跨学科联系</span></h1>
+                <p class="hero-sub">覆盖高中 9 科 · 316 本教材 · 65,978 条结构化语料</p>
+                <div class="search-box">
+                    <span class="search-icon">🔍</span>
+                    <input type="text" id="search-input" placeholder="搜索概念，如：蛋白质、勾股定理、丝绸之路…" autocomplete="off">
+                    <button id="search-btn" class="search-submit">搜索</button>
+                </div>
+                <div class="quick-tags">
+                    <span class="tag-label">试试：</span>
+                    <button class="quick-tag" data-q="蛋白质">蛋白质</button>
+                    <button class="quick-tag" data-q="DNA">DNA</button>
+                    <button class="quick-tag" data-q="能量守恒">能量守恒</button>
+                    <button class="quick-tag" data-q="丝绸之路">丝绸之路</button>
+                    <button class="quick-tag" data-q="温室效应">温室效应</button>
+                    <button class="quick-tag" data-q="光合作用">光合作用</button>
+                    <button class="quick-tag" data-q="平衡">平衡</button>
+                    <button class="quick-tag" data-q="电子">电子</button>
+                </div>
+            </section>
+
+            <!-- Stats bar (loaded dynamically) -->
+            <section id="stats-bar" class="stats-bar hidden"></section>
+
+            <!-- Cross hint -->
+            <div id="cross-hint" class="cross-hint hidden"></div>
+
+            <!-- AI Synthesis Panel -->
+            <div id="ai-panel" class="ai-panel hidden">
+                <button id="ai-btn" class="ai-btn">
+                    <span class="ai-sparkle">✨</span> AI 跨学科解读
+                </button>
+                <div id="ai-result" class="ai-result hidden">
+                    <div class="ai-result-header">
+                        <span>✨ AI 跨学科综合解读</span>
+                        <span class="ai-model">Gemini</span>
+                    </div>
+                    <div id="ai-content" class="ai-content"></div>
+                </div>
+            </div>
+
+            <!-- Subject filter tabs -->
+            <div id="subject-tabs" class="subject-tabs hidden"></div>
+
+            <!-- Results -->
+            <section id="results" class="results"></section>
+        </main>
+
+        <!-- Graph View -->
+        <main id="view-graph" class="view">
+            <div class="graph-header">
+                <h2>跨学科知识关联图谱</h2>
+                <p>节点大小 = 跨学科关联数 · 点击概念查看详情</p>
+            </div>
+            <div id="graph-container" class="graph-container"></div>
+        </main>
+
+        <!-- About View -->
+        <main id="view-about" class="view">
+            <div class="about-content">
+                <h2>关于本平台</h2>
+                <div class="about-card">
+                    <h3>🎯 为什么需要这个平台？</h3>
+                    <p>高中生在 9 个课堂分别学习同一个概念，却<strong>从未被告知它们是同一件事</strong>。</p>
+                    <p>例如「蛋白质」——化学讲分子结构，生物讲细胞功能，英语课读基因编辑文章。<br>
+                        它们描述的是<strong>同一种物质</strong>，但学生很难自己发现这种联系。</p>
+                </div>
+                <div class="about-card">
+                    <h3>📊 数据来源</h3>
+                    <p>316 本高中教材（人教版），使用 <a href="https://github.com/opendatalab/MinerU" target="_blank">MinerU</a>
+                        (55k⭐) 进行 GPU 加速 OCR，提取结构化 Markdown（含表格、公式、图片）。</p>
+                    <p>全文检索基于 SQLite FTS5 构建，65,978 条结构化语料块。</p>
+                </div>
+                <div class="about-card">
+                    <h3>🔓 开源</h3>
+                    <p>本平台开源，MIT License。</p>
+                </div>
+            </div>
+        </main>
+
+        <footer class="footer">
+            <p>跨学科教材知识平台 · 开源项目 · MIT License</p>
+        </footer>
+    </div>
+    <script src="assets/app.js"></script>
+</body>
+
+</html>

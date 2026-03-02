@@ -1,0 +1,10 @@
+.venv*/
+data/raw_pdf/
+data/parsed/
+data/mineru_output/
+__pycache__/
+*.pyc
+logs/
+*.log
+/tmp/
+.git/
