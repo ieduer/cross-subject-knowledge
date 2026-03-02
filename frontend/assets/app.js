@@ -187,8 +187,8 @@ function renderResults(data, filterSubject = null) {
             ${g.results.map(r => `
                 <div class="result-card" onclick="this.classList.toggle('expanded')">
                     <div class="result-title">${escHtml(r.title)} · §${r.section}</div>
-                    <div class="result-snippet">${r.snippet}</div>
-                    <div class="result-text">${escHtml(r.text)}</div>
+                    <div class="result-snippet">${sanitizeSnippet(r.snippet)}</div>
+                    <div class="result-text">${escHtml(cleanText(r.text))}</div>
                 </div>
             `).join('')}
         </div>
@@ -204,6 +204,42 @@ function escHtml(s) {
     const d = document.createElement('div');
     d.textContent = s || '';
     return d.innerHTML;
+}
+
+// Sanitize snippet: keep <mark> highlights, strip everything else
+function sanitizeSnippet(html) {
+    if (!html) return '';
+    // Preserve <mark>...</mark> by replacing with placeholders
+    const marks = [];
+    html = html.replace(/<mark>(.*?)<\/mark>/gi, (_, inner) => {
+        marks.push(inner);
+        return `%%MARK${marks.length - 1}%%`;
+    });
+    // Strip all remaining HTML tags
+    html = html.replace(/<[^>]+>/g, ' ');
+    // Remove markdown image syntax ![...](...)  
+    html = html.replace(/!\[.*?\]\(.*?\)/g, '');
+    // Remove LaTeX-like $ expressions
+    html = html.replace(/\$[^$]+\$/g, '');
+    // Collapse whitespace
+    html = html.replace(/\s+/g, ' ').trim();
+    // Restore mark tags
+    html = html.replace(/%%MARK(\d+)%%/g, (_, i) => `<mark>${marks[+i]}</mark>`);
+    // Truncate to ~200 chars
+    if (html.length > 250) {
+        html = html.slice(0, 250) + '…';
+    }
+    return html;
+}
+
+// Clean raw text for expanded view
+function cleanText(s) {
+    if (!s) return '';
+    s = s.replace(/<[^>]+>/g, ' ');
+    s = s.replace(/!\[.*?\]\(.*?\)/g, '[图片]');
+    s = s.replace(/\$([^$]+)\$/g, '$1');
+    s = s.replace(/\s+/g, ' ').trim();
+    return s;
 }
 
 // ── Knowledge Graph ───────────────────────────────────────
