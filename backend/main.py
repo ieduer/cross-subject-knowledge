@@ -192,6 +192,11 @@ def cross_links():
         con.close()
 
 
+# Serve images
+IMAGES_DIR = ROOT / "data/images"
+if IMAGES_DIR.exists():
+    app.mount("/images", StaticFiles(directory=IMAGES_DIR), name="images")
+
 # Serve frontend
 if FRONTEND.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND / "assets"), name="assets")

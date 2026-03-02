@@ -515,6 +515,17 @@ body {
     display: block;
 }
 
+.result-img {
+    max-width: 100%;
+    height: auto;
+    max-height: 400px;
+    border-radius: 8px;
+    margin: 12px 0;
+    border: 1px solid var(--border);
+    background: #1a1a2e;
+    display: block;
+}
+
 /* ── Graph ────────────────────────────────────────────────── */
 .graph-header {
     text-align: center;

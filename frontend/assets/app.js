@@ -188,7 +188,7 @@ function renderResults(data, filterSubject = null) {
                 <div class="result-card" onclick="this.classList.toggle('expanded')">
                     <div class="result-title">${escHtml(r.title)} · §${r.section}</div>
                     <div class="result-snippet">${sanitizeSnippet(r.snippet)}</div>
-                    <div class="result-text">${escHtml(cleanText(r.text))}</div>
+                    <div class="result-text">${renderText(r.text, r.book_key)}</div>
                 </div>
             `).join('')}
         </div>
@@ -239,6 +239,23 @@ function cleanText(s) {
     s = s.replace(/!\[.*?\]\(.*?\)/g, '[图片]');
     s = s.replace(/\$([^$]+)\$/g, '$1');
     s = s.replace(/\s+/g, ' ').trim();
+    return s;
+}
+
+// Render text with images for expanded view
+function renderText(text, bookKey) {
+    if (!text) return '';
+    // Strip HTML tags except preserve content
+    let s = text.replace(/<[^>]+>/g, ' ');
+    // Convert markdown images to <img> tags
+    s = s.replace(/!\[([^\]]*)\]\(images\/([^)]+)\)/g, (_, alt, src) => {
+        return `<img class="result-img" src="/images/${encodeURIComponent(bookKey)}/${src}" alt="${alt || '教材图片'}" loading="lazy">`;
+    });
+    // Clean LaTeX
+    s = s.replace(/\$([^$]+)\$/g, '$1');
+    // Escape remaining HTML-like content (but preserve our img tags)
+    const parts = s.split(/(<img[^>]+>)/g);
+    s = parts.map(p => p.startsWith('<img') ? p : p.replace(/</g, '&lt;').replace(/>/g, '&gt;')).join('');
     return s;
 }
 
