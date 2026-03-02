@@ -463,6 +463,9 @@ body {
     margin-bottom: 10px;
     cursor: pointer;
     transition: var(--transition);
+    overflow: hidden;
+    word-break: break-word;
+    overflow-wrap: break-word;
 }
 
 .result-card:hover {
@@ -480,6 +483,10 @@ body {
 .result-snippet {
     font-size: 14px;
     line-height: 1.7;
+    overflow: hidden;
+    max-height: 4.2em;
+    word-break: break-word;
+    overflow-wrap: break-word;
 }
 
 .result-snippet mark {
@@ -498,6 +505,10 @@ body {
     border-top: 1px solid var(--border);
     line-height: 1.8;
     white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    max-height: 400px;
+    overflow-y: auto;
 }
 
 .result-card.expanded .result-text {
