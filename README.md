@@ -31,7 +31,8 @@
 |------|------|
 | 教材总数 | **316 本**（人教版高中全科） |
 | 学科覆盖 | **9 科**：语文、数学、英语、物理、化学、生物学、历史、地理、思想政治 |
-| 结构化语料 | **65,978 条** chunks |
+| 结构化语料 | **69,818 条** chunks (包含 65,978 条教材知识 + **3,840 道高考真题**) |
+| 高考真题 | **3,840 道** (2010-2024 全国卷及地方卷，含 904 张多模态配图) |
 | 教材插图 | **87,156 张**（3.4 GB，由 R2 CDN 全球分发） |
 | FTS 索引大小 | **187 MB**（SQLite FTS5） |
 | Docker 镜像 | **467 MB**（仅代码 + 索引，图片走 CDN） |
@@ -105,8 +106,12 @@
 │   └── assets/
 │       ├── style.css           # 暗色主题 + 响应式（640px/380px）
 │       └── app.js              # 高级搜索 + AI 调用 + 图谱
-└── data/index/
-    └── textbook_mineru_fts.db  # FTS5 索引（187MB）
+└── data/
+    ├── index/
+    │   └── textbook_mineru_fts.db  # FTS5 索引（187MB）
+    └── gaokao_raw/                 # 待处理的高考真题 PDF 放这里
+        ├── beijing_exam_2002_2025/ # (待收集存放) 2002-2025北京卷 PDF
+        └── 2025_exam/              # (待收集存放) 2025年最新高考 PDF
 ```
 
 > 📷 **图片不在 Docker 中** — 87K 张原图托管在 Cloudflare R2（`img.rdfzer.com`），前端通过 CDN URL 直接加载。
@@ -252,7 +257,11 @@ python scripts/09_build_unified_index.py
 # 5. 上传图片到 R2
 rclone sync data/images/ r2:textbook-images/orig/ --transfers 16
 
-# 6. 部署
+# 6. 处理新的高考 PDF 真题 (北京卷/2025卷)
+# 把收集到的 PDF 放进 data/gaokao_raw/beijing_exam_2002_2025/ 或 2025_exam/ 后运行：
+python scripts/17_process_beijing_gaokao.py
+
+# 7. 部署
 docker build -t textbook-knowledge .
 docker run -d -p 8080:8080 --restart unless-stopped textbook-knowledge
 ```
