@@ -16,6 +16,13 @@
 - 🗺️ **知识图谱** — 可视化 30+ 核心概念在 9 学科间的关联网络
 - 📚 **教材下载** — 全部 316 本高中教材 PDF 可从 [jks.bdfz.net](https://jks.bdfz.net/) 下载
 
+### 高级检索
+
+- ⚙️ **高级搜索面板** — 按教材筛选、按排序方式切换（相关度 / 跨学科数 / 含图优先）
+- 🔗 **相关概念推荐** — 搜索后自动推荐共现频率最高的相关概念，点击即搜
+- 📷 **图片标注** — 搜索结果显示图片数量 badge，展开即可查看教材原图
+- 📖 **教材筛选** — 按学科分组的 316 本教材下拉选择器，精准定位特定教材内容
+
 ---
 
 ## 📊 数据规模
@@ -25,18 +32,32 @@
 | 教材总数 | **316 本**（人教版高中全科） |
 | 学科覆盖 | **9 科**：语文、数学、英语、物理、化学、生物学、历史、地理、思想政治 |
 | 结构化语料 | **65,978 条** chunks |
-| FTS 索引大小 | **148 MB**（SQLite FTS5） |
-| Docker 镜像 | **336 MB**（含索引 + 代码 + 运行时） |
+| 教材插图 | **87,156 张**（3.4 GB，由 R2 CDN 全球分发） |
+| FTS 索引大小 | **187 MB**（SQLite FTS5） |
+| Docker 镜像 | **467 MB**（仅代码 + 索引，图片走 CDN） |
 
 ### 各学科语料分布
 
-| 学科 | 语料数 | 学科 | 语料数 |
-|------|--------|------|--------|
-| 英语 | 15,425 | 化学 | 5,262 |
-| 数学 | 12,567 | 思想政治 | 3,444 |
-| 生物学 | 8,890 | 历史 | 3,150 |
-| 物理 | 8,305 | 语文 | 1,228 |
-| 地理 | 7,707 | | |
+| 学科 | 语料数 | 含图率 | 学科 | 语料数 | 含图率 |
+|------|--------|--------|------|--------|--------|
+| 🌍 英语 | 15,425 | 21.0% | 🧪 化学 | 5,262 | 39.5% |
+| 📐 数学 | 12,567 | 38.0% | ⚖️ 思想政治 | 3,444 | 22.2% |
+| 🧬 生物学 | 8,890 | 38.9% | 📜 历史 | 3,150 | 33.9% |
+| ⚛️ 物理 | 8,305 | 44.6% | 📖 语文 | 1,228 | 13.9% |
+| 🗺️ 地理 | 7,707 | **56.9%** | | | |
+
+### 图片数据
+
+| 区间 | 数量 | 占比 | 说明 |
+|------|------|------|------|
+| < 1 KB | 109 | 0.1% | 极小碎片 |
+| 1-5 KB | 22,032 | 25.3% | 公式符号、小图标 |
+| 5-20 KB | 28,811 | 33.1% | 简单示意图、表格 |
+| 20-100 KB | 27,150 | 31.1% | 中等插图、电路图 |
+| 100-500 KB | 8,745 | 10.0% | 大型地图、实验图 |
+| > 500 KB | 309 | 0.4% | 全页彩色地图 |
+
+> **中位数 13.6 KB** — 58% 的图片 < 20 KB，直接使用原图，不做缩略图处理。
 
 ---
 
@@ -45,35 +66,50 @@
 ```
 用户浏览器
     │
-    ├── HTTPS → sun.bdfz.net (nginx + Let's Encrypt)
+    ├── HTTPS → sun.bdfz.net (VPS 23.19.231.173)
     │           │
-    │           └── Docker: textbook-knowledge
+    │           └── Docker: textbook-knowledge (467MB)
     │               ├── FastAPI 后端 (Python 3.13)
-    │               │   ├── /api/search ── FTS5 全文搜索
-    │               │   ├── /api/stats ─── 学科统计
-    │               │   └── /api/cross-links ── 图谱数据
+    │               │   ├── /api/search ─── FTS5 全文搜索（支持筛选/排序）
+    │               │   ├── /api/books ──── 316 本教材列表（按学科分组）
+    │               │   ├── /api/related ── 相关概念推荐（共现分析）
+    │               │   ├── /api/stats ──── 学科统计
+    │               │   └── /api/cross-links ── 知识图谱数据
     │               ├── 前端 (HTML/CSS/JS)
-    │               └── SQLite FTS5 索引 (148MB, baked in image)
+    │               └── SQLite FTS5 索引 (187MB, baked in image)
     │
-    └── HTTPS → Cloudflare Worker
+    ├── HTTPS → img.rdfzer.com (Cloudflare R2 CDN)
+    │           └── 87,156 张教材原图（3.4GB，全球加速，免费出站）
+    │
+    └── HTTPS → ai.bdfz.net (Cloudflare Worker)
                 └── Gemini API → AI 跨学科综合解读
 ```
 
-### Docker 内容（6 个文件，187MB）
+### API 概览
+
+| 端点 | 参数 | 说明 |
+|------|------|------|
+| `GET /api/search` | `q`, `subject`, `book_key`, `sort`, `has_images`, `limit`, `offset` | 全文搜索 + 跨学科分组 |
+| `GET /api/books` | — | 全部教材列表（按学科分组） |
+| `GET /api/related` | `q`, `limit` | 相关概念推荐（基于共现频率） |
+| `GET /api/stats` | — | 各学科语料统计 |
+| `GET /api/cross-links` | — | 知识图谱节点与连接 |
+
+### Docker 内容
 
 ```
 /app/
-├── backend/main.py           # FastAPI 应用
+├── backend/main.py             # FastAPI 应用（5 个 API）
 ├── frontend/
-│   ├── index.html            # 主页（搜索/图谱/关于）
+│   ├── index.html              # 主页（搜索/图谱/关于）
 │   └── assets/
-│       ├── style.css         # 暗色主题
-│       └── app.js            # 交互逻辑 + AI 调用
+│       ├── style.css           # 暗色主题 + 响应式（640px/380px）
+│       └── app.js              # 高级搜索 + AI 调用 + 图谱
 └── data/index/
-    └── textbook_mineru_fts.db  # FTS5 索引（148MB）
+    └── textbook_mineru_fts.db  # FTS5 索引（187MB）
 ```
 
-> ⚠️ **Docker 中不包含**：原始 PDF、MinerU OCR 产物（Markdown + 图片）、旧解析数据。仅包含搜索索引。
+> 📷 **图片不在 Docker 中** — 87K 张原图托管在 Cloudflare R2（`img.rdfzer.com`），前端通过 CDN URL 直接加载。
 
 ---
 
@@ -98,57 +134,27 @@
 - 📐 **结构保持**：标题/段落/列表层级完整
 - 📊 **表格识别**：直接输出 HTML `<table>`
 - 🧮 **公式提取**：数学公式转 LaTeX
-- 🖼️ **图片提取**：自动裁切并保存引用
+- 🖼️ **图片提取**：自动裁切并保存引用（87,156 张）
 - 🇨🇳 **中文优化**：扫描件 OCR 准确率远超 Tesseract
 - ⚡ **GPU 加速**：CUDA + PyTorch，处理速度 5-10x
 
 **脚本**：`scripts/08_mineru_batch.py`
 
-```python
-# 核心参数
-MINERU_BIN = ".venv-mineru/bin/mineru"
-BACKEND = "pipeline"          # VLM 需要 >8GB VRAM，pipeline 适合 6GB 显卡
-MAX_BOOKS_PER_RUN = 999       # 全量处理
-NICE = 10                     # 低优先级，不影响系统
-```
-
 **特性**：
-- **幂等执行**：JSON 状态文件 (`mineru_state.json`) 记录每本书的处理状态
+- **幂等执行**：JSON 状态文件记录每本书的处理状态
 - **失败熔断**：连续 3 本失败则跳过该批次
-- **自动分块**：将 Markdown 按 `##` 标题拆分为 chunks，附带元数据（书名、学科、章节号）
-
-**环境要求**：
-- GPU: NVIDIA RTX 3060 (6GB VRAM) 或更高
-- CUDA: 12.4
-- Python: 3.13 + venv (`.venv-mineru`)
-- 处理时间: **20.5 小时**（316 本，零失败）
+- **自动分块**：将 Markdown 按 `##` 标题拆分为 chunks
 
 **产物**：
 | 目录 | 大小 | 内容 |
 |------|------|------|
 | `data/mineru_output/` | **101 GB** | 每本书的 Markdown + 提取的图片 |
-| `data/index/mineru_chunks.jsonl` | **95 MB** | 65,978 条结构化 chunk（JSON Lines） |
-
-**chunk 格式**：
-```json
-{
-  "book_key": "高中_化学_普通高中教科书_化学必修_第一册",
-  "subject": "化学",
-  "title": "普通高中教科书·化学必修 第一册",
-  "section": 42,
-  "text": "原子核外电子排布与元素性质的关系..."
-}
-```
+| `data/index/mineru_chunks.jsonl` | **95 MB** | 65,978 条结构化 chunk |
 
 ### Phase 3: 索引构建
 
 **脚本**：`scripts/09_build_unified_index.py`
 
-- 读取 `mineru_chunks.jsonl`
-- 创建 SQLite FTS5 虚拟表（支持中文全文检索）
-- 学科分类：从 `book_key` 路径自动提取（9 科全覆盖，0 条未分类）
-
-**SQL Schema**：
 ```sql
 CREATE TABLE chunks (
     id INTEGER PRIMARY KEY,
@@ -156,39 +162,33 @@ CREATE TABLE chunks (
     title TEXT,       -- 书名
     book_key TEXT,    -- 唯一标识: 学段_学科_书名
     section INTEGER,  -- 章节序号
-    text TEXT          -- 正文内容
+    text TEXT          -- 正文内容（含 Markdown 图片引用）
 );
 CREATE VIRTUAL TABLE chunks_fts USING fts5(text, content=chunks, content_rowid=id);
 ```
 
-**产物**：`data/index/textbook_mineru_fts.db` → **148 MB**
+**产物**：`data/index/textbook_mineru_fts.db` → **187 MB**
 
-### Phase 4: 平台搭建
+### Phase 4: 图片上传
 
-**后端** (`backend/main.py`)：
-- FastAPI + uvicorn
-- 3 个 API：`/api/search`、`/api/stats`、`/api/cross-links`
-- 搜索结果按学科分组，自动检测跨学科关联并生成提示
+```bash
+# 使用 rclone 批量上传到 Cloudflare R2
+rclone sync data/images/ r2:textbook-images/orig/ --transfers 16 --progress
+# 87,156 张图片，3.4 GB，R2 免费额度内
+```
 
-**前端** (`frontend/`)：
-- 原生 HTML/CSS/JS，无框架依赖
-- 暗色主题 + glassmorphism 设计
-- SVG 知识图谱（无 D3 依赖）
-- AI 解读面板：通过 Cloudflare Worker 调用 Gemini API
+**R2 成本**：完全免费（3.4GB 存储在 10GB 免费额度内，出站流量永远免费）
 
 ### Phase 5: 部署
 
 ```bash
-# 构建 Docker 镜像（FTS 索引 baked in）
+# 构建 Docker 镜像（仅含代码 + FTS 索引，不含图片）
 docker build -t textbook-knowledge .
 
 # 部署到 VPS
 docker run -d --name textbook-knowledge \
   --restart unless-stopped \
   -p 8080:8080 textbook-knowledge
-
-# nginx 反向代理 + Let's Encrypt SSL
-certbot --nginx -d sun.bdfz.net
 ```
 
 ---
@@ -200,39 +200,28 @@ certbot --nginx -d sun.bdfz.net
 | 路径 | 大小 | 用途 | 可重建? |
 |------|------|------|---------|
 | `data/raw_pdf/` | **31 GB** | 316 本原始 PDF | ❌ 需重新下载 |
-| `data/mineru_output/` | **101 GB** | MinerU OCR 产物（MD + 图片） | ✅ 从 PDF 重新生成（~20h） |
-| `data/parsed/` | **42 GB** | 旧 PyMuPDF 产物（已弃用） | 🗑️ 可删除 |
+| `data/mineru_output/` | **101 GB** | MinerU OCR 产物 | ✅ 从 PDF 重新生成（~20h） |
+| `data/images/` | **3.4 GB** | 87K 张提取的教材图片 | ✅ 从 MinerU 产物提取 |
 | `data/index/` | **308 MB** | FTS 索引 + chunks JSONL | ✅ 从 MinerU 产物重建 |
-| `scripts/` | **< 1 MB** | 处理脚本 | ✅ GitHub |
-| `platform/` | **187 MB** | 代码 + 索引副本 | ✅ GitHub |
-| **合计** | **~209 GB** | | |
 
-### VPS
+### 云端
 
-| 项 | 大小 |
-|---|---|
-| Docker 镜像 | **695 MB** |
-| 运行时数据 | **~200 MB** |
-| 磁盘总用量 | **29 GB / 99 GB** |
-
-### Google Drive 备份
-
-| 路径 | 大小 | 状态 |
+| 服务 | 内容 | 大小 |
 |------|------|------|
-| `textbook_ai_backup/raw_pdf/` | 31 GB | 上传中 |
-| `textbook_ai_backup/index/` | 308 MB | 上传中 |
-| `textbook_ai_backup/scripts/` | < 1 MB | ✅ 完成 |
+| VPS (23.19.231.173) | Docker 容器（代码 + 索引） | 467 MB |
+| Cloudflare R2 (`img.rdfzer.com`) | 87,156 张教材原图 | 3.4 GB |
+| GitHub | 源代码 | < 1 MB |
 
 ---
 
 ## 🚀 快速开始
 
-### 本地运行（需要 FTS 索引）
+### 本地运行
 
 ```bash
 pip install fastapi uvicorn
+
 # 将 textbook_mineru_fts.db 放到 data/index/ 目录
-cd platform
 uvicorn backend.main:app --host 0.0.0.0 --port 8080
 # 访问 http://localhost:8080
 ```
@@ -240,6 +229,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8080
 ### Docker 运行
 
 ```bash
+# 需要将 FTS 数据库放到 data/ 目录
 docker build -t textbook-knowledge .
 docker run -p 8080:8080 textbook-knowledge
 ```
@@ -259,9 +249,12 @@ python scripts/08_mineru_batch.py
 # 4. 构建索引
 python scripts/09_build_unified_index.py
 
-# 5. 部署
-docker build -t textbook-knowledge platform/
-docker run -p 8080:8080 textbook-knowledge
+# 5. 上传图片到 R2
+rclone sync data/images/ r2:textbook-images/orig/ --transfers 16
+
+# 6. 部署
+docker build -t textbook-knowledge .
+docker run -d -p 8080:8080 --restart unless-stopped textbook-knowledge
 ```
 
 ---
@@ -281,23 +274,20 @@ docker run -p 8080:8080 textbook-knowledge
 ### 迁移步骤
 
 ```bash
-# 1. 在新 VPS 安装 Docker
-curl -fsSL https://get.docker.com | sh
+# 1. 克隆仓库
+git clone https://github.com/ieduer/cross-subject-knowledge.git
+cd cross-subject-knowledge
 
-# 2. 传输镜像
-scp textbook-knowledge.tar.gz root@新IP:/tmp/
+# 2. 获取 FTS 数据库（从旧容器或本机复制）
+docker cp textbook-knowledge:/app/data/index/textbook_mineru_fts.db data/
 
-# 3. 加载并运行
-cd /tmp && gunzip -c textbook-knowledge.tar.gz | docker load
+# 3. 构建并运行
+docker build -t textbook-knowledge .
 docker run -d --name textbook-knowledge --restart unless-stopped -p 8080:8080 textbook-knowledge
 
-# 4. 安装 nginx + SSL
+# 4. 可选：nginx + SSL
 apt install -y nginx certbot python3-certbot-nginx
-# 配置 nginx server block → proxy_pass http://127.0.0.1:8080
 certbot --nginx -d sun.bdfz.net
-
-# 5. 更新 DNS
-# Cloudflare: sun.bdfz.net A → 新 IP
 ```
 
 ---
@@ -307,13 +297,13 @@ certbot --nginx -d sun.bdfz.net
 | 组件 | 技术 | 版本 |
 |------|------|------|
 | OCR 引擎 | [MinerU](https://github.com/opendatalab/MinerU) | v2.7.6 |
-| 全文检索 | SQLite FTS5 | - |
+| 全文检索 | SQLite FTS5 | — |
 | 后端 | FastAPI + uvicorn | Python 3.13 |
 | 前端 | Vanilla HTML/CSS/JS | 无框架 |
-| AI 解读 | Gemini (via Cloudflare Worker) | - |
+| 图片 CDN | Cloudflare R2 | `img.rdfzer.com` |
+| AI 解读 | Gemini (via Cloudflare Worker) | `ai.bdfz.net` |
 | 容器 | Docker | 29.2 |
-| 反代 / SSL | nginx + Let's Encrypt | - |
-| 数据备份 | rclone → Google Drive | v1.73 |
+| 数据备份 | rclone → Google Drive / R2 | v1.73 |
 
 ---
 
