@@ -1,7 +1,7 @@
 """
 跨学科教材知识平台 · FastAPI 后端
 """
-import sqlite3, json, os, re
+import sqlite3, json, math, os, re
 from collections import Counter
 from pathlib import Path
 from typing import Optional
@@ -204,41 +204,100 @@ def stats():
 
 @app.get("/api/cross-links")
 def cross_links():
-    """Pre-computed cross-subject concept links for the graph."""
+    """Dynamic cross-subject concept links from pre-computed concept_map."""
     con = get_db()
     try:
-        concepts = [
-            "蛋白质", "DNA", "电子", "光", "溶液", "细胞", "向量", "函数",
-            "温室效应", "碳循环", "土壤", "生态系统", "能量", "平衡",
-            "丝绸之路", "改革", "民主", "人口", "概率", "氧化",
-            "光合作用", "进化", "水循环", "正弦", "坐标", "统计",
-            "可持续发展", "原子结构", "全球化", "战争", "电", "市场",
-        ]
-        nodes = []
-        links = []
-        for concept in concepts:
-            try:
-                rows = con.execute("""
-                    SELECT c.subject, COUNT(*) as cnt
-                    FROM chunks c JOIN chunks_fts f ON c.id = f.rowid
-                    WHERE chunks_fts MATCH ?
-                    GROUP BY c.subject ORDER BY cnt DESC
-                """, [concept]).fetchall()
-            except:
-                continue
-            subjects = [(r["subject"], r["cnt"]) for r in rows]
-            if len(subjects) < 2:
-                continue
-            total = sum(c for _, c in subjects)
-            nodes.append({"id": concept, "count": total, "subjects": len(subjects)})
-            for i, (s1, c1) in enumerate(subjects):
-                for s2, c2 in subjects[i + 1:]:
-                    links.append({
-                        "source": s1, "target": s2,
-                        "concept": concept, "weight": min(c1, c2),
-                    })
+        # Check if concept_map table exists
+        has_map = con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='concept_map'"
+        ).fetchone()
 
-        # Subject nodes
+        if has_map:
+            # Use concept_map for dynamic discovery
+            concept_rows = con.execute("""
+                SELECT concept, subject, SUM(count) as cnt
+                FROM concept_map
+                GROUP BY concept, subject
+            """).fetchall()
+
+            concept_subjects = {}
+            for r in concept_rows:
+                c = r["concept"]
+                if c not in concept_subjects:
+                    concept_subjects[c] = []
+                concept_subjects[c].append((r["subject"], r["cnt"]))
+
+            nodes = []
+            links = []
+            for concept, subjects in concept_subjects.items():
+                if len(subjects) < 2:
+                    continue
+                total = sum(cnt for _, cnt in subjects)
+                nodes.append({"id": concept, "count": total, "subjects": len(subjects)})
+                for i, (s1, c1) in enumerate(subjects):
+                    for s2, c2 in subjects[i + 1:]:
+                        links.append({
+                            "source": s1, "target": s2,
+                            "concept": concept, "weight": min(c1, c2),
+                        })
+
+            # Sort nodes by cross-subject breadth, then frequency
+            nodes.sort(key=lambda n: (n["subjects"], n["count"]), reverse=True)
+            nodes = nodes[:150]  # cap for performance
+            # Filter links to only include concepts in our node set
+            node_ids = {n["id"] for n in nodes}
+            links = [l for l in links if l["concept"] in node_ids]
+        else:
+            # Fallback: hardcoded concepts
+            fallback = [
+                "蛋白质", "DNA", "电子", "光", "溶液", "细胞", "向量", "函数",
+                "温室效应", "生态系统", "能量", "平衡", "丝绸之路", "概率", "氧化",
+                "光合作用", "进化", "水循环", "原子结构", "全球化",
+            ]
+            nodes = []
+            links = []
+            for concept in fallback:
+                try:
+                    rows = con.execute("""
+                        SELECT c.subject, COUNT(*) as cnt
+                        FROM chunks c JOIN chunks_fts f ON c.id = f.rowid
+                        WHERE chunks_fts MATCH ?
+                        GROUP BY c.subject ORDER BY cnt DESC
+                    """, [concept]).fetchall()
+                except Exception:
+                    continue
+                subjects = [(r["subject"], r["cnt"]) for r in rows]
+                if len(subjects) < 2:
+                    continue
+                total = sum(c for _, c in subjects)
+                nodes.append({"id": concept, "count": total, "subjects": len(subjects)})
+                for i, (s1, c1) in enumerate(subjects):
+                    for s2, c2 in subjects[i + 1:]:
+                        links.append({
+                            "source": s1, "target": s2,
+                            "concept": concept, "weight": min(c1, c2),
+                        })
+
+        # Add cluster info from cross_subject_map if available
+        clusters = []
+        has_csm = con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='cross_subject_map'"
+        ).fetchone()
+        if has_csm:
+            cluster_rows = con.execute("""
+                SELECT cluster_name, GROUP_CONCAT(DISTINCT subject) as subjects,
+                       COUNT(DISTINCT concept) as n_concepts
+                FROM cross_subject_map
+                GROUP BY cluster_name
+                HAVING COUNT(DISTINCT subject) >= 2
+                ORDER BY n_concepts DESC
+            """).fetchall()
+            clusters = [
+                {"name": r["cluster_name"], "subjects": r["subjects"].split(","),
+                 "concept_count": r["n_concepts"]}
+                for r in cluster_rows
+            ]
+
         subject_nodes = [
             {"id": s, "type": "subject", **SUBJECT_META.get(s, {"icon": "📚", "color": "#95a5a6"})}
             for s in SUBJECT_META
@@ -247,6 +306,7 @@ def cross_links():
             "concept_nodes": nodes,
             "subject_nodes": subject_nodes,
             "links": links,
+            "clusters": clusters,
         }
     finally:
         con.close()
@@ -437,15 +497,147 @@ def gaokao_years():
         con.close()
 
 
+# ── Semantic Matching Helpers ─────────────────────────────────────────
+
+_STOP_WORDS = {
+    '选择', '问题', '下列', '以下', '关于', '其中', '正确', '错误',
+    '不正确', '说法', '叙述', '表述', '选项', '答案', '分析', '解答',
+    '已知', '求解', '设有', '如图', '所示', '可以', '可能', '区域',
+    '不能', '属于', '不属于', '一定', '不一定', '详解',
+    '根据', '由此', '可知', '因此', '所以', '由于', '如果', '那么',
+    '题目', '材料', '文中', '图中', '表中', '实验', '方案', '含量',
+    '条件', '下面', '上面', '哪个', '哪些', '什么', '为什么',
+    '判断', '推断', '分别', '同时', '以及', '或者', '而且',
+    '进行', '使用', '利用', '通过', '发生', '产生', '得到', '变化',
+    '增大', '减小', '增加', '减少', '提高', '降低', '保持', '影响',
+    '表示', '反映', '说明', '体现', '指出', '认为', '表明',
+    '主要', '一般', '通常', '特别', '特殊', '基本', '重要',
+    '合理', '适当', '必要', '需要', '应该', '能够',
+    '过程', '结果', '作用', '功能', '特点', '特征', '方法',
+    '大小', '多少', '高低', '长短', '快慢', '强弱',
+    '的', '了', '是', '在', '和', '与', '为', '中', '不',
+    '这', '那', '其', '也', '都', '就', '还', '又',
+}
+
+
+def _extract_weighted_terms(text: str, con) -> list[tuple[str, float]]:
+    """Extract terms from text, weighted by IDF if available."""
+    raw = re.findall(r'[\u4e00-\u9fff]{2,6}', text)
+    counts = Counter(raw)
+    filtered = [(t, c) for t, c in counts.items()
+                if t not in _STOP_WORDS and len(t) >= 2]
+
+    # Try IDF weighting
+    has_idf = con.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='concept_idf'"
+    ).fetchone()
+    if has_idf and filtered:
+        terms_list = [t for t, _ in filtered]
+        placeholders = ','.join('?' * len(terms_list))
+        idf_rows = con.execute(
+            f"SELECT term, idf FROM concept_idf WHERE term IN ({placeholders})",
+            terms_list
+        ).fetchall()
+        idf_map = {r["term"]: r["idf"] for r in idf_rows}
+        max_idf = max(idf_map.values()) if idf_map else 1.0
+        # Score = tf * idf_normalized
+        scored = []
+        for t, c in filtered:
+            idf_val = idf_map.get(t, max_idf * 0.5)  # unknown terms get medium weight
+            scored.append((t, c * idf_val / max_idf))
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored
+    else:
+        filtered.sort(key=lambda x: x[1], reverse=True)
+        return [(t, float(c)) for t, c in filtered]
+
+
+def _match_concepts(text: str, subject: str, con) -> list[dict]:
+    """Match text against concept_map, return matched concepts with metadata."""
+    has_map = con.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='concept_map'"
+    ).fetchone()
+    if not has_map:
+        return []
+
+    text_terms = set(re.findall(r'[\u4e00-\u9fff]{2,6}', text))
+    # Get all concepts from DB
+    all_concepts = con.execute(
+        "SELECT DISTINCT concept FROM concept_map"
+    ).fetchall()
+
+    matched = []
+    for row in all_concepts:
+        concept = row["concept"]
+        concept_terms = set(re.findall(r'[\u4e00-\u9fff]{2,6}', concept))
+        if concept_terms and concept_terms.issubset(text_terms):
+            # Get which subjects this concept spans
+            subj_rows = con.execute(
+                "SELECT subject, count FROM concept_map WHERE concept = ?",
+                [concept]
+            ).fetchall()
+            subjects = {r["subject"]: r["count"] for r in subj_rows}
+            matched.append({
+                "concept": concept,
+                "subjects": subjects,
+                "is_cross": len(subjects) >= 2,
+                "is_same_subject": subject in subjects,
+            })
+    return matched
+
+
+def _expand_cross_subject(concepts: list[dict], con) -> list[str]:
+    """Use cross_subject_map to find related concepts in other subjects."""
+    has_csm = con.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='cross_subject_map'"
+    ).fetchone()
+    if not has_csm:
+        return []
+
+    expanded_terms = []
+    for c in concepts:
+        # Find clusters containing this concept
+        clusters = con.execute(
+            "SELECT DISTINCT cluster_name FROM cross_subject_map WHERE concept = ?",
+            [c["concept"]]
+        ).fetchall()
+        for cl in clusters:
+            # Get all concepts in this cluster (from other subjects)
+            related = con.execute(
+                "SELECT concept, subject FROM cross_subject_map WHERE cluster_name = ?",
+                [cl["cluster_name"]]
+            ).fetchall()
+            for r in related:
+                if r["concept"] != c["concept"]:
+                    expanded_terms.append(r["concept"])
+    return list(set(expanded_terms))
+
+
+def _score_result(result_text: str, query_terms: list[str],
+                  matched_concepts: list[str], is_same_subject: bool) -> int:
+    """Compute relevance score 0-100."""
+    score = 0
+    rt_lower = result_text.lower()
+    # Term overlap (max 40 points)
+    term_hits = sum(1 for t in query_terms[:15] if t in rt_lower)
+    score += min(40, term_hits * 4)
+    # Concept matches (max 40 points)
+    concept_hits = sum(1 for c in matched_concepts if c in rt_lower)
+    score += min(40, concept_hits * 10)
+    # Same subject bonus (20 points)
+    if is_same_subject:
+        score += 20
+    return min(100, score)
+
+
 @app.get("/api/gaokao/link")
 def gaokao_link(
     question_id: int = Query(..., description="ID of the gaokao question"),
     limit: int = Query(10, ge=1, le=30),
 ):
-    """Find textbook chunks most related to a gaokao question via FTS."""
+    """3-layer semantic matching: concept graph → IDF-weighted FTS → cross-subject expansion."""
     con = get_db()
     try:
-        # Get the question
         q_row = con.execute(
             "SELECT * FROM chunks WHERE id = ? AND source = 'gaokao'",
             [question_id]
@@ -453,45 +645,43 @@ def gaokao_link(
         if not q_row:
             raise HTTPException(404, "Question not found")
 
-        # Extract key terms from question text for FTS search
         text = q_row["text"] or ""
         q_subject = q_row["subject"]
-        # Extract Chinese terms (2-4 chars) for search
-        terms = re.findall(r'[\u4e00-\u9fff]{2,4}', text)
-        if not terms:
-            return {"question_id": question_id, "links": [], "cross_links": []}
 
-        # Use the most frequent meaningful terms
-        from collections import Counter as Ctr
-        term_counts = Ctr(terms)
-        # Expanded stop words: exam boilerplate + generic terms
-        stop_words = {
-            # Exam boilerplate
-            '选择', '问题', '下列', '以下', '关于', '其中', '正确', '错误',
-            '不正确', '说法', '叙述', '表述', '选项', '答案', '分析', '解答',
-            '已知', '求解', '设有', '如图', '所示', '可以', '可能', '区域',
-            '不能', '属于', '不属于', '一定', '不一定', '解答', '详解',
-            '根据', '由此', '可知', '因此', '所以', '由于', '如果', '那么',
-            '题目', '材料', '文中', '图中', '表中', '实验', '方案', '含量',
-            '条件', '下面', '上面', '哪个', '哪些', '什么', '为什么',
-            '判断', '推断', '分别', '同时', '以及', '或者', '而且',
-            # Generic verbs/adj
-            '进行', '使用', '利用', '通过', '发生', '产生', '得到', '变化',
-            '增大', '减小', '增加', '减少', '提高', '降低', '保持', '影响',
-            '表示', '反映', '说明', '体现', '指出', '认为', '表明',
-            '主要', '一般', '通常', '特别', '特殊', '基本', '重要',
-            '正确', '合理', '适当', '必要', '需要', '应该', '能够',
-            # Numbers/units
-            '过程', '结果', '作用', '功能', '特点', '特征', '方法',
-            '大小', '多少', '高低', '长短', '快慢', '强弱',
-        }
-        top_terms = [t for t, _ in term_counts.most_common(20)
-                     if t not in stop_words and len(t) >= 2]
-        if not top_terms:
-            return {"question_id": question_id, "links": [], "cross_links": []}
+        if not re.search(r'[\u4e00-\u9fff]', text):
+            return {"question_id": question_id, "links": [], "cross_links": [],
+                    "matched_concepts": [], "search_terms": []}
 
-        # Search textbook chunks — get more results to split
-        search_q = ' OR '.join(top_terms[:10])
+        # ── Layer 1: Concept graph matching ────────────────────────────
+        matched_concepts = _match_concepts(text, q_subject, con)
+        concept_names = [c["concept"] for c in matched_concepts]
+
+        # ── Layer 2: IDF-weighted term extraction ─────────────────────
+        weighted_terms = _extract_weighted_terms(text, con)
+        top_terms = [t for t, _ in weighted_terms[:15]]
+
+        if not top_terms and not concept_names:
+            return {"question_id": question_id, "links": [], "cross_links": [],
+                    "matched_concepts": [], "search_terms": []}
+
+        # ── Layer 3: Cross-subject expansion ──────────────────────────
+        expanded_terms = _expand_cross_subject(matched_concepts, con)
+
+        # ── Combined FTS search ───────────────────────────────────────
+        # Primary: top IDF terms + matched concepts
+        search_terms = list(dict.fromkeys(top_terms[:8] + concept_names[:5]))
+        if not search_terms:
+            search_terms = top_terms[:10]
+
+        search_q = ' OR '.join(search_terms[:12])
+
+        # Secondary: expanded cross-subject terms
+        expanded_q = ' OR '.join(expanded_terms[:8]) if expanded_terms else None
+
+        seen_ids = set()
+        all_results = []
+
+        # Primary search
         try:
             rows = con.execute("""
                 SELECT c.id, c.subject, c.title, c.book_key, c.section,
@@ -502,14 +692,43 @@ def gaokao_link(
                 WHERE chunks_fts MATCH ? AND c.source != 'gaokao'
                 ORDER BY rank
                 LIMIT ?
-            """, [search_q, limit * 2]).fetchall()
+            """, [search_q, limit * 3]).fetchall()
+            for r in rows:
+                if r["id"] not in seen_ids:
+                    seen_ids.add(r["id"])
+                    all_results.append((r, "explicit"))
         except Exception:
-            return {"question_id": question_id, "links": [], "cross_links": []}
+            pass
 
-        # Split into same-subject and cross-subject
+        # Expanded (implicit) search
+        if expanded_q:
+            try:
+                rows2 = con.execute("""
+                    SELECT c.id, c.subject, c.title, c.book_key, c.section,
+                           snippet(chunks_fts, 0, '<mark>', '</mark>', '…', 40) as snippet,
+                           c.text
+                    FROM chunks c
+                    JOIN chunks_fts f ON c.id = f.rowid
+                    WHERE chunks_fts MATCH ? AND c.source != 'gaokao'
+                    ORDER BY rank
+                    LIMIT ?
+                """, [expanded_q, limit * 2]).fetchall()
+                for r in rows2:
+                    if r["id"] not in seen_ids:
+                        seen_ids.add(r["id"])
+                        all_results.append((r, "implicit"))
+            except Exception:
+                pass
+
+        # Score and classify results
         same_subject = []
         cross_subject = []
-        for r in rows:
+        for r, link_type in all_results:
+            r_text = r["text"] or ""
+            # Find which concepts matched in this result
+            r_matched = [c for c in concept_names if c in r_text]
+            score = _score_result(r_text, top_terms, concept_names,
+                                  r["subject"] == q_subject)
             item = {
                 "id": r["id"],
                 "subject": r["subject"],
@@ -517,24 +736,111 @@ def gaokao_link(
                 "book_key": r["book_key"],
                 "section": r["section"],
                 "snippet": r["snippet"],
-                "text": (r["text"] or "")[:1500],
-                "link_type": "same" if r["subject"] == q_subject else "cross",
+                "text": r_text[:1500],
+                "link_type": link_type,
+                "relevance_score": score,
+                "matched_concepts": r_matched[:5],
                 **SUBJECT_META.get(r["subject"], {"icon": "📚", "color": "#95a5a6"}),
             }
             if r["subject"] == q_subject:
-                if len(same_subject) < limit:
-                    same_subject.append(item)
+                same_subject.append(item)
             else:
-                if len(cross_subject) < limit:
-                    cross_subject.append(item)
+                cross_subject.append(item)
+
+        # Sort by relevance score
+        same_subject.sort(key=lambda x: x["relevance_score"], reverse=True)
+        cross_subject.sort(key=lambda x: x["relevance_score"], reverse=True)
 
         return {
             "question_id": question_id,
             "question_title": q_row["title"],
             "question_subject": q_subject,
             "search_terms": top_terms[:10],
-            "links": same_subject,
-            "cross_links": cross_subject,
+            "matched_concepts": [
+                {"concept": c["concept"], "is_cross": c["is_cross"],
+                 "subjects": list(c["subjects"].keys())}
+                for c in matched_concepts[:10]
+            ],
+            "expanded_terms": expanded_terms[:8],
+            "links": same_subject[:limit],
+            "cross_links": cross_subject[:limit],
+        }
+    finally:
+        con.close()
+
+
+@app.get("/api/textbook/links")
+def textbook_links(
+    chunk_id: int = Query(..., description="ID of the textbook chunk"),
+    limit: int = Query(10, ge=1, le=30),
+):
+    """Discover cross-subject links for a textbook chunk."""
+    con = get_db()
+    try:
+        ch = con.execute(
+            "SELECT * FROM chunks WHERE id = ? AND source != 'gaokao'",
+            [chunk_id]
+        ).fetchone()
+        if not ch:
+            raise HTTPException(404, "Chunk not found")
+
+        text = ch["text"] or ""
+        subject = ch["subject"]
+
+        matched_concepts = _match_concepts(text, subject, con)
+        weighted_terms = _extract_weighted_terms(text, con)
+        top_terms = [t for t, _ in weighted_terms[:10]]
+        expanded = _expand_cross_subject(matched_concepts, con)
+
+        search_terms = list(dict.fromkeys(top_terms[:6] + [c["concept"] for c in matched_concepts[:4]]))
+        if not search_terms:
+            return {"chunk_id": chunk_id, "links": [], "matched_concepts": []}
+
+        search_q = ' OR '.join(search_terms[:10])
+        try:
+            rows = con.execute("""
+                SELECT c.id, c.subject, c.title, c.book_key, c.section,
+                       snippet(chunks_fts, 0, '<mark>', '</mark>', '…', 40) as snippet,
+                       c.text
+                FROM chunks c
+                JOIN chunks_fts f ON c.id = f.rowid
+                WHERE chunks_fts MATCH ? AND c.source != 'gaokao' AND c.id != ?
+                      AND c.subject != ?
+                ORDER BY rank
+                LIMIT ?
+            """, [search_q, chunk_id, subject, limit * 2]).fetchall()
+        except Exception:
+            return {"chunk_id": chunk_id, "links": [], "matched_concepts": []}
+
+        concept_names = [c["concept"] for c in matched_concepts]
+        results = []
+        for r in rows:
+            r_text = r["text"] or ""
+            r_matched = [c for c in concept_names if c in r_text]
+            score = _score_result(r_text, top_terms, concept_names, False)
+            results.append({
+                "id": r["id"],
+                "subject": r["subject"],
+                "title": r["title"],
+                "book_key": r["book_key"],
+                "section": r["section"],
+                "snippet": r["snippet"],
+                "relevance_score": score,
+                "matched_concepts": r_matched[:5],
+                "link_type": "implicit" if any(c in expanded for c in r_matched) else "explicit",
+                **SUBJECT_META.get(r["subject"], {"icon": "📚", "color": "#95a5a6"}),
+            })
+
+        results.sort(key=lambda x: x["relevance_score"], reverse=True)
+        return {
+            "chunk_id": chunk_id,
+            "source_subject": subject,
+            "matched_concepts": [
+                {"concept": c["concept"], "is_cross": c["is_cross"],
+                 "subjects": list(c["subjects"].keys())}
+                for c in matched_concepts[:10]
+            ],
+            "links": results[:limit],
         }
     finally:
         con.close()

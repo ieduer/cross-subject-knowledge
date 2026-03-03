@@ -661,28 +661,59 @@ async function findTextbookLinks(questionId) {
             return;
         }
 
-        const renderCards = (links) => links.map(l => `
+        const renderLinkCard = (l) => {
+            const scoreColor = l.relevance_score >= 70 ? '#27ae60' :
+                l.relevance_score >= 40 ? '#f39c12' : '#95a5a6';
+            const typeLabel = l.link_type === 'implicit'
+                ? '<span class="link-type-tag implicit">🔮 隐性关联</span>'
+                : '<span class="link-type-tag explicit">📌 显性关联</span>';
+            const conceptTags = (l.matched_concepts || []).map(c =>
+                `<span class="concept-tag">${escHtml(c)}</span>`
+            ).join('');
+
+            return `
             <div class="gk-link-card">
                 <div class="gk-link-meta">
                     <span class="gk-badge" style="background:${l.color || '#6c5ce7'}">${l.icon || '📚'} ${l.subject}</span>
+                    ${typeLabel}
                     <span>${escHtml(l.title)} · §${l.section}</span>
                 </div>
+                <div class="gk-link-score-row">
+                    <div class="gk-link-score-bar">
+                        <div class="gk-link-score-fill" style="width:${l.relevance_score || 0}%;background:${scoreColor}"></div>
+                    </div>
+                    <span class="gk-link-score-text" style="color:${scoreColor}">${l.relevance_score || 0}%</span>
+                </div>
+                ${conceptTags ? `<div class="gk-concept-tags">${conceptTags}</div>` : ''}
                 <div class="gk-link-snippet">${sanitizeSnippet(l.snippet)}</div>
-            </div>
-        `).join('');
+            </div>`;
+        };
+
+        // Render matched concepts overview
+        const conceptOverview = (data.matched_concepts || []).map(c => {
+            const crossIcon = c.is_cross ? '🌐' : '📘';
+            const subjs = (c.subjects || []).join('·');
+            return `<span class="matched-concept ${c.is_cross ? 'cross' : 'same'}" title="${subjs}">${crossIcon} ${escHtml(c.concept)}</span>`;
+        }).join('');
+
+        const expandedInfo = (data.expanded_terms || []).length > 0
+            ? `<div class="gk-expanded-terms">🔮 隐性扩展：${data.expanded_terms.map(t => `<span class="expanded-term">${escHtml(t)}</span>`).join(' ')}</div>`
+            : '';
 
         content.innerHTML = `
             <div class="gk-link-question">
                 <strong>${escHtml(data.question_title)}</strong>
+                ${conceptOverview ? `<div class="gk-matched-concepts">知识点匹配：${conceptOverview}</div>` : ''}
                 <span class="gk-link-terms">搜索关键词：${data.search_terms.map(t => `<span class="term-tag">${escHtml(t)}</span>`).join(' ')}</span>
+                ${expandedInfo}
             </div>
             ${data.links && data.links.length > 0 ? `
                 <h4 class="gk-section-title">📚 同学科关联（${data.question_subject}）</h4>
-                <div class="gk-link-results">${renderCards(data.links)}</div>
+                <div class="gk-link-results">${data.links.map(renderLinkCard).join('')}</div>
             ` : ''}
             ${data.cross_links && data.cross_links.length > 0 ? `
                 <h4 class="gk-section-title">🔗 跨学科关联</h4>
-                <div class="gk-link-results">${renderCards(data.cross_links)}</div>
+                <div class="gk-link-results">${data.cross_links.map(renderLinkCard).join('')}</div>
             ` : ''}
         `;
     } catch (e) {

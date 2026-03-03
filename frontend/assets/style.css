@@ -1208,7 +1208,128 @@ body {
     background: rgba(108, 92, 231, 0.3);
     color: var(--accent-light);
     border-radius: 2px;
-    padding: 0 2px;
+}
+
+/* ── Semantic Association UI Components ────────────────── */
+.link-type-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 8px;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.link-type-tag.explicit {
+    background: rgba(46, 204, 113, 0.12);
+    color: #27ae60;
+    border: 1px solid rgba(46, 204, 113, 0.2);
+}
+
+.link-type-tag.implicit {
+    background: rgba(108, 92, 231, 0.12);
+    color: var(--accent-light);
+    border: 1px dashed rgba(108, 92, 231, 0.3);
+}
+
+.gk-link-score-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 0;
+}
+
+.gk-link-score-bar {
+    flex: 1;
+    height: 4px;
+    background: var(--bg-hover);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.gk-link-score-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.6s ease;
+}
+
+.gk-link-score-text {
+    font-size: 12px;
+    font-weight: 600;
+    min-width: 36px;
+    text-align: right;
+}
+
+.gk-concept-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 6px;
+}
+
+.concept-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 8px;
+    font-size: 11px;
+    background: rgba(108, 92, 231, 0.1);
+    color: var(--accent-light);
+    font-weight: 500;
+}
+
+.gk-matched-concepts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-dim);
+}
+
+.matched-concept {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 3px 10px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: default;
+}
+
+.matched-concept.cross {
+    background: rgba(46, 204, 113, 0.12);
+    color: #27ae60;
+    border: 1px solid rgba(46, 204, 113, 0.2);
+}
+
+.matched-concept.same {
+    background: rgba(52, 152, 219, 0.12);
+    color: #3498db;
+    border: 1px solid rgba(52, 152, 219, 0.2);
+}
+
+.gk-expanded-terms {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-dim);
+    padding: 6px 10px;
+    background: rgba(108, 92, 231, 0.06);
+    border-radius: 8px;
+    border-left: 3px solid rgba(108, 92, 231, 0.3);
+}
+
+.expanded-term {
+    display: inline-block;
+    background: rgba(108, 92, 231, 0.08);
+    color: var(--accent-light);
+    padding: 1px 6px;
+    border-radius: 6px;
+    font-size: 11px;
+    margin: 1px 2px;
 }
 
 /* ── Gaokao Question Images ──────────────────────────────── */
@@ -1533,6 +1654,130 @@ body {
     .footer {
         padding: 16px 12px;
         font-size: 12px;
+    }
+
+    /* ── Gaokao Mobile Optimization ──────────────────────── */
+    .gaokao-filters {
+        flex-direction: column;
+        gap: 8px;
+        padding: 12px;
+    }
+
+    .gaokao-filters .filter-group {
+        min-width: 100%;
+    }
+
+    .gk-search-btn {
+        width: 100%;
+    }
+
+    /* Gaokao hero section */
+    .gaokao-hero {
+        padding: 24px 0 16px;
+    }
+
+    .gaokao-hero h2 {
+        font-size: 22px;
+    }
+
+    .gaokao-hero-sub {
+        font-size: 12px;
+    }
+
+    /* Gaokao cards */
+    .gk-card-header {
+        padding: 12px 14px;
+    }
+
+    .gk-card-meta {
+        gap: 4px;
+    }
+
+    .gk-badge {
+        font-size: 11px;
+        padding: 2px 8px;
+    }
+
+    .gk-card-title {
+        font-size: 14px;
+    }
+
+    .gk-card-body {
+        padding: 0 14px 14px;
+    }
+
+    .gk-question {
+        font-size: 13px;
+        line-height: 1.7;
+    }
+
+    .gk-actions {
+        flex-direction: column;
+    }
+
+    .gk-link-btn,
+    .gk-ai-btn {
+        width: 100%;
+        text-align: center;
+    }
+
+    /* Gaokao link panel → bottom sheet */
+    .gk-link-panel {
+        padding: 0;
+        align-items: flex-end;
+    }
+
+    .gk-link-inner {
+        max-height: 90vh;
+        border-radius: 16px 16px 0 0;
+        padding: 16px;
+        max-width: 100%;
+    }
+
+    .gk-link-header h3 {
+        font-size: 16px;
+    }
+
+    .gk-link-card {
+        padding: 10px 12px;
+    }
+
+    /* AI analysis result */
+    .gk-ai-answer {
+        padding: 12px;
+    }
+
+    .gk-ai-text {
+        font-size: 12px;
+        line-height: 1.7;
+    }
+
+    /* Question images */
+    .gk-question-img {
+        max-height: 200px;
+    }
+
+    /* Semantic UI components on mobile */
+    .gk-matched-concepts {
+        gap: 4px;
+    }
+
+    .matched-concept {
+        font-size: 10px;
+        padding: 2px 7px;
+    }
+
+    .link-type-tag {
+        font-size: 10px;
+        padding: 1px 6px;
+    }
+
+    .gk-link-score-text {
+        font-size: 11px;
+    }
+
+    .gk-expanded-terms {
+        font-size: 11px;
     }
 }
 
