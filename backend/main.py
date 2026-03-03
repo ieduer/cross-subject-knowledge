@@ -79,67 +79,73 @@ def search(
         if not clean_q:
             raise HTTPException(400, "Invalid query")
 
-        # Build WHERE filters
-        params = [clean_q]
+        # Build WHERE filters shared by both queries
         where_extra = ""
+        filter_params = []
         if subject:
             where_extra += " AND c.subject = ?"
-            params.append(subject)
+            filter_params.append(subject)
         if book_key:
             where_extra += " AND c.book_key = ?"
-            params.append(book_key)
+            filter_params.append(book_key)
         if source == 'textbook':
             where_extra += " AND c.source = 'mineru'"
         elif source == 'gaokao':
             where_extra += " AND c.source = 'gaokao'"
 
+        rows = []
+        existing_ids = set()
+
+        # 1. Exact Substring Match (LIKE)
+        # Guarantees we NEVER miss a direct textual match due to FTS5 tokenization issues
+        like_params = [clean_q, f"%{clean_q}%"] + filter_params + [limit, offset]
+        like_rows = con.execute(f"""
+            SELECT c.id, c.subject, c.title, c.book_key, c.section,
+                   SUBSTR(c.text, MAX(1, INSTR(c.text, ?)-30), 120) as snippet,
+                   c.text, c.source, c.year, c.category,
+                   -100.0 as rank
+            FROM chunks c
+            WHERE c.text LIKE ? {where_extra}
+            LIMIT ? OFFSET ?
+        """, like_params).fetchall()
+        
+        for r in like_rows:
+            d = dict(r)
+            # Add basic highlighting for the LIKE snippet
+            d['snippet'] = d['snippet'].replace(clean_q, f"<mark>{clean_q}</mark>")
+            rows.append(d)
+            existing_ids.add(d['id'])
+
+        # 2. Fuzzy/Keyword Match (FTS5)
+        # Handles multiple keywords, spaces, etc.
+        fts_params = [clean_q] + filter_params + [limit, offset]
+        
         # Order clause
         order_clause = "ORDER BY rank"
         if sort == "images":
             order_clause = "ORDER BY (LENGTH(c.text) - LENGTH(REPLACE(c.text, '![', ''))) DESC, rank"
 
-        params.extend([limit, offset])
-
-        rows = con.execute(f"""
+        fts_rows = con.execute(f"""
             SELECT c.id, c.subject, c.title, c.book_key, c.section,
                    snippet(chunks_fts, 0, '<mark>', '</mark>', '…', 40) as snippet,
-                   c.text, c.source, c.year, c.category
+                   c.text, c.source, c.year, c.category,
+                   f.rank as rank
             FROM chunks c
             JOIN chunks_fts f ON c.id = f.rowid
             WHERE chunks_fts MATCH ? {where_extra}
             {order_clause}
             LIMIT ? OFFSET ?
-        """, params).fetchall()
+        """, fts_params).fetchall()
 
-        # Multi-layer fallback: if FTS returns few results, supplement with LIKE search
-        if len(rows) < 5 and len(clean_q) >= 2:
-            like_params = [f"%{clean_q}%"]
-            like_where = ""
-            if subject:
-                like_where += " AND c.subject = ?"
-                like_params.append(subject)
-            if book_key:
-                like_where += " AND c.book_key = ?"
-                like_params.append(book_key)
-            if source == 'textbook':
-                like_where += " AND c.source = 'mineru'"
-            elif source == 'gaokao':
-                like_where += " AND c.source = 'gaokao'"
-            like_params.extend([limit, offset])
+        for r in fts_rows:
+            if r['id'] not in existing_ids:
+                rows.append(dict(r))
+                existing_ids.add(r['id'])
 
-            existing_ids = {r['id'] for r in rows}
-            like_rows = con.execute(f"""
-                SELECT c.id, c.subject, c.title, c.book_key, c.section,
-                       SUBSTR(c.text, MAX(1, INSTR(c.text, ?)-30), 120) as snippet,
-                       c.text, c.source, c.year, c.category
-                FROM chunks c
-                WHERE c.text LIKE ? {like_where}
-                LIMIT ? OFFSET ?
-            """, [clean_q] + like_params).fetchall()
-            for lr in like_rows:
-                if lr['id'] not in existing_ids:
-                    rows.append(lr)
-                    existing_ids.add(lr['id'])
+        # 3. Sort by rank (exact matches get -100.0 so they appear first) and trim to limit
+        if sort != "images":
+            rows.sort(key=lambda x: x['rank'])
+        rows = rows[:limit]
 
         # Optional: filter to only results with images
         if has_images:
