@@ -283,6 +283,11 @@ function renderResults(data, filterSubject = null) {
             `).join('')}
         </div>
     `).join('');
+
+    // Trigger Math rendering for search results
+    if (typeof renderMath === 'function') {
+        renderMath(resultsEl);
+    }
 }
 
 function getSubjectIcon(s) {
@@ -313,8 +318,6 @@ function sanitizeSnippet(html) {
     html = html.replace(/<[^>]+>/g, ' ');
     // Remove markdown image syntax ![...](...)  
     html = html.replace(/!\[.*?\]\(.*?\)/g, '');
-    // Remove LaTeX-like $ expressions
-    html = html.replace(/\$[^$]+\$/g, '');
     // Collapse whitespace
     html = html.replace(/\s+/g, ' ').trim();
     // Restore mark tags
@@ -331,7 +334,6 @@ function cleanText(s) {
     if (!s) return '';
     s = s.replace(/<[^>]+>/g, ' ');
     s = s.replace(/!\[.*?\]\(.*?\)/g, '[图片]');
-    s = s.replace(/\$([^$]+)\$/g, '$1');
     s = s.replace(/\s+/g, ' ').trim();
     return s;
 }
@@ -345,8 +347,6 @@ function renderText(text, bookKey) {
     s = s.replace(/!\[([^\]]*)\]\(images\/([^)]+)\)/g, (_, alt, src) => {
         return `<img class="result-img" src="${IMG_CDN}/orig/${encodeURIComponent(bookKey)}/${src}" alt="${alt || '教材图片'}" loading="lazy">`;
     });
-    // Clean LaTeX
-    s = s.replace(/\$([^$]+)\$/g, '$1');
     // Escape remaining HTML-like content (but preserve our img tags)
     const parts = s.split(/(<img[^>]+>)/g);
     s = parts.map(p => p.startsWith('<img') ? p : p.replace(/</g, '&lt;').replace(/>/g, '&gt;')).join('');
@@ -599,6 +599,7 @@ async function doGaokaoSearch() {
         }
 
         renderGaokaoResults(data.questions);
+        renderMath(resultsEl);
     } catch (e) {
         resultsEl.innerHTML = `<div class="loading">加载失败: ${e.message}</div>`;
     }
@@ -716,6 +717,7 @@ async function findTextbookLinks(questionId) {
                 <div class="gk-link-results">${data.cross_links.map(renderLinkCard).join('')}</div>
             ` : ''}
         `;
+        renderMath(content);
     } catch (e) {
         content.innerHTML = `<div class="loading">加载失败: ${e.message}</div>`;
     }
@@ -777,6 +779,7 @@ ${textbookContext || '（未找到直接相关教材）'}
                     <div class="gk-ai-text">${escHtml(aiData.answer)}</div>
                 </div>
             `;
+            renderMath(resultEl);
         } else {
             resultEl.innerHTML = `<div class="loading">AI 服务暂时不可用</div>`;
         }
@@ -798,4 +801,20 @@ function renderGaokaoText(text) {
         return `<img class="gk-question-img" src="https://img.rdfzer.com/gaokao/${src}" alt="${alt || '题目图片'}" loading="lazy">`;
     });
     return s;
+}
+
+// ── Math Rendering ──────────────────────────────────────────
+function renderMath(el) {
+    if (window.renderMathInElement) {
+        renderMathInElement(el, {
+            delimiters: [
+                { left: '$$', right: '$$', display: true },
+                { left: '$', right: '$', display: false },
+                { left: '\\(', right: '\\)', display: false },
+                { left: '\\[', right: '\\]', display: true }
+            ],
+            throwOnError: false,
+            errorColor: '#e74c3c'
+        });
+    }
 }

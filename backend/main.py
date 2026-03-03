@@ -10,13 +10,36 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+try:
+    import faiss
+    import numpy as np
+    from sentence_transformers import SentenceTransformer
+    FAISS_AVAILABLE = True
+except ImportError:
+    FAISS_AVAILABLE = False
+
 # ── paths ─────────────────────────────────────────────────────────────
 ROOT = Path(os.getenv("DATA_ROOT", "/home/suen/.openclaw/workspace/textbook_ai"))
 DB_PATH = ROOT / "data/index/textbook_mineru_fts.db"
 FRONTEND = Path(__file__).parent.parent / "frontend"
+FAISS_INDEX_PATH = ROOT / "data/index/textbook_chunks.index"
 
 app = FastAPI(title="跨学科教材知识平台", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# ── Global AI Models ──────────────────────────────────────────────────
+faiss_index = None
+embedder = None
+
+if FAISS_AVAILABLE and FAISS_INDEX_PATH.exists():
+    try:
+        print(f"Loading FAISS index from {FAISS_INDEX_PATH}...", flush=True)
+        faiss_index = faiss.read_index(str(FAISS_INDEX_PATH))
+        embedder = SentenceTransformer("BAAI/bge-small-zh-v1.5")
+        print(f"FAISS index loaded with {faiss_index.ntotal} vectors.", flush=True)
+    except Exception as e:
+        print(f"Failed to load FAISS index: {e}", flush=True)
+
 
 SUBJECT_META = {
     "语文": {"icon": "📖", "color": "#e74c3c"},
@@ -521,8 +544,18 @@ _STOP_WORDS = {
 
 
 def _extract_weighted_terms(text: str, con) -> list[tuple[str, float]]:
-    """Extract terms from text, weighted by IDF if available."""
-    raw = re.findall(r'[\u4e00-\u9fff]{2,6}', text)
+    """Extract terms from text, weighted by IDF if available.
+    Uses jieba segmentation when available, falls back to regex."""
+    try:
+        import jieba
+        raw_words = list(jieba.cut(text))
+        # Filter: Chinese words 2-6 chars, or known English acronyms
+        raw = [w for w in raw_words 
+               if (2 <= len(w) <= 6 and any('\u4e00' <= c <= '\u9fff' for c in w))
+               or w.upper() in ('DNA', 'RNA', 'ATP', 'ADP', 'PCR')]
+    except ImportError:
+        raw = re.findall(r'[\u4e00-\u9fff]{2,6}', text)
+    
     counts = Counter(raw)
     filtered = [(t, c) for t, c in counts.items()
                 if t not in _STOP_WORDS and len(t) >= 2]
@@ -553,24 +586,27 @@ def _extract_weighted_terms(text: str, con) -> list[tuple[str, float]]:
 
 
 def _match_concepts(text: str, subject: str, con) -> list[dict]:
-    """Match text against concept_map, return matched concepts with metadata."""
+    """Match text against concept_map using exact whole-word matching."""
     has_map = con.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='concept_map'"
     ).fetchone()
     if not has_map:
         return []
 
-    text_terms = set(re.findall(r'[\u4e00-\u9fff]{2,6}', text))
-    # Get all concepts from DB
+    # Get all concepts from DB — only meaningful ones
     all_concepts = con.execute(
-        "SELECT DISTINCT concept FROM concept_map"
+        "SELECT DISTINCT concept FROM concept_map WHERE length(concept) >= 2"
     ).fetchall()
 
     matched = []
     for row in all_concepts:
         concept = row["concept"]
-        concept_terms = set(re.findall(r'[\u4e00-\u9fff]{2,6}', concept))
-        if concept_terms and concept_terms.issubset(text_terms):
+        # Skip pure-English noise that isn't a known scientific acronym
+        has_chinese = any('\u4e00' <= c <= '\u9fff' for c in concept)
+        if not has_chinese and concept.upper() not in ('DNA', 'RNA', 'ATP', 'ADP', 'PCR'):
+            continue
+        # Require the exact concept string to appear in the text
+        if concept in text:
             # Get which subjects this concept spans
             subj_rows = con.execute(
                 "SELECT subject, count FROM concept_map WHERE concept = ?",
@@ -583,6 +619,8 @@ def _match_concepts(text: str, subject: str, con) -> list[dict]:
                 "is_cross": len(subjects) >= 2,
                 "is_same_subject": subject in subjects,
             })
+    # Sort by specificity: longer concepts are more specific, prioritize them
+    matched.sort(key=lambda x: len(x["concept"]), reverse=True)
     return matched
 
 
@@ -615,18 +653,35 @@ def _expand_cross_subject(concepts: list[dict], con) -> list[str]:
 
 def _score_result(result_text: str, query_terms: list[str],
                   matched_concepts: list[str], is_same_subject: bool) -> int:
-    """Compute relevance score 0-100."""
+    """Compute relevance score 0-100 with IDF-weighted term importance."""
     score = 0
     rt_lower = result_text.lower()
-    # Term overlap (max 40 points)
-    term_hits = sum(1 for t in query_terms[:15] if t in rt_lower)
-    score += min(40, term_hits * 4)
-    # Concept matches (max 40 points)
-    concept_hits = sum(1 for c in matched_concepts if c in rt_lower)
-    score += min(40, concept_hits * 10)
-    # Same subject bonus (20 points)
+    
+    # Term overlap — weight longer/rarer terms higher (max 35 points)
+    term_hits = 0
+    for t in query_terms[:15]:
+        if t in rt_lower:
+            # Longer terms are more specific and worth more
+            weight = min(3, len(t) - 1)  # 2-char=1, 3-char=2, 4+=3
+            term_hits += weight
+    score += min(35, term_hits)
+    
+    # Concept matches — high-value signal (max 40 points)
+    concept_hits = 0
+    for c in matched_concepts:
+        if c in rt_lower:
+            # Longer concept names = more specific = higher score
+            concept_hits += min(15, len(c) * 2)
+    score += min(40, concept_hits)
+    
+    # Same subject bonus (15 points) — reduced to avoid over-rewarding
     if is_same_subject:
-        score += 20
+        score += 15
+    
+    # Penalize very short result texts (likely table-of-contents or headers)
+    if len(result_text) < 50:
+        score = max(0, score - 20)
+    
     return min(100, score)
 
 
@@ -700,27 +755,36 @@ def gaokao_link(
         except Exception:
             pass
 
-        # Expanded (implicit) search
-        if expanded_q:
+        # ── Dense Vector Retrieval (FAISS) ────────────────────────────
+        if faiss_index and embedder:
             try:
-                rows2 = con.execute("""
-                    SELECT c.id, c.subject, c.title, c.book_key, c.section,
-                           snippet(chunks_fts, 0, '<mark>', '</mark>', '…', 40) as snippet,
-                           c.text
-                    FROM chunks c
-                    JOIN chunks_fts f ON c.id = f.rowid
-                    WHERE chunks_fts MATCH ? AND c.source != 'gaokao'
-                    ORDER BY rank
-                    LIMIT ?
-                """, [expanded_q, limit * 2]).fetchall()
-                for r in rows2:
-                    if r["id"] not in seen_ids:
-                        seen_ids.add(r["id"])
-                        all_results.append((r, "implicit"))
-            except Exception:
-                pass
+                # Encode text to 512D vector
+                query_vec = embedder.encode([text[:512]], normalize_embeddings=True).astype('float32')
+                D, I = faiss_index.search(query_vec, limit * 2)
+                
+                faiss_ids = []
+                for score, match_id in zip(D[0], I[0]):
+                    if match_id != -1 and match_id not in seen_ids and score > 0.55:
+                        faiss_ids.append(int(match_id))
+                
+                if faiss_ids:
+                    placeholders = ','.join('?' * len(faiss_ids))
+                    faiss_rows = con.execute(f"""
+                        SELECT c.id, c.subject, c.title, c.book_key, c.section,
+                               substr(c.text, 1, 100) as snippet,
+                               c.text
+                        FROM chunks c
+                        WHERE c.id IN ({placeholders})
+                    """, faiss_ids).fetchall()
+                    
+                    for r in faiss_rows:
+                        if r["id"] not in seen_ids:
+                            seen_ids.add(r["id"])
+                            all_results.append((r, "implicit"))  # Semantic matches represent deep implicit connections
+            except Exception as e:
+                print(f"FAISS search error: {e}")
 
-        # Score and classify results
+        # Score, classify, and filter results
         same_subject = []
         cross_subject = []
         for r, link_type in all_results:
@@ -729,6 +793,9 @@ def gaokao_link(
             r_matched = [c for c in concept_names if c in r_text]
             score = _score_result(r_text, top_terms, concept_names,
                                   r["subject"] == q_subject)
+            # Skip results below minimum quality threshold
+            if score < 15:
+                continue
             item = {
                 "id": r["id"],
                 "subject": r["subject"],
@@ -830,6 +897,48 @@ def textbook_links(
                 "link_type": "implicit" if any(c in expanded for c in r_matched) else "explicit",
                 **SUBJECT_META.get(r["subject"], {"icon": "📚", "color": "#95a5a6"}),
             })
+
+        # ── Dense Vector Retrieval (FAISS) ────────────────────────────
+        seen_ids = {r["id"] for r in rows}
+        seen_ids.add(chunk_id)
+        
+        if faiss_index and embedder:
+            try:
+                query_vec = embedder.encode([text[:512]], normalize_embeddings=True).astype('float32')
+                D, I = faiss_index.search(query_vec, limit * 2)
+                
+                faiss_ids = []
+                for score, match_id in zip(D[0], I[0]):
+                    if match_id != -1 and match_id not in seen_ids and score > 0.6:
+                        faiss_ids.append(int(match_id))
+                
+                if faiss_ids:
+                    placeholders = ','.join('?' * len(faiss_ids))
+                    faiss_rows = con.execute(f"""
+                        SELECT c.id, c.subject, c.title, c.book_key, c.section,
+                               substr(c.text, 1, 100) as snippet,
+                               c.text
+                        FROM chunks c
+                        WHERE c.id IN ({placeholders}) AND c.subject != ?
+                    """, [*faiss_ids, subject]).fetchall()
+                    
+                    for r in faiss_rows:
+                        if r["id"] not in seen_ids:
+                            seen_ids.add(r["id"])
+                            results.append({
+                                "id": r["id"],
+                                "subject": r["subject"],
+                                "title": r["title"],
+                                "book_key": r["book_key"],
+                                "section": r["section"],
+                                "snippet": r["snippet"] + "...",
+                                "relevance_score": 60,  # Semantic matches get a solid base score
+                                "matched_concepts": [],
+                                "link_type": "implicit",
+                                **SUBJECT_META.get(r["subject"], {"icon": "📚", "color": "#95a5a6"}),
+                            })
+            except Exception as e:
+                print(f"FAISS search error in textbook_links: {e}")
 
         results.sort(key=lambda x: x["relevance_score"], reverse=True)
         return {
