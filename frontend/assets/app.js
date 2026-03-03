@@ -341,7 +341,7 @@ function renderText(text, bookKey) {
     let s = text.replace(/<[^>]+>/g, ' ');
     // Convert markdown images to <img> tags — use R2 CDN
     s = s.replace(/!\[([^\]]*)\]\(images\/([^)]+)\)/g, (_, alt, src) => {
-        return `<img class="result-img" src="${IMG_CDN}/${encodeURIComponent(bookKey)}/${src}" alt="${alt || '教材图片'}" loading="lazy">`;
+        return `<img class="result-img" src="${IMG_CDN}/orig/${encodeURIComponent(bookKey)}/${src}" alt="${alt || '教材图片'}" loading="lazy">`;
     });
     // Clean LaTeX
     s = s.replace(/\$([^$]+)\$/g, '$1');
