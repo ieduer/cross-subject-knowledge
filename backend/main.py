@@ -111,6 +111,36 @@ def search(
             LIMIT ? OFFSET ?
         """, params).fetchall()
 
+        # Multi-layer fallback: if FTS returns few results, supplement with LIKE search
+        if len(rows) < 5 and len(clean_q) >= 2:
+            like_params = [f"%{clean_q}%"]
+            like_where = ""
+            if subject:
+                like_where += " AND c.subject = ?"
+                like_params.append(subject)
+            if book_key:
+                like_where += " AND c.book_key = ?"
+                like_params.append(book_key)
+            if source == 'textbook':
+                like_where += " AND c.source = 'mineru'"
+            elif source == 'gaokao':
+                like_where += " AND c.source = 'gaokao'"
+            like_params.extend([limit, offset])
+
+            existing_ids = {r['id'] for r in rows}
+            like_rows = con.execute(f"""
+                SELECT c.id, c.subject, c.title, c.book_key, c.section,
+                       SUBSTR(c.text, MAX(1, INSTR(c.text, ?)-30), 120) as snippet,
+                       c.text, c.source, c.year, c.category
+                FROM chunks c
+                WHERE c.text LIKE ? {like_where}
+                LIMIT ? OFFSET ?
+            """, [clean_q] + like_params).fetchall()
+            for lr in like_rows:
+                if lr['id'] not in existing_ids:
+                    rows.append(lr)
+                    existing_ids.add(lr['id'])
+
         # Optional: filter to only results with images
         if has_images:
             rows = [r for r in rows if '![' in (r['text'] or '')]
@@ -141,17 +171,23 @@ def search(
             by_subject[s]["results"].append(result_item)
             by_subject[s]["count"] += 1
 
-        # Get total counts per subject
-        count_params = [clean_q]
+        # Get total counts per subject (include all active filters)
+        count_params = [f"%{clean_q}%"]
         count_where = ""
+        if subject:
+            count_where += " AND c.subject = ?"
+            count_params.append(subject)
         if book_key:
             count_where += " AND c.book_key = ?"
             count_params.append(book_key)
+        if source == 'textbook':
+            count_where += " AND c.source = 'mineru'"
+        elif source == 'gaokao':
+            count_where += " AND c.source = 'gaokao'"
         count_rows = con.execute(f"""
             SELECT c.subject, COUNT(*) as cnt
             FROM chunks c
-            JOIN chunks_fts f ON c.id = f.rowid
-            WHERE chunks_fts MATCH ? {count_where}
+            WHERE c.text LIKE ? {count_where}
             GROUP BY c.subject
             ORDER BY cnt DESC
         """, count_params).fetchall()
@@ -343,6 +379,7 @@ def books():
         rows = con.execute("""
             SELECT DISTINCT book_key, title, subject
             FROM chunks
+            WHERE source != 'gaokao'
             ORDER BY subject, title
         """).fetchall()
         by_subject = {}
