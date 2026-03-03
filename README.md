@@ -1,6 +1,6 @@
-# 🔗 跨学科教材知识平台
+# 🔗 AI 高中教材
 
-> 发现高中 9 科教材中**隐藏的跨学科联系**，让 AI 帮你综合解读
+> 这世界真的有学科吗？ — 发现高中 9 科教材中**隐藏的跨学科联系**，让 AI 帮你综合解读
 
 **在线体验 → [sun.bdfz.net](https://sun.bdfz.net)**
 
@@ -69,15 +69,21 @@
     │
     ├── HTTPS → sun.bdfz.net (VPS 23.19.231.173)
     │           │
-    │           └── Docker: textbook-knowledge (467MB)
+    │           └── Docker: textbook-knowledge
     │               ├── FastAPI 后端 (Python 3.13)
     │               │   ├── /api/search ─── FTS5 全文搜索（支持筛选/排序）
+    │               │   ├── /api/gaokao/link ── 真题↔教材关联（3层混合检索）
+    │               │   ├── /api/textbook/links ── 教材间跨学科关联
     │               │   ├── /api/books ──── 316 本教材列表（按学科分组）
     │               │   ├── /api/related ── 相关概念推荐（共现分析）
     │               │   ├── /api/stats ──── 学科统计
     │               │   └── /api/cross-links ── 知识图谱数据
-    │               ├── 前端 (HTML/CSS/JS)
-    │               └── SQLite FTS5 索引 (187MB, baked in image)
+    │               ├── NLP/ML 引擎
+    │               │   ├── BAAI/bge-small-zh-v1.5 ── 中文语义向量 (512D)
+    │               │   ├── FAISS ── 65,978 向量稠密检索
+    │               │   └── Jieba ── 中文分词 + 词性标注
+    │               ├── 前端 (HTML/CSS/JS + KaTeX 公式渲染)
+    │               └── SQLite FTS5 索引 + 概念图谱 (187MB)
     │
     ├── HTTPS → img.rdfzer.com (Cloudflare R2 CDN)
     │           └── 87,156 张教材原图（3.4GB，全球加速，免费出站）
@@ -100,18 +106,15 @@
 
 ```
 /app/
-├── backend/main.py             # FastAPI 应用（5 个 API）
+├── backend/main.py             # FastAPI 应用（7 个 API）
 ├── frontend/
-│   ├── index.html              # 主页（搜索/图谱/关于）
+│   ├── index.html              # 主页（搜索/真题/图谱/关于）
 │   └── assets/
 │       ├── style.css           # 暗色主题 + 响应式（640px/380px）
-│       └── app.js              # 高级搜索 + AI 调用 + 图谱
-└── data/
-    ├── index/
-    │   └── textbook_mineru_fts.db  # FTS5 索引（187MB）
-    └── gaokao_raw/                 # 待处理的高考真题 PDF 放这里
-        ├── beijing_exam_2002_2025/ # (待收集存放) 2002-2025北京卷 PDF
-        └── 2025_exam/              # (待收集存放) 2025年最新高考 PDF
+│       └── app.js              # 动态概念轮播 + 高级搜索 + AI + 图谱
+└── data/index/
+    ├── textbook_mineru_fts.db  # FTS5 索引 + 概念图谱 (187MB)
+    └── textbook_chunks.index   # FAISS 向量索引 (130MB, 65,978 vectors)
 ```
 
 > 📷 **图片不在 Docker 中** — 87K 张原图托管在 Cloudflare R2（`img.rdfzer.com`），前端通过 CDN URL 直接加载。
@@ -303,16 +306,56 @@ certbot --nginx -d sun.bdfz.net
 
 ## 🛠️ 技术栈
 
-| 组件 | 技术 | 版本 |
+| 组件 | 技术 | 版本/说明 |
 |------|------|------|
-| OCR 引擎 | [MinerU](https://github.com/opendatalab/MinerU) | v2.7.6 |
-| 全文检索 | SQLite FTS5 | — |
+| 数据库 | SQLite + FTS5 | 3.47 |
 | 后端 | FastAPI + uvicorn | Python 3.13 |
-| 前端 | Vanilla HTML/CSS/JS | 无框架 |
+| 前端 | Vanilla HTML/CSS/JS + KaTeX | 无框架, 公式渲染 |
 | 图片 CDN | Cloudflare R2 | `img.rdfzer.com` |
 | AI 解读 | Gemini (via Cloudflare Worker) | `ai.bdfz.net` |
 | 容器 | Docker | 29.2 |
 | 数据备份 | rclone → Google Drive / R2 | v1.73 |
+
+### 关联发掘技术栈
+
+| 组件 | 技术 | 说明 |
+|------|------|------|
+| 中文向量模型 | `BAAI/bge-small-zh-v1.5` | 512D 中文语义嵌入，90MB，MTEB 中文榜前列 |
+| 向量检索 | `faiss-cpu` | 65,978 向量 flat index，130MB |
+| 中文分词 | `jieba` + POS tagging | 词性过滤（保留名词/专有名词），IDF 加权 |
+| 概念图谱 | SQLite `concept_map` + `concept_idf` | 自动发现跨 ≥2 学科的高频概念 |
+| 全文检索 | SQLite FTS5 | Porter 分词器，OR 组合查询 |
+| 评分算法 | 自定义 `_score_result` | IDF 加权词项匹配 + 概念命中 + 同学科加分，阈值 ≥15 |
+
+**关联检索流程** (3 层混合)：
+1. **概念图谱** → `_match_concepts` 从 concept_map 匹配学科核心概念
+2. **IDF 加权 FTS** → `_extract_weighted_terms` Jieba 分词后按 IDF 权重排序，FTS5 搜索
+3. **稠密向量** → `FAISS` 编码查询文本为 512D 向量，搜索 top-K 近邻 (cosine > 0.55)
+
+---
+
+## 📋 更新日志
+
+### 2026-03-03: 语义关联引擎升级 + UI 重构
+
+**关联发掘引擎**
+- ✅ 引入 FAISS + `BAAI/bge-small-zh-v1.5`，65,978 条教材向量索引，实现稠密语义检索
+- ✅ Jieba 中文分词替代暴力正则，搜索词质量大幅提升
+- ✅ 清洗概念图谱数据库，删除 122 条 OCR/LaTeX 噪声概念
+- ✅ IDF 加权评分 + 最低质量阈值 (≥15)，过滤无效关联
+- ✅ KaTeX 公式渲染，所有学科公式正确显示
+
+**前端 UI**
+- ✅ 品牌重命名：跨学科知识平台 → **AI 高中教材**
+- ✅ 首页标语更新：「这世界真的有学科吗？」
+- ✅ 动态概念轮播：从 API 拉取高频跨学科概念，每 3 秒轮换 4 个
+- ✅ 真题页新增教材下载入口 → jks.bdfz.net
+- ✅ 关于页精简，移除重复的下载区域
+
+**基础设施**
+- ✅ Dockerfile 升级：安装 sentence-transformers + faiss-cpu + jieba
+- ✅ Docker 镜像内置 BGE 模型（构建时预下载），启动即用
+- ✅ VPS 部署：130MB FAISS 索引 + 186MB 清洗后数据库上传
 
 ---
 
