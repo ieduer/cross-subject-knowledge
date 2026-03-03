@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="北大附中 孙玉磊">
-    <title>跨学科教材知识平台 · 北大附中</title>
+    <title>AI 高中教材 · 北大附中</title>
     <meta name="robots" content="index, follow">
     <link rel="icon" href="https://img.bdfz.net/20250503004.webp" type="image/jpeg">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -32,7 +32,7 @@
             <div class="header-inner">
                 <div class="logo">
                     <span class="logo-icon">🔗</span>
-                    <span class="logo-text">跨学科知识平台</span>
+                    <span class="logo-text">AI 高中教材</span>
                     <span class="logo-badge">BETA</span>
                 </div>
                 <nav class="nav">
@@ -47,7 +47,7 @@
         <!-- Search View -->
         <main id="view-search" class="view active">
             <section class="hero">
-                <h1>发现教材中<span class="gradient-text">隐藏的跨学科联系</span></h1>
+                <h1><span class="gradient-text">这世界真的有学科吗？</span></h1>
                 <p class="hero-sub">覆盖高中 9 科 · 316 本教材 · 65,978 条结构化语料 · 3,840 道高考真题</p>
                 <div class="search-box">
                     <span class="search-icon">🔍</span>
@@ -81,14 +81,7 @@
                 </div>
                 <div class="quick-tags">
                     <span class="tag-label">试试：</span>
-                    <button class="quick-tag" data-q="蛋白质">蛋白质</button>
-                    <button class="quick-tag" data-q="DNA">DNA</button>
-                    <button class="quick-tag" data-q="能量守恒">能量守恒</button>
-                    <button class="quick-tag" data-q="丝绸之路">丝绸之路</button>
-                    <button class="quick-tag" data-q="温室效应">温室效应</button>
-                    <button class="quick-tag" data-q="光合作用">光合作用</button>
-                    <button class="quick-tag" data-q="平衡">平衡</button>
-                    <button class="quick-tag" data-q="电子">电子</button>
+                    <div class="concept-carousel" id="concept-carousel"></div>
                 </div>
             </section>
 
@@ -163,6 +156,13 @@
             <div id="gk-count" class="gk-count hidden"></div>
             <section id="gk-results" class="gk-results"></section>
 
+            <!-- Textbook Download Link -->
+            <div class="gk-download-link">
+                <a href="https://jks.bdfz.net/" target="_blank" class="download-btn">
+                    📥 教材 PDF 下载 · jks.bdfz.net
+                </a>
+            </div>
+
             <!-- Gaokao Link Panel (modal) -->
             <div id="gk-link-panel" class="gk-link-panel hidden">
                 <div class="gk-link-inner">
@@ -203,11 +203,7 @@
                     <p>全文检索基于 SQLite FTS5，<strong>69,818 条</strong>结构化语料（含 3,840 道高考真题），覆盖 <strong>9 个学科</strong>。</p>
                     <p>AI 跨学科解读由 <strong>Gemini</strong> 提供。</p>
                 </div>
-                <div class="about-card">
-                    <h3>📚 教材下载</h3>
-                    <p>全部 316 本教材 PDF 可在此下载：</p>
-                    <p><a href="https://jks.bdfz.net/" target="_blank">📥 jks.bdfz.net — 教材 PDF 下载</a></p>
-                </div>
+
                 <div class="about-card">
                     <h3>🔓 开源</h3>
                     <p>本平台完全开源，MIT License。</p>
@@ -223,7 +219,7 @@
         </main>
 
         <footer class="footer">
-            <p>跨学科教材知识平台 · 开源项目 · MIT License</p>
+            <p>AI 高中教材 · 开源项目 · MIT License</p>
         </footer>
     </div>
     <script src="assets/app.js"></script>

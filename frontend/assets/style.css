@@ -232,6 +232,44 @@ body {
     background: rgba(108, 92, 231, 0.1);
 }
 
+/* ── Concept Carousel ─────────────────────────────────────── */
+.concept-carousel {
+    display: inline-flex;
+    gap: 8px;
+    transition: opacity 0.3s ease;
+    min-height: 34px;
+    align-items: center;
+}
+
+.concept-carousel.fading {
+    opacity: 0;
+}
+
+/* ── Download Button (Gaokao) ───────────────────────────── */
+.gk-download-link {
+    text-align: center;
+    padding: 32px 16px;
+}
+
+.download-btn {
+    display: inline-block;
+    background: linear-gradient(135deg, var(--accent), var(--accent-light));
+    color: #fff;
+    padding: 14px 32px;
+    border-radius: 30px;
+    font-size: 15px;
+    font-weight: 600;
+    text-decoration: none;
+    transition: var(--transition);
+    box-shadow: 0 4px 20px var(--accent-glow);
+}
+
+.download-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 30px var(--accent-glow);
+    filter: brightness(1.1);
+}
+
 /* ── Stats Bar ───────────────────────────────────────────── */
 .stats-bar {
     display: flex;
@@ -1804,6 +1842,22 @@ body {
 
     .search-submit {
         padding: 8px 12px;
+        font-size: 13px;
+    }
+
+    .concept-carousel {
+        gap: 4px;
+    }
+}
+
+/* ── Download button mobile ───────────────────────────────── */
+@media (max-width: 640px) {
+    .gk-download-link {
+        padding: 20px 12px;
+    }
+
+    .download-btn {
+        padding: 12px 24px;
         font-size: 13px;
     }
 }

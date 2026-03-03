@@ -135,12 +135,55 @@ const relatedBarEl = document.getElementById('related-bar');
 
 searchBtn.addEventListener('click', () => doSearch(searchInput.value));
 searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(searchInput.value); });
-document.querySelectorAll('.quick-tag').forEach(tag => {
-    tag.addEventListener('click', () => {
-        searchInput.value = tag.dataset.q;
-        doSearch(tag.dataset.q);
-    });
-});
+// ── Dynamic Concept Carousel ──────────────────────────────
+const FALLBACK_CONCEPTS = ['蛋白质', 'DNA', '能量守恒', '丝绸之路', '温室效应', '光合作用', '平衡', '电子',
+    '氧化还原', '细胞分裂', '力学', '概率', '函数', '文艺复兴', '全球化', '化学键', '自然选择', '电磁波'];
+let allConcepts = [...FALLBACK_CONCEPTS];
+const carousel = document.getElementById('concept-carousel');
+const CAROUSEL_SIZE = 4;
+let carouselIdx = 0;
+
+function renderCarouselBatch() {
+    if (!carousel) return;
+    carousel.classList.add('fading');
+    setTimeout(() => {
+        carousel.innerHTML = '';
+        for (let i = 0; i < CAROUSEL_SIZE; i++) {
+            const concept = allConcepts[(carouselIdx + i) % allConcepts.length];
+            const btn = document.createElement('button');
+            btn.className = 'quick-tag';
+            btn.textContent = concept;
+            btn.addEventListener('click', () => {
+                searchInput.value = concept;
+                doSearch(concept);
+            });
+            carousel.appendChild(btn);
+        }
+        carouselIdx = (carouselIdx + CAROUSEL_SIZE) % allConcepts.length;
+        carousel.classList.remove('fading');
+    }, 300);
+}
+
+// Load high-frequency concepts from API
+(async () => {
+    try {
+        const res = await fetch(`${API}/api/cross-links`);
+        if (res.ok) {
+            const data = await res.json();
+            const nodes = data.concept_nodes || [];
+            if (nodes.length > 6) {
+                allConcepts = nodes.map(n => n.id || n.concept || n.name).filter(Boolean);
+                // Shuffle for variety
+                for (let i = allConcepts.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [allConcepts[i], allConcepts[j]] = [allConcepts[j], allConcepts[i]];
+                }
+            }
+        }
+    } catch (_) { /* fallback concepts already set */ }
+    renderCarouselBatch();
+    setInterval(renderCarouselBatch, 3000);
+})();
 
 let currentQuery = '';
 let currentData = null;
