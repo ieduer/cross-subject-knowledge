@@ -14,8 +14,8 @@ COPY frontend/ frontend/
 RUN mkdir -p /app/data/index
 COPY data/textbook_mineru_fts.db /app/data/index/textbook_mineru_fts.db
 
-# Copy extracted textbook images
-COPY data/images/ /app/data/images/
+# Images served from Cloudflare R2 CDN (img.rdfzer.com)
+# No longer baked into Docker image
 
 ENV DATA_ROOT=/app
 ENV PORT=8080

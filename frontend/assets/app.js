@@ -2,6 +2,7 @@
 
 const API = '';  // same origin
 const AI_API = 'https://ai.bdfz.net/';
+const IMG_CDN = 'https://img.rdfzer.com';
 
 // ── AI Synthesis ──────────────────────────────────────────
 const aiPanel = document.getElementById('ai-panel');
@@ -67,6 +68,7 @@ ${context}
         aiBtn.querySelector('.ai-sparkle').textContent = '✨';
     }
 }
+
 // ── Navigation ────────────────────────────────────────────
 document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -79,12 +81,56 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
     });
 });
 
+// ── Advanced Search Panel ─────────────────────────────────
+const advToggle = document.getElementById('advanced-toggle');
+const advPanel = document.getElementById('advanced-panel');
+const filterBook = document.getElementById('filter-book');
+const filterSort = document.getElementById('filter-sort');
+const filterImages = document.getElementById('filter-images');
+
+advToggle.addEventListener('click', () => {
+    advPanel.classList.toggle('hidden');
+    advToggle.classList.toggle('active');
+});
+
+// Load books into dropdown on first toggle open
+let booksLoaded = false;
+async function loadBooks() {
+    if (booksLoaded) return;
+    try {
+        const res = await fetch(`${API}/api/books`);
+        const subjects = await res.json();
+        filterBook.innerHTML = '<option value="">全部教材</option>';
+        subjects.forEach(subj => {
+            const optgroup = document.createElement('optgroup');
+            optgroup.label = `${subj.icon} ${subj.subject}`;
+            subj.books.forEach(b => {
+                const opt = document.createElement('option');
+                opt.value = b.book_key;
+                opt.textContent = b.title;
+                optgroup.appendChild(opt);
+            });
+            filterBook.appendChild(optgroup);
+        });
+        booksLoaded = true;
+    } catch (e) { /* silent */ }
+}
+
+// Load books on page load
+loadBooks();
+
+// Re-search when filters change
+filterSort.addEventListener('change', () => { if (currentQuery) doSearch(currentQuery); });
+filterBook.addEventListener('change', () => { if (currentQuery) doSearch(currentQuery); });
+filterImages.addEventListener('change', () => { if (currentQuery) doSearch(currentQuery); });
+
 // ── Search ────────────────────────────────────────────────
 const searchInput = document.getElementById('search-input');
 const searchBtn = document.getElementById('search-btn');
 const resultsEl = document.getElementById('results');
 const crossHintEl = document.getElementById('cross-hint');
 const subjectTabsEl = document.getElementById('subject-tabs');
+const relatedBarEl = document.getElementById('related-bar');
 
 searchBtn.addEventListener('click', () => doSearch(searchInput.value));
 searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(searchInput.value); });
@@ -106,14 +152,54 @@ async function doSearch(q) {
     resultsEl.innerHTML = '<div class="loading">搜索中…</div>';
     crossHintEl.classList.add('hidden');
     subjectTabsEl.classList.add('hidden');
+    relatedBarEl.classList.add('hidden');
+
+    // Build search URL with advanced filters
+    const params = new URLSearchParams({ q, limit: 100 });
+
+    const bookKey = filterBook.value;
+    if (bookKey) params.set('book_key', bookKey);
+
+    const sort = filterSort.value;
+    if (sort && sort !== 'relevance') params.set('sort', sort);
+
+    if (filterImages.checked) params.set('has_images', 'true');
 
     try {
-        const res = await fetch(`${API}/api/search?q=${encodeURIComponent(q)}&limit=100`);
+        const res = await fetch(`${API}/api/search?${params}`);
         if (!res.ok) throw new Error('Search failed');
         currentData = await res.json();
         renderResults(currentData);
+        // Load related concepts
+        loadRelated(q);
     } catch (e) {
         resultsEl.innerHTML = `<div class="loading">搜索出错: ${e.message}</div>`;
+    }
+}
+
+// ── Related Concepts ──────────────────────────────────────
+async function loadRelated(q) {
+    try {
+        const res = await fetch(`${API}/api/related?q=${encodeURIComponent(q)}&limit=10`);
+        const data = await res.json();
+        if (data.length > 0) {
+            relatedBarEl.innerHTML = `
+                <span class="related-label">🔗 相关概念：</span>
+                ${data.map(r => `<button class="related-tag" data-q="${escAttr(r.term)}">${escHtml(r.term)}<span class="related-count">${r.count}</span></button>`).join('')}
+            `;
+            relatedBarEl.classList.remove('hidden');
+            relatedBarEl.querySelectorAll('.related-tag').forEach(tag => {
+                tag.addEventListener('click', () => {
+                    searchInput.value = tag.dataset.q;
+                    doSearch(tag.dataset.q);
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                });
+            });
+        } else {
+            relatedBarEl.classList.add('hidden');
+        }
+    } catch (e) {
+        relatedBarEl.classList.add('hidden');
     }
 }
 
@@ -154,7 +240,6 @@ function renderResults(data, filterSubject = null) {
             tab.addEventListener('click', () => {
                 const s = tab.dataset.subj || null;
                 if (s) {
-                    // Client-side filter
                     renderResults(currentData, s);
                 } else {
                     renderResults(currentData);
@@ -186,7 +271,10 @@ function renderResults(data, filterSubject = null) {
             </div>
             ${g.results.map(r => `
                 <div class="result-card" onclick="this.classList.toggle('expanded')">
-                    <div class="result-title">${escHtml(r.title)} · §${r.section}</div>
+                    <div class="result-meta">
+                        <span class="result-title">${escHtml(r.title)} · §${r.section}</span>
+                        ${r.image_count > 0 ? `<span class="img-badge">📷 ${r.image_count}</span>` : ''}
+                    </div>
                     <div class="result-snippet">${sanitizeSnippet(r.snippet)}</div>
                     <div class="result-text">${renderText(r.text, r.book_key)}</div>
                 </div>
@@ -204,6 +292,10 @@ function escHtml(s) {
     const d = document.createElement('div');
     d.textContent = s || '';
     return d.innerHTML;
+}
+
+function escAttr(s) {
+    return (s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 // Sanitize snippet: keep <mark> highlights, strip everything else
@@ -247,9 +339,9 @@ function renderText(text, bookKey) {
     if (!text) return '';
     // Strip HTML tags except preserve content
     let s = text.replace(/<[^>]+>/g, ' ');
-    // Convert markdown images to <img> tags
+    // Convert markdown images to <img> tags — use R2 CDN
     s = s.replace(/!\[([^\]]*)\]\(images\/([^)]+)\)/g, (_, alt, src) => {
-        return `<img class="result-img" src="/images/${encodeURIComponent(bookKey)}/${src}" alt="${alt || '教材图片'}" loading="lazy">`;
+        return `<img class="result-img" src="${IMG_CDN}/${encodeURIComponent(bookKey)}/${src}" alt="${alt || '教材图片'}" loading="lazy">`;
     });
     // Clean LaTeX
     s = s.replace(/\$([^$]+)\$/g, '$1');

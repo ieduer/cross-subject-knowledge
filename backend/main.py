@@ -2,6 +2,7 @@
 跨学科教材知识平台 · FastAPI 后端
 """
 import sqlite3, json, os, re
+from collections import Counter
 from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, Query, HTTPException
@@ -40,10 +41,13 @@ def get_db():
 def search(
     q: str = Query(..., min_length=1, max_length=200),
     subject: Optional[str] = Query(None),
+    book_key: Optional[str] = Query(None),
+    sort: str = Query("relevance"),
+    has_images: bool = Query(False),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    """Full-text search with cross-subject grouping."""
+    """Full-text search with cross-subject grouping, sorting, and filtering."""
     con = get_db()
     try:
         # Clean query for FTS5
@@ -51,12 +55,21 @@ def search(
         if not clean_q:
             raise HTTPException(400, "Invalid query")
 
-        # Search with subject filter
+        # Build WHERE filters
         params = [clean_q]
         where_extra = ""
         if subject:
-            where_extra = "AND c.subject = ?"
+            where_extra += " AND c.subject = ?"
             params.append(subject)
+        if book_key:
+            where_extra += " AND c.book_key = ?"
+            params.append(book_key)
+
+        # Order clause
+        order_clause = "ORDER BY rank"
+        if sort == "images":
+            order_clause = "ORDER BY (LENGTH(c.text) - LENGTH(REPLACE(c.text, '![', ''))) DESC, rank"
+
         params.extend([limit, offset])
 
         rows = con.execute(f"""
@@ -66,9 +79,13 @@ def search(
             FROM chunks c
             JOIN chunks_fts f ON c.id = f.rowid
             WHERE chunks_fts MATCH ? {where_extra}
-            ORDER BY rank
+            {order_clause}
             LIMIT ? OFFSET ?
         """, params).fetchall()
+
+        # Optional: filter to only results with images
+        if has_images:
+            rows = [r for r in rows if '![' in (r['text'] or '')]
 
         # Group by subject
         by_subject = {}
@@ -77,25 +94,34 @@ def search(
             if s not in by_subject:
                 meta = SUBJECT_META.get(s, {"icon": "📚", "color": "#95a5a6"})
                 by_subject[s] = {"subject": s, **meta, "results": [], "count": 0}
+            # Count images in this chunk
+            text = r["text"] or ""
+            img_count = text.count('![')
             by_subject[s]["results"].append({
                 "id": r["id"],
                 "title": r["title"],
                 "book_key": r["book_key"],
                 "section": r["section"],
                 "snippet": r["snippet"],
-                "text": r["text"][:2000],
+                "text": text[:2000],
+                "image_count": img_count,
             })
             by_subject[s]["count"] += 1
 
         # Get total counts per subject
+        count_params = [clean_q]
+        count_where = ""
+        if book_key:
+            count_where += " AND c.book_key = ?"
+            count_params.append(book_key)
         count_rows = con.execute(f"""
             SELECT c.subject, COUNT(*) as cnt
             FROM chunks c
             JOIN chunks_fts f ON c.id = f.rowid
-            WHERE chunks_fts MATCH ?
+            WHERE chunks_fts MATCH ? {count_where}
             GROUP BY c.subject
             ORDER BY cnt DESC
-        """, [clean_q]).fetchall()
+        """, count_params).fetchall()
 
         subject_counts = {r["subject"]: r["cnt"] for r in count_rows}
         total = sum(subject_counts.values())
@@ -107,12 +133,17 @@ def search(
             names = "、".join(cross_subjects[:4])
             hint = f"💡 「{q}」横跨 {len(cross_subjects)} 个学科（{names}），它们从不同角度描述了同一概念！"
 
+        # Sort groups by cross-subject count if requested
+        groups = list(by_subject.values())
+        if sort == "cross":
+            groups.sort(key=lambda g: g["count"], reverse=True)
+
         return {
             "query": q,
             "total": total,
             "subject_counts": subject_counts,
             "cross_hint": hint,
-            "groups": list(by_subject.values()),
+            "groups": groups,
         }
     finally:
         con.close()
@@ -192,10 +223,84 @@ def cross_links():
         con.close()
 
 
-# Serve images
-IMAGES_DIR = ROOT / "data/images"
-if IMAGES_DIR.exists():
-    app.mount("/images", StaticFiles(directory=IMAGES_DIR), name="images")
+@app.get("/api/books")
+def books():
+    """List all textbooks grouped by subject."""
+    con = get_db()
+    try:
+        rows = con.execute("""
+            SELECT DISTINCT book_key, title, subject
+            FROM chunks
+            ORDER BY subject, title
+        """).fetchall()
+        by_subject = {}
+        for r in rows:
+            s = r["subject"]
+            if s not in by_subject:
+                meta = SUBJECT_META.get(s, {"icon": "📚", "color": "#95a5a6"})
+                by_subject[s] = {"subject": s, **meta, "books": []}
+            by_subject[s]["books"].append({
+                "book_key": r["book_key"],
+                "title": r["title"],
+            })
+        return list(by_subject.values())
+    finally:
+        con.close()
+
+
+@app.get("/api/related")
+def related(
+    q: str = Query(..., min_length=1, max_length=200),
+    limit: int = Query(8, ge=1, le=20),
+):
+    """Find concepts that co-occur with the query term."""
+    con = get_db()
+    try:
+        clean_q = re.sub(r'[^\w\u4e00-\u9fff\s]', '', q).strip()
+        if not clean_q:
+            return []
+
+        # Get text chunks matching the query
+        rows = con.execute("""
+            SELECT c.text
+            FROM chunks c
+            JOIN chunks_fts f ON c.id = f.rowid
+            WHERE chunks_fts MATCH ?
+            LIMIT 100
+        """, [clean_q]).fetchall()
+
+        if not rows:
+            return []
+
+        # Extract Chinese word candidates (2-4 char sequences) from matching chunks
+        word_counter = Counter()
+        query_chars = set(clean_q)
+        for r in rows:
+            text = r["text"] or ""
+            # Find Chinese word-like sequences (2-4 chars)
+            words = re.findall(r'[\u4e00-\u9fff]{2,4}', text)
+            for w in words:
+                # Skip if the word is part of the query or too generic
+                if w == clean_q or w in clean_q or clean_q in w:
+                    continue
+                if len(w) < 2:
+                    continue
+                word_counter[w] += 1
+
+        # Return top co-occurring terms (appearing in multiple chunks)
+        candidates = [
+            {"term": term, "count": count}
+            for term, count in word_counter.most_common(limit * 3)
+            if count >= 2  # must appear in at least 2 chunks
+        ][:limit]
+
+        return candidates
+    finally:
+        con.close()
+
+
+# Images served from Cloudflare R2 CDN
+IMG_CDN = os.getenv("IMG_CDN", "https://img.rdfzer.com")
 
 # Serve frontend
 if FRONTEND.exists():

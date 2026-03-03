@@ -617,6 +617,154 @@ body {
     border-top: 1px solid var(--border);
 }
 
+/* ── Advanced Search Toggle ──────────────────────────────── */
+.advanced-toggle {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 18px;
+    cursor: pointer;
+    padding: 8px;
+    transition: var(--transition);
+    line-height: 1;
+}
+
+.advanced-toggle:hover,
+.advanced-toggle.active {
+    color: var(--accent-light);
+}
+
+/* ── Advanced Panel ──────────────────────────────────────── */
+.advanced-panel {
+    max-width: 640px;
+    margin: 12px auto 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    animation: fadeIn 0.2s ease;
+}
+
+.filter-row {
+    display: flex;
+    gap: 16px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+
+.filter-group {
+    flex: 1;
+    min-width: 140px;
+}
+
+.filter-group label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+    font-weight: 500;
+}
+
+.filter-group select {
+    width: 100%;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    cursor: pointer;
+    transition: var(--transition);
+    appearance: auto;
+}
+
+.filter-group select:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+
+.checkbox-label {
+    display: flex !important;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 13px !important;
+    color: var(--text-dim) !important;
+    padding-bottom: 8px;
+}
+
+.checkbox-label input[type="checkbox"] {
+    accent-color: var(--accent);
+    width: 16px;
+    height: 16px;
+}
+
+/* ── Related Concepts Bar ────────────────────────────────── */
+.related-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+    animation: fadeIn 0.3s ease;
+}
+
+.related-label {
+    font-size: 13px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.related-tag {
+    background: rgba(108, 92, 231, 0.08);
+    border: 1px solid rgba(108, 92, 231, 0.2);
+    color: var(--accent-light);
+    padding: 4px 12px;
+    border-radius: 16px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: var(--transition);
+    white-space: nowrap;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.related-tag:hover {
+    background: rgba(108, 92, 231, 0.2);
+    border-color: var(--accent);
+    transform: translateY(-1px);
+}
+
+.related-count {
+    font-size: 10px;
+    opacity: 0.6;
+}
+
+/* ── Result Meta ─────────────────────────────────────────── */
+.result-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+}
+
+/* ── Image Count Badge ───────────────────────────────────── */
+.img-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    background: rgba(46, 204, 113, 0.12);
+    color: #2ecc71;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    margin-left: 8px;
+    font-weight: 500;
+}
+
 /* ── Utility ─────────────────────────────────────────────── */
 .hidden {
     display: none !important;
@@ -640,24 +788,326 @@ body {
     color: var(--text-muted);
 }
 
-@media (max-width: 640px) {
+/* ── Tablet ──────────────────────────────────────────────── */
+@media (max-width: 768px) {
     .hero h1 {
+        font-size: 30px;
+    }
+
+    .graph-container {
+        height: calc(100vh - 160px);
+    }
+
+    .about-content {
+        padding: 24px 0 60px;
+    }
+
+    .about-content h2 {
         font-size: 26px;
     }
 
-    .hero {
-        padding: 40px 0 20px;
+    .ai-result {
+        padding: 16px 18px;
     }
+}
 
+/* ── Mobile ──────────────────────────────────────────────── */
+@media (max-width: 640px) {
+
+    /* Header */
     .header-inner {
-        padding: 0 16px;
+        padding: 0 12px;
+        height: 52px;
     }
 
+    .logo-text {
+        font-size: 15px;
+    }
+
+    .logo-icon {
+        font-size: 20px;
+    }
+
+    .logo-badge {
+        font-size: 9px;
+        padding: 1px 5px;
+    }
+
+    .nav {
+        gap: 2px;
+    }
+
+    .nav-btn {
+        padding: 6px 10px;
+        font-size: 13px;
+    }
+
+    /* View */
     .view {
-        padding: 0 16px;
+        padding: 0 12px;
     }
 
+    /* Hero */
+    .hero {
+        padding: 32px 0 16px;
+    }
+
+    .hero h1 {
+        font-size: 22px;
+        line-height: 1.4;
+    }
+
+    .hero-sub {
+        font-size: 13px;
+        margin-bottom: 24px;
+    }
+
+    /* Search Box */
     .search-box {
         border-radius: 12px;
+        padding: 3px 3px 3px 14px;
+    }
+
+    .search-box input {
+        font-size: 15px;
+        padding: 10px 0;
+    }
+
+    .search-box input::placeholder {
+        font-size: 13px;
+    }
+
+    .search-icon {
+        font-size: 16px;
+        margin-right: 6px;
+    }
+
+    .search-submit {
+        padding: 8px 16px;
+        font-size: 14px;
+        border-radius: 10px;
+    }
+
+    /* Quick Tags */
+    .quick-tags {
+        margin-top: 14px;
+        gap: 6px;
+    }
+
+    .quick-tag {
+        padding: 5px 10px;
+        font-size: 12px;
+    }
+
+    .tag-label {
+        font-size: 12px;
+    }
+
+    /* Stats Bar */
+    .stats-bar {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+        padding: 12px 0;
+        margin-bottom: 12px;
+    }
+
+    .stat-chip {
+        padding: 5px 10px;
+        font-size: 12px;
+        justify-content: center;
+    }
+
+    /* Cross Hint */
+    .cross-hint {
+        font-size: 13px;
+        padding: 12px 16px;
+        margin-bottom: 16px;
+    }
+
+    /* AI Panel */
+    .ai-btn {
+        padding: 10px 20px;
+        font-size: 14px;
+    }
+
+    .ai-result {
+        padding: 14px 16px;
+        margin-top: 12px;
+    }
+
+    .ai-result-header {
+        font-size: 14px;
+        margin-bottom: 12px;
+        padding-bottom: 10px;
+    }
+
+    .ai-content {
+        font-size: 13px;
+        line-height: 1.8;
+    }
+
+    /* Subject Tabs — horizontal scroll */
+    .subject-tabs {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        gap: 6px;
+        margin-bottom: 16px;
+        padding-bottom: 12px;
+    }
+
+    .subject-tabs::-webkit-scrollbar {
+        display: none;
+    }
+
+    .subject-tab {
+        padding: 6px 12px;
+        font-size: 13px;
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+
+    /* Related bar — horizontal scroll on mobile */
+    .related-bar {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        padding-bottom: 4px;
+    }
+
+    .related-bar::-webkit-scrollbar {
+        display: none;
+    }
+
+    /* Advanced panel mobile layout */
+    .advanced-panel {
+        padding: 12px 14px;
+    }
+
+    .filter-row {
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .filter-group {
+        min-width: 100%;
+    }
+
+    /* Result Cards */
+    .result-group {
+        margin-bottom: 20px;
+    }
+
+    .group-header {
+        font-size: 16px;
+        gap: 8px;
+        margin-bottom: 10px;
+    }
+
+    .group-icon {
+        font-size: 18px;
+    }
+
+    .group-count {
+        font-size: 12px;
+    }
+
+    .result-card {
+        padding: 12px 14px;
+        margin-bottom: 8px;
+        border-radius: 10px;
+    }
+
+    .result-title {
+        font-size: 12px;
+    }
+
+    .result-snippet {
+        font-size: 13px;
+        line-height: 1.6;
+    }
+
+    .result-text {
+        font-size: 13px;
+        line-height: 1.7;
+        max-height: 300px;
+    }
+
+    .result-img {
+        max-height: 260px;
+        border-radius: 6px;
+        margin: 8px 0;
+    }
+
+    /* Graph */
+    .graph-header {
+        padding: 24px 0 12px;
+    }
+
+    .graph-header h2 {
+        font-size: 22px;
+    }
+
+    .graph-header p {
+        font-size: 13px;
+    }
+
+    .graph-container {
+        height: calc(100vh - 140px);
+        touch-action: manipulation;
+    }
+
+    /* About */
+    .about-content {
+        padding: 20px 0 60px;
+    }
+
+    .about-content h2 {
+        font-size: 24px;
+        margin-bottom: 20px;
+    }
+
+    .about-card {
+        padding: 16px;
+        margin-bottom: 12px;
+    }
+
+    .about-card h3 {
+        font-size: 16px;
+        margin-bottom: 8px;
+    }
+
+    .about-card p {
+        font-size: 14px;
+    }
+
+    /* Footer */
+    .footer {
+        padding: 16px 12px;
+        font-size: 12px;
+    }
+}
+
+/* ── Small phones ────────────────────────────────────────── */
+@media (max-width: 380px) {
+    .hero h1 {
+        font-size: 20px;
+    }
+
+    .logo-text {
+        font-size: 13px;
+    }
+
+    .nav-btn {
+        padding: 5px 8px;
+        font-size: 12px;
+    }
+
+    .search-submit {
+        padding: 8px 12px;
+        font-size: 13px;
     }
 }

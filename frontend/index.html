@@ -45,7 +45,32 @@
                 <div class="search-box">
                     <span class="search-icon">🔍</span>
                     <input type="text" id="search-input" placeholder="搜索概念，如：蛋白质、勾股定理、丝绸之路…" autocomplete="off">
+                    <button id="advanced-toggle" class="advanced-toggle" title="高级搜索">⚙</button>
                     <button id="search-btn" class="search-submit">搜索</button>
+                </div>
+                <!-- Advanced Search Panel -->
+                <div id="advanced-panel" class="advanced-panel hidden">
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label>📚 教材</label>
+                            <select id="filter-book">
+                                <option value="">全部教材</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label>📊 排序</label>
+                            <select id="filter-sort">
+                                <option value="relevance">相关度优先</option>
+                                <option value="cross">跨学科数优先</option>
+                                <option value="images">含图优先</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="filter-images"> 📷 仅含图结果
+                            </label>
+                        </div>
+                    </div>
                 </div>
                 <div class="quick-tags">
                     <span class="tag-label">试试：</span>
@@ -65,6 +90,9 @@
 
             <!-- Cross hint -->
             <div id="cross-hint" class="cross-hint hidden"></div>
+
+            <!-- Related concepts -->
+            <div id="related-bar" class="related-bar hidden"></div>
 
             <!-- AI Synthesis Panel -->
             <div id="ai-panel" class="ai-panel hidden">
