@@ -42,6 +42,7 @@ def search(
     q: str = Query(..., min_length=1, max_length=200),
     subject: Optional[str] = Query(None),
     book_key: Optional[str] = Query(None),
+    source: Optional[str] = Query(None, description="Filter by source: textbook, gaokao, or all"),
     sort: str = Query("relevance"),
     has_images: bool = Query(False),
     limit: int = Query(50, ge=1, le=200),
@@ -64,6 +65,10 @@ def search(
         if book_key:
             where_extra += " AND c.book_key = ?"
             params.append(book_key)
+        if source == 'textbook':
+            where_extra += " AND c.source = 'mineru'"
+        elif source == 'gaokao':
+            where_extra += " AND c.source = 'gaokao'"
 
         # Order clause
         order_clause = "ORDER BY rank"
@@ -75,7 +80,7 @@ def search(
         rows = con.execute(f"""
             SELECT c.id, c.subject, c.title, c.book_key, c.section,
                    snippet(chunks_fts, 0, '<mark>', '</mark>', '…', 40) as snippet,
-                   c.text
+                   c.text, c.source, c.year, c.category
             FROM chunks c
             JOIN chunks_fts f ON c.id = f.rowid
             WHERE chunks_fts MATCH ? {where_extra}
@@ -97,7 +102,7 @@ def search(
             # Count images in this chunk
             text = r["text"] or ""
             img_count = text.count('![')
-            by_subject[s]["results"].append({
+            result_item = {
                 "id": r["id"],
                 "title": r["title"],
                 "book_key": r["book_key"],
@@ -105,7 +110,12 @@ def search(
                 "snippet": r["snippet"],
                 "text": text[:2000],
                 "image_count": img_count,
-            })
+                "source": r["source"] or "mineru",
+            }
+            if r["source"] == "gaokao":
+                result_item["year"] = r["year"]
+                result_item["category"] = r["category"]
+            by_subject[s]["results"].append(result_item)
             by_subject[s]["count"] += 1
 
         # Get total counts per subject
@@ -155,11 +165,30 @@ def stats():
     con = get_db()
     try:
         total = con.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        textbook_count = con.execute("SELECT COUNT(*) FROM chunks WHERE source='mineru' OR source IS NULL").fetchone()[0]
+        gaokao_count = con.execute("SELECT COUNT(*) FROM chunks WHERE source='gaokao'").fetchone()[0]
         dist = con.execute(
             "SELECT subject, COUNT(*) as cnt FROM chunks GROUP BY subject ORDER BY cnt DESC"
         ).fetchall()
+
+        # Gaokao specific stats
+        gaokao_years = con.execute(
+            "SELECT MIN(year) as min_y, MAX(year) as max_y FROM chunks WHERE source='gaokao' AND year IS NOT NULL"
+        ).fetchone()
+        gaokao_by_subject = con.execute(
+            "SELECT subject, COUNT(*) as cnt FROM chunks WHERE source='gaokao' GROUP BY subject ORDER BY cnt DESC"
+        ).fetchall()
+
         return {
             "total_chunks": total,
+            "textbook_chunks": textbook_count,
+            "gaokao_chunks": gaokao_count,
+            "gaokao_year_range": [gaokao_years["min_y"], gaokao_years["max_y"]] if gaokao_years and gaokao_years["min_y"] else None,
+            "gaokao_by_subject": [
+                {"name": r["subject"], "count": r["cnt"],
+                 **SUBJECT_META.get(r["subject"], {"icon": "📚", "color": "#95a5a6"})}
+                for r in gaokao_by_subject
+            ],
             "subjects": [
                 {
                     "name": r["subject"],
@@ -295,6 +324,218 @@ def related(
         ][:limit]
 
         return candidates
+    finally:
+        con.close()
+
+
+# ── Gaokao APIs ───────────────────────────────────────────────────────
+
+@app.get("/api/gaokao")
+def gaokao(
+    subject: Optional[str] = Query(None),
+    year: Optional[int] = Query(None),
+    category: Optional[str] = Query(None),
+    question_type: Optional[str] = Query(None, description="objective or subjective"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """Browse gaokao exam questions with filtering."""
+    con = get_db()
+    try:
+        where = ["source='gaokao'"]
+        params = []
+        if subject:
+            where.append("subject = ?")
+            params.append(subject)
+        if year:
+            where.append("year = ?")
+            params.append(year)
+        if category:
+            where.append("category = ?")
+            params.append(category)
+        if question_type:
+            where.append("question_type = ?")
+            params.append(question_type)
+
+        where_clause = " AND ".join(where)
+        params.extend([limit, offset])
+
+        rows = con.execute(f"""
+            SELECT id, content_id, subject, year, category, region,
+                   question_type, score, title, text, answer
+            FROM chunks
+            WHERE {where_clause}
+            ORDER BY year DESC, subject, section
+            LIMIT ? OFFSET ?
+        """, params).fetchall()
+
+        # Get total count for pagination
+        count_params = params[:-2]  # remove limit/offset
+        total = con.execute(f"""
+            SELECT COUNT(*) FROM chunks WHERE {where_clause}
+        """, count_params).fetchone()[0]
+
+        return {
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "questions": [
+                {
+                    "id": r["id"],
+                    "content_id": r["content_id"],
+                    "subject": r["subject"],
+                    "year": r["year"],
+                    "category": r["category"],
+                    "region": r["region"],
+                    "question_type": r["question_type"],
+                    "score": r["score"],
+                    "title": r["title"],
+                    "text": r["text"],
+                    "answer": r["answer"],
+                    **SUBJECT_META.get(r["subject"], {"icon": "📚", "color": "#95a5a6"}),
+                }
+                for r in rows
+            ],
+        }
+    finally:
+        con.close()
+
+
+@app.get("/api/gaokao/years")
+def gaokao_years():
+    """List available years, categories, and subjects for filtering."""
+    con = get_db()
+    try:
+        years = con.execute("""
+            SELECT DISTINCT year FROM chunks
+            WHERE source='gaokao' AND year IS NOT NULL
+            ORDER BY year DESC
+        """).fetchall()
+
+        categories = con.execute("""
+            SELECT DISTINCT category FROM chunks
+            WHERE source='gaokao' AND category IS NOT NULL AND category != ''
+            ORDER BY category
+        """).fetchall()
+
+        subjects = con.execute("""
+            SELECT subject, COUNT(*) as cnt FROM chunks
+            WHERE source='gaokao'
+            GROUP BY subject ORDER BY cnt DESC
+        """).fetchall()
+
+        return {
+            "years": [r["year"] for r in years],
+            "categories": [r["category"] for r in categories],
+            "subjects": [
+                {"name": r["subject"], "count": r["cnt"],
+                 **SUBJECT_META.get(r["subject"], {"icon": "📚", "color": "#95a5a6"})}
+                for r in subjects
+            ],
+        }
+    finally:
+        con.close()
+
+
+@app.get("/api/gaokao/link")
+def gaokao_link(
+    question_id: int = Query(..., description="ID of the gaokao question"),
+    limit: int = Query(10, ge=1, le=30),
+):
+    """Find textbook chunks most related to a gaokao question via FTS."""
+    con = get_db()
+    try:
+        # Get the question
+        q_row = con.execute(
+            "SELECT * FROM chunks WHERE id = ? AND source = 'gaokao'",
+            [question_id]
+        ).fetchone()
+        if not q_row:
+            raise HTTPException(404, "Question not found")
+
+        # Extract key terms from question text for FTS search
+        text = q_row["text"] or ""
+        q_subject = q_row["subject"]
+        # Extract Chinese terms (2-4 chars) for search
+        terms = re.findall(r'[\u4e00-\u9fff]{2,4}', text)
+        if not terms:
+            return {"question_id": question_id, "links": [], "cross_links": []}
+
+        # Use the most frequent meaningful terms
+        from collections import Counter as Ctr
+        term_counts = Ctr(terms)
+        # Expanded stop words: exam boilerplate + generic terms
+        stop_words = {
+            # Exam boilerplate
+            '选择', '问题', '下列', '以下', '关于', '其中', '正确', '错误',
+            '不正确', '说法', '叙述', '表述', '选项', '答案', '分析', '解答',
+            '已知', '求解', '设有', '如图', '所示', '可以', '可能', '区域',
+            '不能', '属于', '不属于', '一定', '不一定', '解答', '详解',
+            '根据', '由此', '可知', '因此', '所以', '由于', '如果', '那么',
+            '题目', '材料', '文中', '图中', '表中', '实验', '方案', '含量',
+            '条件', '下面', '上面', '哪个', '哪些', '什么', '为什么',
+            '判断', '推断', '分别', '同时', '以及', '或者', '而且',
+            # Generic verbs/adj
+            '进行', '使用', '利用', '通过', '发生', '产生', '得到', '变化',
+            '增大', '减小', '增加', '减少', '提高', '降低', '保持', '影响',
+            '表示', '反映', '说明', '体现', '指出', '认为', '表明',
+            '主要', '一般', '通常', '特别', '特殊', '基本', '重要',
+            '正确', '合理', '适当', '必要', '需要', '应该', '能够',
+            # Numbers/units
+            '过程', '结果', '作用', '功能', '特点', '特征', '方法',
+            '大小', '多少', '高低', '长短', '快慢', '强弱',
+        }
+        top_terms = [t for t, _ in term_counts.most_common(20)
+                     if t not in stop_words and len(t) >= 2]
+        if not top_terms:
+            return {"question_id": question_id, "links": [], "cross_links": []}
+
+        # Search textbook chunks — get more results to split
+        search_q = ' OR '.join(top_terms[:10])
+        try:
+            rows = con.execute("""
+                SELECT c.id, c.subject, c.title, c.book_key, c.section,
+                       snippet(chunks_fts, 0, '<mark>', '</mark>', '…', 40) as snippet,
+                       c.text
+                FROM chunks c
+                JOIN chunks_fts f ON c.id = f.rowid
+                WHERE chunks_fts MATCH ? AND c.source != 'gaokao'
+                ORDER BY rank
+                LIMIT ?
+            """, [search_q, limit * 2]).fetchall()
+        except Exception:
+            return {"question_id": question_id, "links": [], "cross_links": []}
+
+        # Split into same-subject and cross-subject
+        same_subject = []
+        cross_subject = []
+        for r in rows:
+            item = {
+                "id": r["id"],
+                "subject": r["subject"],
+                "title": r["title"],
+                "book_key": r["book_key"],
+                "section": r["section"],
+                "snippet": r["snippet"],
+                "text": (r["text"] or "")[:1500],
+                "link_type": "same" if r["subject"] == q_subject else "cross",
+                **SUBJECT_META.get(r["subject"], {"icon": "📚", "color": "#95a5a6"}),
+            }
+            if r["subject"] == q_subject:
+                if len(same_subject) < limit:
+                    same_subject.append(item)
+            else:
+                if len(cross_subject) < limit:
+                    cross_subject.append(item)
+
+        return {
+            "question_id": question_id,
+            "question_title": q_row["title"],
+            "question_subject": q_subject,
+            "search_terms": top_terms[:10],
+            "links": same_subject,
+            "cross_links": cross_subject,
+        }
     finally:
         con.close()
 

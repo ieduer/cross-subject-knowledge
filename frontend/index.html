@@ -31,6 +31,7 @@
                 </div>
                 <nav class="nav">
                     <button class="nav-btn active" data-view="search">搜索</button>
+                    <button class="nav-btn" data-view="gaokao">📝 真题</button>
                     <button class="nav-btn" data-view="graph">知识图谱</button>
                     <button class="nav-btn" data-view="about">关于</button>
                 </nav>
@@ -41,7 +42,7 @@
         <main id="view-search" class="view active">
             <section class="hero">
                 <h1>发现教材中<span class="gradient-text">隐藏的跨学科联系</span></h1>
-                <p class="hero-sub">覆盖高中 9 科 · 316 本教材 · 65,978 条结构化语料</p>
+                <p class="hero-sub">覆盖高中 9 科 · 316 本教材 · 65,978 条结构化语料 · 3,770 道高考真题</p>
                 <div class="search-box">
                     <span class="search-icon">🔍</span>
                     <input type="text" id="search-input" placeholder="搜索概念，如：蛋白质、勾股定理、丝绸之路…" autocomplete="off">
@@ -115,6 +116,59 @@
             <section id="results" class="results"></section>
         </main>
 
+        <!-- Gaokao View -->
+        <main id="view-gaokao" class="view">
+            <section class="gaokao-hero">
+                <h2>📝 高考真题库</h2>
+                <p class="gaokao-hero-sub">2010-2023 · 全国卷及地方卷 · 3,770 道真题（含 897 道图表多模态题） · 发现教材与真题的隐性关联</p>
+            </section>
+
+            <!-- Gaokao Filters -->
+            <div class="gaokao-filters">
+                <div class="filter-group">
+                    <label>📚 学科</label>
+                    <select id="gk-subject">
+                        <option value="">全部学科</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>📅 年份</label>
+                    <select id="gk-year">
+                        <option value="">全部年份</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>📋 卷种</label>
+                    <select id="gk-category">
+                        <option value="">全部卷种</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>📊 题型</label>
+                    <select id="gk-type">
+                        <option value="">全部题型</option>
+                        <option value="objective">客观题</option>
+                        <option value="subjective">主观题</option>
+                    </select>
+                </div>
+                <button id="gk-search-btn" class="gk-search-btn">搜索真题</button>
+            </div>
+
+            <div id="gk-count" class="gk-count hidden"></div>
+            <section id="gk-results" class="gk-results"></section>
+
+            <!-- Gaokao Link Panel (modal) -->
+            <div id="gk-link-panel" class="gk-link-panel hidden">
+                <div class="gk-link-inner">
+                    <div class="gk-link-header">
+                        <h3>📚 教材关联分析</h3>
+                        <button id="gk-link-close" class="gk-link-close">✕</button>
+                    </div>
+                    <div id="gk-link-content" class="gk-link-content"></div>
+                </div>
+            </div>
+        </main>
+
         <!-- Graph View -->
         <main id="view-graph" class="view">
             <div class="graph-header">
@@ -140,7 +194,7 @@
                     <p><strong>316 本</strong>高中教材（人教版），使用 <a href="https://github.com/opendatalab/MinerU"
                             target="_blank">MinerU</a>
                         (55k⭐) GPU 加速 OCR，提取结构化 Markdown（含表格、公式、图片）。</p>
-                    <p>全文检索基于 SQLite FTS5，<strong>65,978 条</strong>结构化语料，覆盖 <strong>9 个学科</strong>。</p>
+                    <p>全文检索基于 SQLite FTS5，<strong>69,748 条</strong>结构化语料（含 3,770 道高考真题），覆盖 <strong>9 个学科</strong>。</p>
                     <p>AI 跨学科解读由 <strong>Gemini</strong> 提供。</p>
                 </div>
                 <div class="about-card">
