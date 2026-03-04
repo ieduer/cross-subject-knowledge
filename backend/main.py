@@ -1,14 +1,20 @@
 """
 跨学科教材知识平台 · FastAPI 后端
 """
-import sqlite3, json, math, os, re, time
+import sqlite3, json, math, os, re, time, functools
 from collections import Counter
 from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+
+try:
+    from cachetools import TTLCache
+    _cache = TTLCache(maxsize=64, ttl=300)  # 5 min TTL
+except ImportError:
+    _cache = {}  # fallback: simple dict (never expires, but resets on restart)
 
 try:
     import faiss
@@ -30,15 +36,56 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 # ── Global AI Models ──────────────────────────────────────────────────
 faiss_index = None
 embedder = None
+EMBEDDER_NAME = os.getenv("EMBEDDER", "BAAI/bge-m3")  # upgraded from bge-small-zh-v1.5
 
 if FAISS_AVAILABLE and FAISS_INDEX_PATH.exists():
     try:
         print(f"Loading FAISS index from {FAISS_INDEX_PATH}...", flush=True)
-        faiss_index = faiss.read_index(str(FAISS_INDEX_PATH))
-        embedder = SentenceTransformer("BAAI/bge-small-zh-v1.5")
-        print(f"FAISS index loaded with {faiss_index.ntotal} vectors.", flush=True)
+        raw_index = faiss.read_index(str(FAISS_INDEX_PATH))
+        # Auto-convert Flat index to HNSW for faster search
+        if hasattr(raw_index, 'ntotal') and not isinstance(raw_index, faiss.IndexHNSWFlat):
+            d = raw_index.d  # vector dimension
+            n = raw_index.ntotal
+            if n > 0 and n < 500_000:  # only convert reasonable sizes
+                print(f"Converting Flat index ({n} vectors, {d}D) to HNSW...", flush=True)
+                hnsw_index = faiss.IndexHNSWFlat(d, 32)  # 32 neighbors
+                hnsw_index.hnsw.efSearch = 64
+                hnsw_index.hnsw.efConstruction = 200
+                vectors = faiss.rev_swig_ptr(raw_index.get_xb(), n * d).reshape(n, d).copy()
+                hnsw_index.add(vectors)
+                faiss_index = hnsw_index
+                print(f"HNSW index built: {faiss_index.ntotal} vectors, efSearch=64", flush=True)
+            else:
+                faiss_index = raw_index
+        else:
+            faiss_index = raw_index
+        embedder = SentenceTransformer(EMBEDDER_NAME)
+        print(f"FAISS index loaded with {faiss_index.ntotal} vectors. Model: {EMBEDDER_NAME}", flush=True)
     except Exception as e:
-        print(f"Failed to load FAISS index: {e}", flush=True)
+        print(f"Failed to load FAISS/model: {e}", flush=True)
+        import traceback; traceback.print_exc()
+
+# ── Jieba custom dictionary ──────────────────────────────────────────
+try:
+    import jieba
+    _jieba_loaded = False
+    def _load_jieba_userdict():
+        global _jieba_loaded
+        if _jieba_loaded:
+            return
+        try:
+            con = sqlite3.connect(DB_PATH)
+            rows = con.execute("SELECT term FROM curated_keywords").fetchall()
+            con.close()
+            for r in rows:
+                jieba.add_word(r[0], freq=10000)  # high freq = never split
+            _jieba_loaded = True
+            print(f"Jieba: loaded {len(rows)} curated terms as user dict", flush=True)
+        except Exception as e:
+            print(f"Jieba dict load failed: {e}", flush=True)
+    _load_jieba_userdict()
+except ImportError:
+    pass
 
 
 SUBJECT_META = {
@@ -306,7 +353,9 @@ def search_trending():
 
 @app.get("/api/stats")
 def stats():
-    """Database statistics."""
+    """Database statistics (cached 5min)."""
+    if 'stats' in _cache:
+        return _cache['stats']
     con = get_db()
     try:
         total = con.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
@@ -324,7 +373,7 @@ def stats():
             "SELECT subject, COUNT(*) as cnt FROM chunks WHERE source='gaokao' GROUP BY subject ORDER BY cnt DESC"
         ).fetchall()
 
-        return {
+        result = {
             "total_chunks": total,
             "textbook_chunks": textbook_count,
             "gaokao_chunks": gaokao_count,
@@ -343,13 +392,18 @@ def stats():
                 for r in dist
             ],
         }
+        _cache['stats'] = result
+        return result
     finally:
         con.close()
 
 
 @app.get("/api/keywords")
 def keywords(limit: int = Query(120, ge=1, le=500)):
-    """Return curated academic keywords for the concept carousel."""
+    """Return curated academic keywords (cached 5min)."""
+    cache_key = f'keywords_{limit}'
+    if cache_key in _cache:
+        return _cache[cache_key]
     con = get_db()
     try:
         has_table = con.execute(
@@ -360,13 +414,14 @@ def keywords(limit: int = Query(120, ge=1, le=500)):
                 "SELECT term, subject_count, total_count FROM curated_keywords ORDER BY subject_count DESC, total_count DESC LIMIT ?",
                 (limit,)
             ).fetchall()
-            return {"keywords": [{"term": r["term"], "subjects": r["subject_count"], "count": r["total_count"]} for r in rows]}
+            result = {"keywords": [{"term": r["term"], "subjects": r["subject_count"], "count": r["total_count"]} for r in rows]}
         else:
-            # Fallback
             fallback = ["蛋白质", "DNA", "光合作用", "细胞呼吸", "牛顿第二定律", "勒夏特列原理",
                         "氧化还原", "基因表达", "丝绸之路", "全球变暖", "元素周期表", "椭圆",
                         "自然选择", "分离定律", "盖斯定律", "平衡移动", "文艺复兴", "电磁波"]
-            return {"keywords": [{"term": t, "subjects": 0, "count": 0} for t in fallback]}
+            result = {"keywords": [{"term": t, "subjects": 0, "count": 0} for t in fallback]}
+        _cache[cache_key] = result
+        return result
     finally:
         con.close()
 
@@ -1234,7 +1289,10 @@ def coverage(limit: int = Query(30, ge=1, le=100)):
 
 @app.get("/api/analytics/concept-breadth")
 def concept_breadth(limit: int = Query(50, ge=1, le=200)):
-    """Rank curated concepts by cross-subject breadth."""
+    """Rank curated concepts by cross-subject breadth (cached 5min)."""
+    cache_key = f'breadth_{limit}'
+    if cache_key in _cache:
+        return _cache[cache_key]
     con = get_db()
     try:
         rows = con.execute("""
@@ -1244,12 +1302,14 @@ def concept_breadth(limit: int = Query(50, ge=1, le=200)):
             LIMIT ?
         """, (limit,)).fetchall()
 
-        return {
+        result = {
             "concepts": [
                 {"term": r["term"], "subjects": r["subject_count"], "count": r["total_count"]}
                 for r in rows
             ]
         }
+        _cache[cache_key] = result
+        return result
     finally:
         con.close()
 
@@ -1388,6 +1448,39 @@ def graph_overview(
         return {"mode": mode, "subject": subject, "nodes": nodes, "links": links, "subjects": subjects}
     finally:
         con.close()
+
+
+# ── Health Check ─────────────────────────────────────────────────────
+
+@app.get("/api/health")
+def health():
+    """Health check: DB, FAISS, model status."""
+    status = {"status": "ok", "ts": time.time()}
+    # DB check
+    try:
+        con = get_db()
+        n = con.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        status["db"] = {"ok": True, "chunks": n}
+        con.close()
+    except Exception as e:
+        status["db"] = {"ok": False, "error": str(e)}
+        status["status"] = "degraded"
+    # FAISS check
+    status["faiss"] = {
+        "ok": faiss_index is not None,
+        "vectors": faiss_index.ntotal if faiss_index else 0,
+        "type": type(faiss_index).__name__ if faiss_index else None,
+    }
+    # Model check
+    status["model"] = {
+        "ok": embedder is not None,
+        "name": EMBEDDER_NAME,
+    }
+    # Cache stats
+    status["cache"] = {"size": len(_cache), "maxsize": getattr(_cache, 'maxsize', 'unlimited')}
+    if not status["faiss"]["ok"] or not status["model"]["ok"]:
+        status["status"] = "degraded"
+    return status
 
 
 # Images served from Cloudflare R2 CDN

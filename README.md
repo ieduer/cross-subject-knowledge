@@ -298,9 +298,9 @@ docker run -d -p 8080:8080 --restart unless-stopped textbook-knowledge
 
 | 参数 | 最低 | 推荐 |
 |---|---|---|
-| CPU | 1 核 | 2 核 |
-| 内存 | 512 MB | 1 GB |
-| 磁盘 | 2 GB | 5 GB |
+| CPU | 2 核 | 4 核 |
+| 内存 | 2 GB | 4 GB |
+| 磁盘 | 5 GB | 10 GB |
 | OS | Ubuntu 22.04+ | Ubuntu 24.04 |
 | Docker | 必须 | ✅ |
 

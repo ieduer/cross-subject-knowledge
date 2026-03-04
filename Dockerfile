@@ -12,7 +12,8 @@ RUN pip install --no-cache-dir \
     fastapi uvicorn \
     faiss-cpu \
     sentence-transformers \
-    jieba
+    jieba \
+    cachetools
 
 # Copy app
 COPY backend/ backend/
@@ -28,10 +29,14 @@ COPY data/textbook_chunks.index /app/data/index/textbook_chunks.index
 
 ENV DATA_ROOT=/app
 ENV PORT=8080
-# Pre-download the BGE model at build time so startup is fast
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-zh-v1.5')"
+# Pre-download the embedding model at build time so startup is fast
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-m3')"
 
 EXPOSE 8080
+
+# Health check: auto-restart if backend is unresponsive
+HEALTHCHECK --interval=60s --timeout=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health')" || exit 1
 
 # Single worker to keep memory usage low with FAISS loaded
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
