@@ -347,6 +347,30 @@ def stats():
         con.close()
 
 
+@app.get("/api/keywords")
+def keywords(limit: int = Query(120, ge=1, le=500)):
+    """Return curated academic keywords for the concept carousel."""
+    con = get_db()
+    try:
+        has_table = con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='curated_keywords'"
+        ).fetchone()
+        if has_table:
+            rows = con.execute(
+                "SELECT term, subject_count, total_count FROM curated_keywords ORDER BY subject_count DESC, total_count DESC LIMIT ?",
+                (limit,)
+            ).fetchall()
+            return {"keywords": [{"term": r["term"], "subjects": r["subject_count"], "count": r["total_count"]} for r in rows]}
+        else:
+            # Fallback
+            fallback = ["蛋白质", "DNA", "光合作用", "细胞呼吸", "牛顿第二定律", "勒夏特列原理",
+                        "氧化还原", "基因表达", "丝绸之路", "全球变暖", "元素周期表", "椭圆",
+                        "自然选择", "分离定律", "盖斯定律", "平衡移动", "文艺复兴", "电磁波"]
+            return {"keywords": [{"term": t, "subjects": 0, "count": 0} for t in fallback]}
+    finally:
+        con.close()
+
+
 @app.get("/api/cross-links")
 def cross_links():
     """Dynamic cross-subject concept links from pre-computed concept_map."""

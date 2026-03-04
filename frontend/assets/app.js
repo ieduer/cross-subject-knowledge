@@ -164,15 +164,15 @@ function renderCarouselBatch() {
     }, 300);
 }
 
-// Load high-frequency concepts from API
+// Load curated academic keywords from API
 (async () => {
     try {
-        const res = await fetch(`${API}/api/cross-links`);
+        const res = await fetch(`${API}/api/keywords?limit=120`);
         if (res.ok) {
             const data = await res.json();
-            const nodes = data.concept_nodes || [];
-            if (nodes.length > 6) {
-                allConcepts = nodes.map(n => n.id || n.concept || n.name).filter(Boolean);
+            const kws = data.keywords || [];
+            if (kws.length > 6) {
+                allConcepts = kws.map(k => k.term).filter(Boolean);
                 // Shuffle for variety
                 for (let i = allConcepts.length - 1; i > 0; i--) {
                     const j = Math.floor(Math.random() * (i + 1));
