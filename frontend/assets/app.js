@@ -924,14 +924,22 @@ function renderMath(el) {
 
 // ── Data Insights ─────────────────────────────────────────────────
 let insightsLoaded = false;
+const panelLoaded = {};
+const panelLoaders = { freq: loadFreqChart, heatmap: loadHeatmap, coverage: loadCoverage, breadth: loadBreadth };
 
-// Insight tab switching
+// Insight tab switching — lazy-load each panel when first shown
 document.querySelectorAll('.insight-tab').forEach(tab => {
     tab.addEventListener('click', () => {
         document.querySelectorAll('.insight-tab').forEach(t => t.classList.remove('active'));
         document.querySelectorAll('.insight-panel').forEach(p => p.classList.remove('active'));
         tab.classList.add('active');
-        document.getElementById('panel-' + tab.dataset.panel).classList.add('active');
+        const panelName = tab.dataset.panel;
+        document.getElementById('panel-' + panelName).classList.add('active');
+        // Lazy load: only fetch data when panel is first shown
+        if (!panelLoaded[panelName] && panelLoaders[panelName]) {
+            panelLoaded[panelName] = true;
+            panelLoaders[panelName]();
+        }
     });
 });
 
@@ -956,10 +964,9 @@ async function loadInsights() {
         });
     } catch (_) { }
 
+    // Only load the initially visible panel (freq)
+    panelLoaded['freq'] = true;
     loadFreqChart();
-    loadHeatmap();
-    loadCoverage();
-    loadBreadth();
 
     // Listen for filter changes
     document.getElementById('freq-source').addEventListener('change', loadFreqChart);
@@ -1059,7 +1066,8 @@ function renderHeatmap(container, data) {
     const subjects = data.subjects;
     const matrix = data.matrix;
     const n = subjects.length;
-    const cellSize = Math.min(55, (Math.min(container.clientWidth, 600) - 80) / n);
+    const cw = Math.max(container.clientWidth, 450);
+    const cellSize = Math.min(55, (Math.min(cw, 600) - 80) / n);
     const margin = { top: 80, left: 80 };
     const W = margin.left + n * cellSize + 20;
     const H = margin.top + n * cellSize + 20;
@@ -1180,7 +1188,7 @@ async function loadBreadth() {
 function renderBreadth(container, concepts) {
     container.innerHTML = '';
     const margin = { top: 10, right: 40, bottom: 30, left: 120 };
-    const W = Math.min(container.clientWidth, 700);
+    const W = Math.min(Math.max(container.clientWidth, 450), 700);
     const barH = 28;
     const H = margin.top + margin.bottom + concepts.length * barH;
 
@@ -1252,7 +1260,7 @@ async function loadSearchGraph(term) {
         graphDiv.className = 'search-graph-container';
         section.appendChild(graphDiv);
 
-        const resultArea = document.getElementById('result-list') || document.querySelector('.results-area');
+        const resultArea = document.getElementById('results');
         if (resultArea) resultArea.parentElement.insertBefore(section, resultArea.nextSibling);
 
         renderSearchSubgraph(graphDiv, data);
