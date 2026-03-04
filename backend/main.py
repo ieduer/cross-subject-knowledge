@@ -1311,6 +1311,85 @@ def graph_search(q: str = Query(..., min_length=1)):
         con.close()
 
 
+@app.get("/api/graph/overview")
+def graph_overview(
+    mode: str = Query("cross", description="cross=cross-subject, subject=per-subject"),
+    subject: Optional[str] = Query(None),
+    limit: int = Query(60, ge=10, le=200),
+):
+    """Knowledge graph: cross-subject or per-subject concept network."""
+    con = get_db()
+    try:
+        nodes = []
+        links = []
+
+        if mode == "subject" and subject:
+            # Per-subject mode: show concepts within one subject, linked by co-occurrence
+            rows = con.execute("""
+                SELECT concept, count FROM concept_map
+                WHERE subject = ? ORDER BY count DESC LIMIT ?
+            """, (subject, limit)).fetchall()
+            concepts = [{"term": r["concept"], "count": r["count"]} for r in rows]
+            for c in concepts:
+                nodes.append({"id": c["term"], "type": "concept", "weight": c["count"]})
+
+            # Link concepts that co-occur in the same chunk
+            terms = [c["term"] for c in concepts]
+            for i, t1 in enumerate(terms[:30]):  # limit link computation
+                for t2 in terms[i+1:30]:
+                    co = con.execute("""
+                        SELECT COUNT(*) as cnt FROM chunks
+                        WHERE subject = ? AND text LIKE ? AND text LIKE ?
+                    """, (subject, f"%{t1}%", f"%{t2}%")).fetchone()
+                    if co and co["cnt"] >= 2:
+                        links.append({"source": t1, "target": t2, "weight": co["cnt"]})
+
+        else:
+            # Cross-subject mode: show concepts spanning multiple subjects
+            rows = con.execute("""
+                SELECT concept, COUNT(DISTINCT subject) as subj_count, SUM(count) as total
+                FROM concept_map GROUP BY concept
+                HAVING subj_count >= 2
+                ORDER BY subj_count DESC, total DESC LIMIT ?
+            """, (limit,)).fetchall()
+            concepts = [{"term": r["concept"], "subjects": r["subj_count"], "total": r["total"]} for r in rows]
+
+            # Add concept nodes
+            for c in concepts:
+                subjs = con.execute(
+                    "SELECT DISTINCT subject FROM concept_map WHERE concept = ?", (c["term"],)
+                ).fetchall()
+                nodes.append({
+                    "id": c["term"], "type": "concept",
+                    "weight": c["subjects"], "total": c["total"],
+                    "subjects": [s["subject"] for s in subjs],
+                })
+
+            # Add subject nodes
+            all_subjects = set()
+            for n in nodes:
+                if n["type"] == "concept":
+                    for s in n.get("subjects", []):
+                        all_subjects.add(s)
+            for s in sorted(all_subjects):
+                nodes.append({"id": s, "type": "subject"})
+
+            # Links: concept -> subject
+            for n in nodes:
+                if n["type"] == "concept":
+                    for s in n.get("subjects", []):
+                        links.append({"source": n["id"], "target": s})
+
+        # Get available subjects for mode selector
+        subjects = [r["subject"] for r in con.execute(
+            "SELECT DISTINCT subject FROM concept_map ORDER BY subject"
+        ).fetchall()]
+
+        return {"mode": mode, "subject": subject, "nodes": nodes, "links": links, "subjects": subjects}
+    finally:
+        con.close()
+
+
 # Images served from Cloudflare R2 CDN
 IMG_CDN = os.getenv("IMG_CDN", "https://img.rdfzer.com")
 

@@ -240,10 +240,14 @@
         <!-- Graph View -->
         <main id="view-graph" class="view">
             <div class="graph-header">
-                <h2>跨学科知识关联图谱</h2>
-                <p>基于精选学术术语 · 节点大小=跨学科关联数 · 点击概念搜索</p>
+                <h2>🔗 知识图谱</h2>
+                <p>基于精选学术术语 · 节点大小=关联强度 · 点击概念搜索</p>
                 <div class="graph-controls">
-                    <button class="graph-filter active" data-filter="all">全部</button>
+                    <button class="graph-mode active" data-mode="cross">🌐 跨学科</button>
+                    <button class="graph-mode" data-mode="subject">📚 学科内</button>
+                    <select id="graph-subject-select" class="graph-subject-select" style="display:none;">
+                        <option value="">选择学科...</option>
+                    </select>
                 </div>
             </div>
             <div id="graph-container" class="graph-container"></div>

@@ -684,7 +684,7 @@ body {
     flex-wrap: wrap;
 }
 
-.graph-filter {
+.graph-mode {
     padding: 6px 14px;
     border-radius: 20px;
     border: 1px solid var(--border);
@@ -695,11 +695,22 @@ body {
     transition: var(--transition);
 }
 
-.graph-filter.active,
-.graph-filter:hover {
+.graph-mode.active,
+.graph-mode:hover {
     background: linear-gradient(135deg, #6c5ce7, #a29bfe);
     color: #fff;
     border-color: transparent;
+}
+
+.graph-subject-select {
+    padding: 6px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--card-bg);
+    color: var(--text);
+    font-size: 12px;
+    outline: none;
+    cursor: pointer;
 }
 
 /* ── Data Insights View ──────────────────────────────────── */

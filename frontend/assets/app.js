@@ -457,148 +457,202 @@ function renderText(text, bookKey) {
 }
 
 // ── Knowledge Graph ───────────────────────────────────────
-let graphLoaded = false;
+let currentGraphMode = 'cross';
+let currentGraphSubject = '';
 
-async function loadGraph() {
-    if (graphLoaded) return;
+// Mode tab switching
+document.querySelectorAll('.graph-mode').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.graph-mode').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentGraphMode = btn.dataset.mode;
+        const sel = document.getElementById('graph-subject-select');
+        sel.style.display = currentGraphMode === 'subject' ? 'inline-block' : 'none';
+        if (currentGraphMode === 'cross') {
+            loadGraph('cross');
+        } else if (sel.value) {
+            loadGraph('subject', sel.value);
+        }
+    });
+});
+document.getElementById('graph-subject-select').addEventListener('change', (e) => {
+    if (e.target.value) loadGraph('subject', e.target.value);
+});
+
+async function loadGraph(mode = 'cross', subject = '') {
     const container = document.getElementById('graph-container');
     container.innerHTML = '<div class="loading" style="padding-top:40vh">加载知识图谱…</div>';
 
     try {
-        const res = await fetch(`${API}/api/cross-links`);
+        let url = `${API}/api/graph/overview?mode=${mode}&limit=80`;
+        if (subject) url += `&subject=${encodeURIComponent(subject)}`;
+        const res = await fetch(url);
         const data = await res.json();
-        renderGraph(data, container);
-        graphLoaded = true;
+
+        // Populate subject selector if not done
+        const sel = document.getElementById('graph-subject-select');
+        if (sel.options.length <= 1 && data.subjects) {
+            data.subjects.forEach(s => {
+                const o = document.createElement('option');
+                o.value = s; o.textContent = s;
+                sel.appendChild(o);
+            });
+        }
+
+        renderGraphNew(data, container, mode);
     } catch (e) {
         container.innerHTML = `<div class="loading">加载失败: ${e.message}</div>`;
     }
 }
 
-function renderGraph(data, container) {
-    const W = container.clientWidth;
-    const H = container.clientHeight;
+function renderGraphNew(data, container, mode) {
+    const W = Math.max(container.clientWidth, 600);
+    const H = Math.max(container.clientHeight, 500);
+    const nodes = data.nodes || [];
+    const links = data.links || [];
 
-    // Build nodes and links
-    const subjectNodes = data.subject_nodes.map(s => ({
-        ...s, type: 'subject', r: 30, fx: null, fy: null,
-    }));
+    if (nodes.length === 0) {
+        container.innerHTML = '<div class="loading">暂无数据</div>';
+        return;
+    }
 
-    const conceptNodes = data.concept_nodes.map(c => ({
-        ...c, type: 'concept', r: Math.max(6, Math.min(20, c.subjects * 4)),
-    }));
+    const nodeMap = {};
+    const cx = W / 2, cy = H / 2;
 
-    const allNodes = [...subjectNodes, ...conceptNodes];
-    const nodeById = {};
-    allNodes.forEach(n => nodeById[n.id] = n);
+    // Assign positions and properties
+    const subjectNodes = nodes.filter(n => n.type === 'subject');
+    const conceptNodes = nodes.filter(n => n.type === 'concept');
 
-    // Aggregate links between subjects
-    const linkMap = {};
-    data.links.forEach(l => {
-        const key = [l.source, l.target].sort().join('|');
-        if (!linkMap[key]) linkMap[key] = { source: l.source, target: l.target, concepts: [], weight: 0 };
-        linkMap[key].concepts.push(l.concept);
-        linkMap[key].weight += l.weight;
-    });
-    const links = Object.values(linkMap).filter(l => nodeById[l.source] && nodeById[l.target]);
-
-    // Simple force simulation (no D3 dependency for MVP)
     // Place subject nodes in a circle
-    const cx = W / 2, cy = H / 2, radius = Math.min(W, H) * 0.32;
+    const radius = Math.min(W, H) * 0.32;
     subjectNodes.forEach((n, i) => {
-        const angle = (i / subjectNodes.length) * Math.PI * 2 - Math.PI / 2;
+        const angle = (i / Math.max(subjectNodes.length, 1)) * Math.PI * 2 - Math.PI / 2;
         n.x = cx + Math.cos(angle) * radius;
         n.y = cy + Math.sin(angle) * radius;
+        n.r = 28;
+        n.color = SUBJ_COLORS[n.id] || '#6c5ce7';
+        nodeMap[n.id] = n;
     });
 
-    // Place concept nodes near related subjects
+    // Place concept nodes
     conceptNodes.forEach(n => {
-        const relatedLinks = data.links.filter(l => l.concept === n.id);
-        if (relatedLinks.length > 0) {
-            const subjs = [...new Set(relatedLinks.flatMap(l => [l.source, l.target]))];
-            let sx = 0, sy = 0, count = 0;
-            subjs.forEach(s => {
-                const sn = nodeById[s];
-                if (sn) { sx += sn.x; sy += sn.y; count++; }
-            });
-            if (count > 0) {
-                n.x = sx / count + (Math.random() - 0.5) * 80;
-                n.y = sy / count + (Math.random() - 0.5) * 80;
+        if (mode === 'cross') {
+            // Near center of related subjects
+            const relSubjs = (n.subjects || []).map(s => nodeMap[s]).filter(Boolean);
+            if (relSubjs.length > 0) {
+                let sx = 0, sy = 0;
+                relSubjs.forEach(s => { sx += s.x; sy += s.y; });
+                n.x = sx / relSubjs.length + (Math.random() - 0.5) * 100;
+                n.y = sy / relSubjs.length + (Math.random() - 0.5) * 100;
             } else {
                 n.x = cx + (Math.random() - 0.5) * radius;
                 n.y = cy + (Math.random() - 0.5) * radius;
             }
+            n.r = Math.max(5, Math.min(22, (n.weight || 1) * 3));
         } else {
-            n.x = cx + (Math.random() - 0.5) * radius * 1.5;
-            n.y = cy + (Math.random() - 0.5) * radius * 1.5;
+            // Per-subject: arrange in a grid-like pattern
+            n.x = cx + (Math.random() - 0.5) * W * 0.7;
+            n.y = cy + (Math.random() - 0.5) * H * 0.65;
+            n.r = Math.max(5, Math.min(20, Math.log2((n.weight || 1) + 1) * 3));
         }
+        n.color = mode === 'cross' ? `hsl(${(n.weight || 1) * 40}, 70%, 55%)` : '#6c5ce7';
+        nodeMap[n.id] = n;
     });
+
+    // Simple force simulation (5 iterations)
+    for (let iter = 0; iter < 8; iter++) {
+        // Repulsion between concept nodes
+        for (let i = 0; i < conceptNodes.length; i++) {
+            for (let j = i + 1; j < conceptNodes.length; j++) {
+                const a = conceptNodes[i], b = conceptNodes[j];
+                const dx = b.x - a.x, dy = b.y - a.y;
+                const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                const minDist = (a.r + b.r) * 2.5;
+                if (dist < minDist) {
+                    const force = (minDist - dist) / dist * 0.5;
+                    a.x -= dx * force; a.y -= dy * force;
+                    b.x += dx * force; b.y += dy * force;
+                }
+            }
+        }
+        // Keep in bounds
+        conceptNodes.forEach(n => {
+            n.x = Math.max(n.r + 5, Math.min(W - n.r - 5, n.x));
+            n.y = Math.max(n.r + 30, Math.min(H - n.r - 20, n.y));
+        });
+    }
 
     // Render SVG
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.style.width = '100%';
+    svg.style.height = '100%';
 
     // Links
     links.forEach(l => {
-        const s = nodeById[l.source], t = nodeById[l.target];
+        const s = nodeMap[l.source], t = nodeMap[l.target];
         if (!s || !t) return;
         const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
         line.setAttribute('x1', s.x); line.setAttribute('y1', s.y);
         line.setAttribute('x2', t.x); line.setAttribute('y2', t.y);
-        line.setAttribute('stroke', 'rgba(108,92,231,0.15)');
-        line.setAttribute('stroke-width', Math.max(1, Math.min(4, l.weight / 10)));
+        if (mode === 'cross') {
+            line.setAttribute('stroke', t.type === 'subject' ? (t.color || '#666') : 'rgba(108,92,231,0.2)');
+            line.setAttribute('stroke-opacity', '0.25');
+            line.setAttribute('stroke-width', '1');
+        } else {
+            const w = Math.max(1, Math.min(5, Math.log2((l.weight || 1) + 1)));
+            line.setAttribute('stroke', 'rgba(108,92,231,0.3)');
+            line.setAttribute('stroke-width', w);
+        }
         svg.appendChild(line);
     });
 
-    // Concept-to-subject links
-    conceptNodes.forEach(n => {
-        const relatedLinks = data.links.filter(l => l.concept === n.id);
-        const subjs = [...new Set(relatedLinks.flatMap(l => [l.source, l.target]))];
-        subjs.forEach(s => {
-            const sn = nodeById[s];
-            if (!sn) return;
-            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-            line.setAttribute('x1', n.x); line.setAttribute('y1', n.y);
-            line.setAttribute('x2', sn.x); line.setAttribute('y2', sn.y);
-            line.setAttribute('stroke', sn.color || '#555');
-            line.setAttribute('stroke-opacity', '0.2');
-            line.setAttribute('stroke-width', '1');
-            svg.appendChild(line);
-        });
-    });
-
-    // Nodes
+    // Render nodes
+    const allNodes = [...subjectNodes, ...conceptNodes];
     allNodes.forEach(n => {
         const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         g.setAttribute('class', 'graph-node');
+        g.style.cursor = n.type === 'concept' ? 'pointer' : 'default';
 
         const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         circle.setAttribute('cx', n.x); circle.setAttribute('cy', n.y);
         circle.setAttribute('r', n.r);
-        circle.setAttribute('fill', n.type === 'subject' ? (n.color || '#6c5ce7') : 'rgba(108,92,231,0.5)');
-        circle.setAttribute('stroke', n.type === 'subject' ? 'rgba(255,255,255,0.3)' : 'none');
-        circle.setAttribute('stroke-width', '2');
+        circle.setAttribute('fill', n.color || '#6c5ce7');
+        circle.setAttribute('fill-opacity', n.type === 'subject' ? '0.9' : '0.6');
+        circle.setAttribute('stroke', n.type === 'subject' ? 'rgba(255,255,255,0.4)' : 'rgba(108,92,231,0.5)');
+        circle.setAttribute('stroke-width', n.type === 'subject' ? '2' : '1');
         g.appendChild(circle);
 
         const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        text.setAttribute('x', n.x); text.setAttribute('y', n.y + n.r + 14);
+        text.setAttribute('x', n.x); text.setAttribute('y', n.y + n.r + 13);
         text.setAttribute('class', 'graph-label');
-        text.setAttribute('font-size', n.type === 'subject' ? '14' : '11');
-        text.setAttribute('font-weight', n.type === 'subject' ? '600' : '400');
-        text.textContent = n.type === 'subject' ? `${n.icon} ${n.id}` : n.id;
+        text.setAttribute('font-size', n.type === 'subject' ? '13' : '10');
+        text.setAttribute('font-weight', n.type === 'subject' ? '700' : '400');
+        text.textContent = n.id;
         g.appendChild(text);
 
-        // Click to search
-        g.addEventListener('click', () => {
-            const q = n.type === 'concept' ? n.id : '';
-            if (q) {
+        // Weight badge for concepts
+        if (n.type === 'concept' && n.weight > 1) {
+            const badge = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            badge.setAttribute('x', n.x); badge.setAttribute('y', n.y + 4);
+            badge.setAttribute('text-anchor', 'middle');
+            badge.setAttribute('font-size', '9');
+            badge.setAttribute('fill', '#fff');
+            badge.textContent = mode === 'cross' ? `${n.weight}科` : n.weight;
+            g.appendChild(badge);
+        }
+
+        // Click concept to search
+        if (n.type === 'concept') {
+            g.addEventListener('click', () => {
                 document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
                 document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
                 document.querySelector('[data-view="search"]').classList.add('active');
                 document.getElementById('view-search').classList.add('active');
-                searchInput.value = q;
-                doSearch(q);
-            }
-        });
+                searchInput.value = n.id;
+                doSearch(n.id);
+            });
+        }
 
         svg.appendChild(g);
     });
