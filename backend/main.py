@@ -1110,42 +1110,40 @@ def word_freq(
     subject: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
 ):
-    """Word frequency for curated academic terms only."""
+    """Word frequency for curated academic terms (pre-computed)."""
     con = get_db()
     try:
-        # Get curated terms
-        curated = {r["term"] for r in con.execute("SELECT term FROM curated_keywords").fetchall()}
-        if not curated:
-            return {"frequencies": [], "source": source, "subject": subject}
-
-        # Build query
-        where_parts = []
-        params = []
-        if source == "gaokao":
-            where_parts.append("c.source = 'gaokao'")
-        elif source == "textbook":
-            where_parts.append("c.source != 'gaokao'")
-        if subject:
-            where_parts.append("c.subject = ?")
-            params.append(subject)
-
-        where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
-
-        # Count occurrences of curated terms in chunks via LIKE matching
-        results = []
-        for term in curated:
-            row = con.execute(
-                f"SELECT COUNT(*) as cnt FROM chunks c {where_clause} AND c.text LIKE ?",
-                params + [f"%{term}%"]
-            ).fetchone() if where_parts else con.execute(
-                f"SELECT COUNT(*) as cnt FROM chunks c WHERE c.text LIKE ?",
-                [f"%{term}%"]
-            ).fetchone()
-            if row and row["cnt"] > 0:
-                results.append({"term": term, "count": row["cnt"]})
-
-        results.sort(key=lambda x: x["count"], reverse=True)
-        return {"frequencies": results[:limit], "source": source, "subject": subject}
+        # Use pre-computed keyword_counts table for fast lookups
+        has_kc = con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='keyword_counts'").fetchone()
+        if has_kc:
+            where_parts = []
+            params = []
+            if source == "gaokao":
+                where_parts.append("source = 'gaokao'")
+            elif source == "textbook":
+                where_parts.append("source = 'textbook'")
+            if subject:
+                where_parts.append("subject = ?")
+                params.append(subject)
+            where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+            rows = con.execute(f"""
+                SELECT term, SUM(count) as cnt FROM keyword_counts
+                {where_clause}
+                GROUP BY term ORDER BY cnt DESC LIMIT ?
+            """, params + [limit]).fetchall()
+            return {
+                "frequencies": [{"term": r["term"], "count": r["cnt"]} for r in rows],
+                "source": source, "subject": subject,
+            }
+        # Fallback: use curated_keywords total_count
+        rows = con.execute("""
+            SELECT term, total_count as cnt FROM curated_keywords
+            ORDER BY total_count DESC LIMIT ?
+        """, (limit,)).fetchall()
+        return {
+            "frequencies": [{"term": r["term"], "count": r["cnt"]} for r in rows],
+            "source": source, "subject": subject,
+        }
     finally:
         con.close()
 
@@ -1199,37 +1197,36 @@ def heatmap():
 
 @app.get("/api/analytics/coverage")
 def coverage(limit: int = Query(30, ge=1, le=100)):
-    """Textbook vs Exam concept coverage analysis."""
+    """Textbook vs Exam concept coverage analysis (pre-computed)."""
     con = get_db()
     try:
-        curated = {r["term"] for r in con.execute("SELECT term FROM curated_keywords").fetchall()}
+        has_kc = con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='keyword_counts'").fetchone()
+        if has_kc:
+            rows = con.execute("""
+                SELECT term,
+                    COALESCE(SUM(CASE WHEN source='textbook' THEN count END), 0) as textbook,
+                    COALESCE(SUM(CASE WHEN source='gaokao' THEN count END), 0) as gaokao
+                FROM keyword_counts GROUP BY term
+                HAVING textbook > 0 OR gaokao > 0
+            """).fetchall()
+        else:
+            return {"hidden_exam_focus": [], "low_exam_focus": []}
 
         results = []
-        for term in curated:
-            tb = con.execute(
-                "SELECT COUNT(*) as cnt FROM chunks WHERE source != 'gaokao' AND text LIKE ?",
-                [f"%{term}%"]
-            ).fetchone()
-            gk = con.execute(
-                "SELECT COUNT(*) as cnt FROM chunks WHERE source = 'gaokao' AND text LIKE ?",
-                [f"%{term}%"]
-            ).fetchone()
-            tb_count = tb["cnt"] if tb else 0
-            gk_count = gk["cnt"] if gk else 0
-            if tb_count > 0 or gk_count > 0:
-                results.append({
-                    "term": term,
-                    "textbook": tb_count,
-                    "gaokao": gk_count,
-                    "ratio": round(gk_count / max(tb_count, 1) * 100, 1),
-                })
+        for r in rows:
+            tb_count = r["textbook"]
+            gk_count = r["gaokao"]
+            results.append({
+                "term": r["term"],
+                "textbook": tb_count,
+                "gaokao": gk_count,
+                "ratio": round(gk_count / max(tb_count, 1) * 100, 1),
+            })
 
-        # Sort by ratio descending (high exam / low textbook = hidden exam focus)
         results.sort(key=lambda x: x["ratio"], reverse=True)
-
         return {
-            "hidden_exam_focus": results[:limit],  # High exam, low textbook
-            "low_exam_focus": sorted(results, key=lambda x: x["ratio"])[:limit],  # Low exam, high textbook
+            "hidden_exam_focus": results[:limit],
+            "low_exam_focus": sorted(results, key=lambda x: x["ratio"])[:limit],
         }
     finally:
         con.close()
