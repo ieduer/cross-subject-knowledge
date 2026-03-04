@@ -508,157 +508,258 @@ async function loadGraph(mode = 'cross', subject = '') {
 function renderGraphNew(data, container, mode) {
     const W = Math.max(container.clientWidth, 600);
     const H = Math.max(container.clientHeight, 500);
-    const nodes = data.nodes || [];
-    const links = data.links || [];
+    const rawNodes = data.nodes || [];
+    const rawLinks = data.links || [];
 
-    if (nodes.length === 0) {
+    if (rawNodes.length === 0) {
         container.innerHTML = '<div class="loading">暂无数据</div>';
         return;
     }
 
+    container.innerHTML = '';
+
+    // Prepare nodes with computed properties
     const nodeMap = {};
-    const cx = W / 2, cy = H / 2;
+    const subjectNodes = rawNodes.filter(n => n.type === 'subject');
+    const conceptNodes = rawNodes.filter(n => n.type === 'concept');
 
-    // Assign positions and properties
-    const subjectNodes = nodes.filter(n => n.type === 'subject');
-    const conceptNodes = nodes.filter(n => n.type === 'concept');
-
-    // Place subject nodes in a circle
-    const radius = Math.min(W, H) * 0.32;
-    subjectNodes.forEach((n, i) => {
-        const angle = (i / Math.max(subjectNodes.length, 1)) * Math.PI * 2 - Math.PI / 2;
-        n.x = cx + Math.cos(angle) * radius;
-        n.y = cy + Math.sin(angle) * radius;
+    subjectNodes.forEach(n => {
         n.r = 28;
         n.color = SUBJ_COLORS[n.id] || '#6c5ce7';
+        n.fx = null; n.fy = null;  // not fixed initially
         nodeMap[n.id] = n;
     });
 
-    // Place concept nodes
     conceptNodes.forEach(n => {
         if (mode === 'cross') {
-            // Near center of related subjects
-            const relSubjs = (n.subjects || []).map(s => nodeMap[s]).filter(Boolean);
-            if (relSubjs.length > 0) {
-                let sx = 0, sy = 0;
-                relSubjs.forEach(s => { sx += s.x; sy += s.y; });
-                n.x = sx / relSubjs.length + (Math.random() - 0.5) * 100;
-                n.y = sy / relSubjs.length + (Math.random() - 0.5) * 100;
-            } else {
-                n.x = cx + (Math.random() - 0.5) * radius;
-                n.y = cy + (Math.random() - 0.5) * radius;
-            }
-            n.r = Math.max(5, Math.min(22, (n.weight || 1) * 3));
+            n.r = Math.max(6, Math.min(22, (n.weight || 1) * 3));
+            n.color = `hsl(${(n.weight || 1) * 40}, 70%, 55%)`;
         } else {
-            // Per-subject: arrange in a grid-like pattern
-            n.x = cx + (Math.random() - 0.5) * W * 0.7;
-            n.y = cy + (Math.random() - 0.5) * H * 0.65;
-            n.r = Math.max(5, Math.min(20, Math.log2((n.weight || 1) + 1) * 3));
+            n.r = Math.max(6, Math.min(20, Math.log2((n.weight || 1) + 1) * 3));
+            n.color = '#6c5ce7';
         }
-        n.color = mode === 'cross' ? `hsl(${(n.weight || 1) * 40}, 70%, 55%)` : '#6c5ce7';
         nodeMap[n.id] = n;
     });
 
-    // Simple force simulation (5 iterations)
-    for (let iter = 0; iter < 8; iter++) {
-        // Repulsion between concept nodes
-        for (let i = 0; i < conceptNodes.length; i++) {
-            for (let j = i + 1; j < conceptNodes.length; j++) {
-                const a = conceptNodes[i], b = conceptNodes[j];
-                const dx = b.x - a.x, dy = b.y - a.y;
-                const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-                const minDist = (a.r + b.r) * 2.5;
-                if (dist < minDist) {
-                    const force = (minDist - dist) / dist * 0.5;
-                    a.x -= dx * force; a.y -= dy * force;
-                    b.x += dx * force; b.y += dy * force;
-                }
-            }
-        }
-        // Keep in bounds
-        conceptNodes.forEach(n => {
-            n.x = Math.max(n.r + 5, Math.min(W - n.r - 5, n.x));
-            n.y = Math.max(n.r + 30, Math.min(H - n.r - 20, n.y));
-        });
-    }
+    // Prepare links (D3 needs source/target as node objects or IDs)
+    const linkData = rawLinks.map(l => ({
+        source: l.source,
+        target: l.target,
+        weight: l.weight || 1
+    })).filter(l => nodeMap[l.source] && nodeMap[l.target]);
 
-    // Render SVG
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-    svg.style.width = '100%';
-    svg.style.height = '100%';
-
-    // Links
-    links.forEach(l => {
-        const s = nodeMap[l.source], t = nodeMap[l.target];
-        if (!s || !t) return;
-        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        line.setAttribute('x1', s.x); line.setAttribute('y1', s.y);
-        line.setAttribute('x2', t.x); line.setAttribute('y2', t.y);
-        if (mode === 'cross') {
-            line.setAttribute('stroke', t.type === 'subject' ? (t.color || '#666') : 'rgba(108,92,231,0.2)');
-            line.setAttribute('stroke-opacity', '0.25');
-            line.setAttribute('stroke-width', '1');
-        } else {
-            const w = Math.max(1, Math.min(5, Math.log2((l.weight || 1) + 1)));
-            line.setAttribute('stroke', 'rgba(108,92,231,0.3)');
-            line.setAttribute('stroke-width', w);
-        }
-        svg.appendChild(line);
-    });
-
-    // Render nodes
     const allNodes = [...subjectNodes, ...conceptNodes];
-    allNodes.forEach(n => {
-        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-        g.setAttribute('class', 'graph-node');
-        g.style.cursor = n.type === 'concept' ? 'pointer' : 'default';
 
-        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        circle.setAttribute('cx', n.x); circle.setAttribute('cy', n.y);
-        circle.setAttribute('r', n.r);
-        circle.setAttribute('fill', n.color || '#6c5ce7');
-        circle.setAttribute('fill-opacity', n.type === 'subject' ? '0.9' : '0.6');
-        circle.setAttribute('stroke', n.type === 'subject' ? 'rgba(255,255,255,0.4)' : 'rgba(108,92,231,0.5)');
-        circle.setAttribute('stroke-width', n.type === 'subject' ? '2' : '1');
-        g.appendChild(circle);
+    // Create SVG
+    const svg = d3.select(container).append('svg')
+        .attr('width', '100%')
+        .attr('height', '100%')
+        .attr('viewBox', `0 0 ${W} ${H}`)
+        .attr('style', 'background: transparent; cursor: grab;');
 
-        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        text.setAttribute('x', n.x); text.setAttribute('y', n.y + n.r + 13);
-        text.setAttribute('class', 'graph-label');
-        text.setAttribute('font-size', n.type === 'subject' ? '13' : '10');
-        text.setAttribute('font-weight', n.type === 'subject' ? '700' : '400');
-        text.textContent = n.id;
-        g.appendChild(text);
+    // Zoom behavior
+    const zoomGroup = svg.append('g');
+    const zoom = d3.zoom()
+        .scaleExtent([0.3, 5])
+        .on('zoom', (event) => {
+            zoomGroup.attr('transform', event.transform);
+        });
+    svg.call(zoom);
 
-        // Weight badge for concepts
-        if (n.type === 'concept' && n.weight > 1) {
-            const badge = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            badge.setAttribute('x', n.x); badge.setAttribute('y', n.y + 4);
-            badge.setAttribute('text-anchor', 'middle');
-            badge.setAttribute('font-size', '9');
-            badge.setAttribute('fill', '#fff');
-            badge.textContent = mode === 'cross' ? `${n.weight}科` : n.weight;
-            g.appendChild(badge);
-        }
+    // Tooltip
+    const tooltip = d3.select(container).append('div')
+        .attr('class', 'graph-tooltip')
+        .style('position', 'absolute')
+        .style('display', 'none')
+        .style('background', 'rgba(20, 20, 40, 0.95)')
+        .style('color', '#fff')
+        .style('padding', '8px 12px')
+        .style('border-radius', '8px')
+        .style('font-size', '12px')
+        .style('pointer-events', 'none')
+        .style('box-shadow', '0 4px 20px rgba(0,0,0,0.3)')
+        .style('z-index', '100')
+        .style('max-width', '250px')
+        .style('backdrop-filter', 'blur(10px)');
 
-        // Click concept to search
-        if (n.type === 'concept') {
-            g.addEventListener('click', () => {
-                document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-                document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-                document.querySelector('[data-view="search"]').classList.add('active');
-                document.getElementById('view-search').classList.add('active');
-                searchInput.value = n.id;
-                doSearch(n.id);
-            });
-        }
+    // Force simulation
+    const simulation = d3.forceSimulation(allNodes)
+        .force('link', d3.forceLink(linkData).id(d => d.id).distance(d => {
+            const s = nodeMap[d.source?.id || d.source];
+            const t = nodeMap[d.target?.id || d.target];
+            if (!s || !t) return 120;
+            if (s.type === 'subject' || t.type === 'subject') return 150;
+            return 80;
+        }).strength(0.3))
+        .force('charge', d3.forceManyBody()
+            .strength(d => d.type === 'subject' ? -400 : -100))
+        .force('center', d3.forceCenter(W / 2, H / 2))
+        .force('collision', d3.forceCollide().radius(d => d.r + 8))
+        .force('x', d3.forceX(W / 2).strength(0.03))
+        .force('y', d3.forceY(H / 2).strength(0.03));
 
-        svg.appendChild(g);
+    // Draw links
+    const link = zoomGroup.append('g')
+        .attr('class', 'links')
+        .selectAll('line')
+        .data(linkData)
+        .join('line')
+        .attr('stroke', d => {
+            if (mode === 'cross') {
+                const t = nodeMap[d.target?.id || d.target];
+                return t && t.type === 'subject' ? (t.color || '#666') : 'rgba(108,92,231,0.25)';
+            }
+            return 'rgba(108,92,231,0.3)';
+        })
+        .attr('stroke-width', d => {
+            if (mode === 'cross') return 1;
+            return Math.max(1, Math.min(4, Math.log2((d.weight || 1) + 1)));
+        })
+        .attr('stroke-opacity', 0.3);
+
+    // Draw nodes
+    const node = zoomGroup.append('g')
+        .attr('class', 'nodes')
+        .selectAll('g')
+        .data(allNodes)
+        .join('g')
+        .attr('class', d => `graph-node ${d.type}`)
+        .style('cursor', d => d.type === 'concept' ? 'pointer' : 'grab');
+
+    // Circles
+    node.append('circle')
+        .attr('r', d => d.r)
+        .attr('fill', d => d.color || '#6c5ce7')
+        .attr('fill-opacity', d => d.type === 'subject' ? 0.9 : 0.6)
+        .attr('stroke', d => d.type === 'subject' ? 'rgba(255,255,255,0.5)' : 'rgba(108,92,231,0.5)')
+        .attr('stroke-width', d => d.type === 'subject' ? 2.5 : 1)
+        .style('transition', 'filter 0.2s, fill-opacity 0.2s');
+
+    // Labels
+    node.append('text')
+        .attr('class', 'graph-label')
+        .attr('dy', d => d.r + 14)
+        .attr('text-anchor', 'middle')
+        .attr('font-size', d => d.type === 'subject' ? 13 : 10)
+        .attr('font-weight', d => d.type === 'subject' ? 700 : 400)
+        .text(d => d.id);
+
+    // Weight badges for concepts
+    node.filter(d => d.type === 'concept' && d.weight > 1)
+        .append('text')
+        .attr('text-anchor', 'middle')
+        .attr('dy', 4)
+        .attr('font-size', 9)
+        .attr('fill', '#fff')
+        .text(d => mode === 'cross' ? `${d.weight}科` : d.weight);
+
+    // Hover interaction
+    node.on('mouseenter', function (event, d) {
+        // Highlight connected nodes/links
+        const connectedIds = new Set();
+        connectedIds.add(d.id);
+        linkData.forEach(l => {
+            const sid = l.source?.id || l.source;
+            const tid = l.target?.id || l.target;
+            if (sid === d.id) connectedIds.add(tid);
+            if (tid === d.id) connectedIds.add(sid);
+        });
+
+        // Dim non-connected
+        node.selectAll('circle')
+            .attr('fill-opacity', n => connectedIds.has(n.id) ? (n.type === 'subject' ? 0.95 : 0.85) : 0.15);
+        node.selectAll('.graph-label')
+            .attr('fill-opacity', n => connectedIds.has(n.id) ? 1 : 0.2);
+        link.attr('stroke-opacity', l => {
+            const sid = l.source?.id || l.source;
+            const tid = l.target?.id || l.target;
+            return (sid === d.id || tid === d.id) ? 0.7 : 0.05;
+        }).attr('stroke-width', l => {
+            const sid = l.source?.id || l.source;
+            const tid = l.target?.id || l.target;
+            return (sid === d.id || tid === d.id) ? 3 : 1;
+        });
+
+        // Tooltip
+        const subjects = d.subjects ? d.subjects.join(' · ') : (d.type === 'subject' ? d.id : '');
+        const info = d.type === 'concept'
+            ? `<strong>${d.id}</strong><br>出现学科：${d.weight || 1}科<br>${subjects}`
+            : `<strong>${d.id}</strong>`;
+        tooltip.html(info)
+            .style('display', 'block')
+            .style('left', (event.offsetX + 15) + 'px')
+            .style('top', (event.offsetY - 10) + 'px');
+
+        // Glow on hovered circle
+        d3.select(this).select('circle')
+            .attr('filter', 'drop-shadow(0 0 8px rgba(108,92,231,0.6))');
+    })
+        .on('mousemove', function (event) {
+            tooltip.style('left', (event.offsetX + 15) + 'px')
+                .style('top', (event.offsetY - 10) + 'px');
+        })
+        .on('mouseleave', function () {
+            node.selectAll('circle')
+                .attr('fill-opacity', d => d.type === 'subject' ? 0.9 : 0.6)
+                .attr('filter', null);
+            node.selectAll('.graph-label')
+                .attr('fill-opacity', 1);
+            link.attr('stroke-opacity', 0.3)
+                .attr('stroke-width', d => {
+                    if (mode === 'cross') return 1;
+                    return Math.max(1, Math.min(4, Math.log2((d.weight || 1) + 1)));
+                });
+            tooltip.style('display', 'none');
+        });
+
+    // Click to search
+    node.filter(d => d.type === 'concept')
+        .on('click', (event, d) => {
+            event.stopPropagation();
+            document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+            document.querySelector('[data-view="search"]').classList.add('active');
+            document.getElementById('view-search').classList.add('active');
+            searchInput.value = d.id;
+            doSearch(d.id);
+        });
+
+    // Drag behavior
+    const drag = d3.drag()
+        .on('start', (event, d) => {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x; d.fy = d.y;
+        })
+        .on('drag', (event, d) => {
+            d.fx = event.x; d.fy = event.y;
+        })
+        .on('end', (event, d) => {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null; d.fy = null;
+        });
+    node.call(drag);
+
+    // Tick function
+    simulation.on('tick', () => {
+        link.attr('x1', d => d.source.x)
+            .attr('y1', d => d.source.y)
+            .attr('x2', d => d.target.x)
+            .attr('y2', d => d.target.y);
+
+        node.attr('transform', d => `translate(${d.x},${d.y})`);
     });
 
-    container.innerHTML = '';
-    container.appendChild(svg);
+    // Reset zoom button
+    const resetBtn = document.createElement('button');
+    resetBtn.textContent = '🔄 重置';
+    resetBtn.className = 'graph-reset-btn';
+    resetBtn.style.cssText = 'position:absolute;top:10px;right:10px;padding:6px 12px;border:1px solid rgba(108,92,231,0.3);border-radius:8px;background:rgba(20,20,40,0.7);color:#fff;cursor:pointer;font-size:12px;backdrop-filter:blur(5px);z-index:10;';
+    resetBtn.addEventListener('click', () => {
+        svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity);
+        simulation.alpha(0.5).restart();
+    });
+    container.style.position = 'relative';
+    container.appendChild(resetBtn);
 }
 
 // ── Init: Load stats ──────────────────────────────────────
