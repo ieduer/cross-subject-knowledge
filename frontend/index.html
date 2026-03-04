@@ -21,6 +21,7 @@
     <link rel="stylesheet" href="https://unpkg.com/katex@0.16.9/dist/katex.min.css">
     <script defer src="https://unpkg.com/katex@0.16.9/dist/katex.min.js"></script>
     <script defer src="https://unpkg.com/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
 
     <link rel="stylesheet" href="assets/style.css">
 </head>
@@ -38,6 +39,7 @@
                 <nav class="nav">
                     <button class="nav-btn active" data-view="search">搜索</button>
                     <button class="nav-btn" data-view="gaokao">📝 真题</button>
+                    <button class="nav-btn" data-view="insights">📊 数据</button>
                     <button class="nav-btn" data-view="graph">知识图谱</button>
                     <button class="nav-btn" data-view="about">关于</button>
                 </nav>
@@ -186,11 +188,63 @@
             </div>
         </main>
 
+        <!-- Data Insights View -->
+        <main id="view-insights" class="view">
+            <div class="insights-header">
+                <h2><span class="gradient-text">📊 数据洞察</span></h2>
+                <p>基于 325 个精选学术术语的深度分析</p>
+            </div>
+            <div class="insights-tabs">
+                <button class="insight-tab active" data-panel="freq">📈 词频分析</button>
+                <button class="insight-tab" data-panel="heatmap">🔥 学科关联</button>
+                <button class="insight-tab" data-panel="coverage">🎯 考试覆盖</button>
+                <button class="insight-tab" data-panel="breadth">🌐 概念广度</button>
+            </div>
+            <div class="insights-content">
+                <!-- Word Frequency Panel -->
+                <div id="panel-freq" class="insight-panel active">
+                    <div class="freq-controls">
+                        <select id="freq-source">
+                            <option value="all">全部数据</option>
+                            <option value="textbook">仅教材</option>
+                            <option value="gaokao">仅真题</option>
+                        </select>
+                        <select id="freq-subject">
+                            <option value="">全部学科</option>
+                        </select>
+                    </div>
+                    <div id="freq-chart" class="chart-container"></div>
+                </div>
+                <!-- Heatmap Panel -->
+                <div id="panel-heatmap" class="insight-panel">
+                    <div id="heatmap-chart" class="chart-container"></div>
+                </div>
+                <!-- Coverage Panel -->
+                <div id="panel-coverage" class="insight-panel">
+                    <div class="coverage-section">
+                        <h3>🔴 隐性考点 — 真题高频但教材少提</h3>
+                        <div id="coverage-hidden" class="coverage-list"></div>
+                    </div>
+                    <div class="coverage-section">
+                        <h3>🔵 低效学习 — 教材反复出现但真题少考</h3>
+                        <div id="coverage-low" class="coverage-list"></div>
+                    </div>
+                </div>
+                <!-- Concept Breadth Panel -->
+                <div id="panel-breadth" class="insight-panel">
+                    <div id="breadth-chart" class="chart-container"></div>
+                </div>
+            </div>
+        </main>
+
         <!-- Graph View -->
         <main id="view-graph" class="view">
             <div class="graph-header">
                 <h2>跨学科知识关联图谱</h2>
-                <p>节点大小 = 跨学科关联数 · 点击概念查看详情</p>
+                <p>基于精选学术术语 · 节点大小=跨学科关联数 · 点击概念搜索</p>
+                <div class="graph-controls">
+                    <button class="graph-filter active" data-filter="all">全部</button>
+                </div>
             </div>
             <div id="graph-container" class="graph-container"></div>
         </main>

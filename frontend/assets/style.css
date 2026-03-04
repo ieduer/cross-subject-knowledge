@@ -676,6 +676,235 @@ body {
     text-anchor: middle;
 }
 
+/* ── Graph Controls ──────────────────────────────────────── */
+.graph-controls {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+}
+
+.graph-filter {
+    padding: 6px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-dim);
+    font-size: 12px;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.graph-filter.active,
+.graph-filter:hover {
+    background: linear-gradient(135deg, #6c5ce7, #a29bfe);
+    color: #fff;
+    border-color: transparent;
+}
+
+/* ── Data Insights View ──────────────────────────────────── */
+.insights-header {
+    text-align: center;
+    padding: 30px 0 16px;
+}
+
+.insights-header h2 {
+    font-size: 26px;
+    font-weight: 700;
+}
+
+.insights-header p {
+    color: var(--text-dim);
+    margin-top: 6px;
+    font-size: 14px;
+}
+
+.insights-tabs {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    padding: 0 16px 16px;
+    flex-wrap: wrap;
+}
+
+.insight-tab {
+    padding: 8px 18px;
+    border-radius: 24px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-dim);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.insight-tab:hover {
+    border-color: var(--primary);
+    color: var(--text);
+}
+
+.insight-tab.active {
+    background: linear-gradient(135deg, rgba(108, 92, 231, 0.2), rgba(162, 155, 254, 0.15));
+    border-color: var(--primary);
+    color: #fff;
+    font-weight: 600;
+}
+
+.insights-content {
+    padding: 0 16px 32px;
+    max-width: 750px;
+    margin: 0 auto;
+}
+
+.insight-panel {
+    display: none;
+}
+
+.insight-panel.active {
+    display: block;
+}
+
+.chart-container {
+    min-height: 200px;
+    overflow-x: auto;
+    padding: 12px 0;
+}
+
+.chart-container svg {
+    display: block;
+    margin: 0 auto;
+}
+
+/* Frequency controls */
+.freq-controls {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.freq-controls select {
+    padding: 8px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text);
+    font-size: 13px;
+    outline: none;
+    cursor: pointer;
+}
+
+.freq-controls select:focus {
+    border-color: var(--primary);
+}
+
+/* Coverage Analysis */
+.coverage-section {
+    margin-bottom: 28px;
+}
+
+.coverage-section h3 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--text);
+}
+
+.coverage-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    margin-bottom: 6px;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.coverage-item:hover {
+    background: rgba(108, 92, 231, 0.08);
+    border-color: var(--primary);
+}
+
+.coverage-term {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    min-width: 80px;
+    white-space: nowrap;
+}
+
+.coverage-bars {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.cov-bar {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    white-space: nowrap;
+    min-width: 50px;
+}
+
+.cov-textbook {
+    background: rgba(52, 152, 219, 0.2);
+    color: #74b9ff;
+}
+
+.cov-gaokao {
+    background: rgba(231, 76, 60, 0.2);
+    color: #ff7675;
+}
+
+.coverage-ratio {
+    font-size: 14px;
+    font-weight: 700;
+    min-width: 55px;
+    text-align: right;
+}
+
+.ratio-hot {
+    color: #ff6b6b;
+}
+
+.ratio-cool {
+    color: #74b9ff;
+}
+
+/* ── Search Result Concept Subgraph ──────────────────────── */
+.search-graph-section {
+    margin: 20px 0;
+    padding: 16px;
+    background: var(--bg-card);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+}
+
+.search-graph-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 10px;
+    color: var(--text);
+}
+
+.search-graph-container {
+    width: 100%;
+    overflow: hidden;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.15);
+}
+
+.search-graph-container svg {
+    display: block;
+    margin: 0 auto;
+}
+
 /* ── About ───────────────────────────────────────────────── */
 .about-content {
     max-width: 700px;

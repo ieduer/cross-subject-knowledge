@@ -1102,6 +1102,218 @@ def textbook_links(
         con.close()
 
 
+# ── Analytics APIs ────────────────────────────────────────────────────
+
+@app.get("/api/analytics/word-freq")
+def word_freq(
+    source: str = Query("all", description="textbook, gaokao, or all"),
+    subject: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Word frequency for curated academic terms only."""
+    con = get_db()
+    try:
+        # Get curated terms
+        curated = {r["term"] for r in con.execute("SELECT term FROM curated_keywords").fetchall()}
+        if not curated:
+            return {"frequencies": [], "source": source, "subject": subject}
+
+        # Build query
+        where_parts = []
+        params = []
+        if source == "gaokao":
+            where_parts.append("c.source = 'gaokao'")
+        elif source == "textbook":
+            where_parts.append("c.source != 'gaokao'")
+        if subject:
+            where_parts.append("c.subject = ?")
+            params.append(subject)
+
+        where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+
+        # Count occurrences of curated terms in chunks via LIKE matching
+        results = []
+        for term in curated:
+            row = con.execute(
+                f"SELECT COUNT(*) as cnt FROM chunks c {where_clause} AND c.text LIKE ?",
+                params + [f"%{term}%"]
+            ).fetchone() if where_parts else con.execute(
+                f"SELECT COUNT(*) as cnt FROM chunks c WHERE c.text LIKE ?",
+                [f"%{term}%"]
+            ).fetchone()
+            if row and row["cnt"] > 0:
+                results.append({"term": term, "count": row["cnt"]})
+
+        results.sort(key=lambda x: x["count"], reverse=True)
+        return {"frequencies": results[:limit], "source": source, "subject": subject}
+    finally:
+        con.close()
+
+
+@app.get("/api/analytics/heatmap")
+def heatmap():
+    """Cross-subject concept sharing matrix."""
+    con = get_db()
+    try:
+        # Get all curated concepts and their subject associations
+        curated = {r["term"] for r in con.execute("SELECT term FROM curated_keywords").fetchall()}
+
+        rows = con.execute("""
+            SELECT concept, subject, SUM(count) as cnt
+            FROM concept_map
+            GROUP BY concept, subject
+        """).fetchall()
+
+        # Build concept -> set of subjects
+        concept_subjects = {}
+        for r in rows:
+            c = r["concept"]
+            if c not in curated:
+                continue
+            if c not in concept_subjects:
+                concept_subjects[c] = set()
+            concept_subjects[c].add(r["subject"])
+
+        # Count shared concepts between each pair of subjects
+        subjects = sorted({r["subject"] for r in rows})
+        matrix = {s1: {s2: 0 for s2 in subjects} for s1 in subjects}
+
+        for concept, subj_set in concept_subjects.items():
+            subj_list = list(subj_set)
+            for i, s1 in enumerate(subj_list):
+                for s2 in subj_list[i+1:]:
+                    matrix[s1][s2] += 1
+                    matrix[s2][s1] += 1
+            # Self = total concepts for that subject
+            for s in subj_list:
+                matrix[s][s] += 1
+
+        return {
+            "subjects": subjects,
+            "matrix": [[matrix[s1][s2] for s2 in subjects] for s1 in subjects],
+            "total_concepts": len(concept_subjects),
+        }
+    finally:
+        con.close()
+
+
+@app.get("/api/analytics/coverage")
+def coverage(limit: int = Query(30, ge=1, le=100)):
+    """Textbook vs Exam concept coverage analysis."""
+    con = get_db()
+    try:
+        curated = {r["term"] for r in con.execute("SELECT term FROM curated_keywords").fetchall()}
+
+        results = []
+        for term in curated:
+            tb = con.execute(
+                "SELECT COUNT(*) as cnt FROM chunks WHERE source != 'gaokao' AND text LIKE ?",
+                [f"%{term}%"]
+            ).fetchone()
+            gk = con.execute(
+                "SELECT COUNT(*) as cnt FROM chunks WHERE source = 'gaokao' AND text LIKE ?",
+                [f"%{term}%"]
+            ).fetchone()
+            tb_count = tb["cnt"] if tb else 0
+            gk_count = gk["cnt"] if gk else 0
+            if tb_count > 0 or gk_count > 0:
+                results.append({
+                    "term": term,
+                    "textbook": tb_count,
+                    "gaokao": gk_count,
+                    "ratio": round(gk_count / max(tb_count, 1) * 100, 1),
+                })
+
+        # Sort by ratio descending (high exam / low textbook = hidden exam focus)
+        results.sort(key=lambda x: x["ratio"], reverse=True)
+
+        return {
+            "hidden_exam_focus": results[:limit],  # High exam, low textbook
+            "low_exam_focus": sorted(results, key=lambda x: x["ratio"])[:limit],  # Low exam, high textbook
+        }
+    finally:
+        con.close()
+
+
+@app.get("/api/analytics/concept-breadth")
+def concept_breadth(limit: int = Query(50, ge=1, le=200)):
+    """Rank curated concepts by cross-subject breadth."""
+    con = get_db()
+    try:
+        rows = con.execute("""
+            SELECT ck.term, ck.subject_count, ck.total_count
+            FROM curated_keywords ck
+            ORDER BY ck.subject_count DESC, ck.total_count DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+
+        return {
+            "concepts": [
+                {"term": r["term"], "subjects": r["subject_count"], "count": r["total_count"]}
+                for r in rows
+            ]
+        }
+    finally:
+        con.close()
+
+
+@app.get("/api/graph/search")
+def graph_search(q: str = Query(..., min_length=1)):
+    """Return a concept subgraph centered on the search term."""
+    con = get_db()
+    try:
+        q_clean = q.strip()
+        curated = {r["term"] for r in con.execute("SELECT term FROM curated_keywords").fetchall()}
+
+        # Find the search term's subject distribution
+        center_dist = con.execute("""
+            SELECT subject, COUNT(*) as cnt FROM chunks
+            WHERE text LIKE ? GROUP BY subject ORDER BY cnt DESC
+        """, [f"%{q_clean}%"]).fetchall()
+
+        if not center_dist:
+            return {"center": q_clean, "nodes": [], "links": []}
+
+        center_subjects = {r["subject"] for r in center_dist}
+
+        # Find related curated concepts that share subjects with the search term
+        related = []
+        for term in curated:
+            if term == q_clean:
+                continue
+            term_subjects_row = con.execute("""
+                SELECT DISTINCT subject FROM concept_map WHERE concept = ?
+            """, (term,)).fetchall()
+            term_subjects = {r["subject"] for r in term_subjects_row}
+            overlap = center_subjects & term_subjects
+            if len(overlap) >= 1:
+                related.append({
+                    "term": term,
+                    "shared_subjects": list(overlap),
+                    "overlap": len(overlap),
+                })
+
+        related.sort(key=lambda x: x["overlap"], reverse=True)
+        related = related[:20]  # Top 20 related concepts
+
+        # Build nodes and links
+        nodes = [{"id": q_clean, "type": "center", "subjects": [r["subject"] for r in center_dist]}]
+        links = []
+
+        for r in related:
+            nodes.append({"id": r["term"], "type": "related", "overlap": r["overlap"]})
+            for s in r["shared_subjects"]:
+                links.append({"source": q_clean, "target": r["term"], "subject": s})
+
+        # Add subject nodes
+        for s in sorted(center_subjects):
+            nodes.append({"id": s, "type": "subject"})
+
+        return {"center": q_clean, "nodes": nodes, "links": links}
+    finally:
+        con.close()
+
+
 # Images served from Cloudflare R2 CDN
 IMG_CDN = os.getenv("IMG_CDN", "https://img.rdfzer.com")
 

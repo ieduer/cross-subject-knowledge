@@ -79,6 +79,7 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
         view.classList.add('active');
         if (btn.dataset.view === 'graph') loadGraph();
         if (btn.dataset.view === 'gaokao') initGaokao();
+        if (btn.dataset.view === 'insights') loadInsights();
     });
 });
 
@@ -273,6 +274,8 @@ async function doSearch(q) {
         loadRelated(q);
         // Refresh trending after search (new query logged)
         setTimeout(() => loadTrending(), 500);
+        // Show concept subgraph for the search term
+        loadSearchGraph(q);
     } catch (e) {
         resultsEl.innerHTML = `<div class="loading">搜索出错: ${e.message}</div>`;
     }
@@ -917,4 +920,393 @@ function renderMath(el) {
             errorColor: '#e74c3c'
         });
     }
+}
+
+// ── Data Insights ─────────────────────────────────────────────────
+let insightsLoaded = false;
+
+// Insight tab switching
+document.querySelectorAll('.insight-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        document.querySelectorAll('.insight-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.insight-panel').forEach(p => p.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('panel-' + tab.dataset.panel).classList.add('active');
+    });
+});
+
+const SUBJ_COLORS = {
+    '数学': '#3498db', '物理': '#e74c3c', '化学': '#2ecc71', '生物': '#f39c12',
+    '地理': '#1abc9c', '历史': '#9b59b6', '语文': '#e67e22', '英语': '#34495e',
+    '思想政治': '#f1c40f', 'hanjia': '#95a5a6',
+};
+
+async function loadInsights() {
+    if (insightsLoaded) return;
+    insightsLoaded = true;
+    // Populate subject selector from stats
+    try {
+        const sr = await fetch(`${API}/api/stats`);
+        const sd = await sr.json();
+        const sel = document.getElementById('freq-subject');
+        sd.subjects.forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = s.name; opt.textContent = `${s.icon} ${s.name}`;
+            sel.appendChild(opt);
+        });
+    } catch (_) { }
+
+    loadFreqChart();
+    loadHeatmap();
+    loadCoverage();
+    loadBreadth();
+
+    // Listen for filter changes
+    document.getElementById('freq-source').addEventListener('change', loadFreqChart);
+    document.getElementById('freq-subject').addEventListener('change', loadFreqChart);
+}
+
+// ── Word Frequency Chart (D3 Horizontal Bars) ──
+async function loadFreqChart() {
+    const container = document.getElementById('freq-chart');
+    container.innerHTML = '<div class="loading">加载词频数据…</div>';
+    const source = document.getElementById('freq-source').value;
+    const subject = document.getElementById('freq-subject').value;
+    try {
+        const url = `${API}/api/analytics/word-freq?source=${source}&limit=30${subject ? '&subject=' + encodeURIComponent(subject) : ''}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        const freqs = data.frequencies || [];
+        if (freqs.length === 0) { container.innerHTML = '<div class="loading">暂无数据</div>'; return; }
+        renderFreqBars(container, freqs);
+    } catch (e) { container.innerHTML = `<div class="loading">加载失败: ${e.message}</div>`; }
+}
+
+function renderFreqBars(container, data) {
+    container.innerHTML = '';
+    const margin = { top: 10, right: 40, bottom: 30, left: 100 };
+    const W = Math.min(container.clientWidth, 700);
+    const barH = 26;
+    const H = margin.top + margin.bottom + data.length * barH;
+
+    const svg = d3.select(container).append('svg')
+        .attr('width', W).attr('height', H);
+
+    const maxVal = d3.max(data, d => d.count);
+    const x = d3.scaleLinear().domain([0, maxVal]).range([0, W - margin.left - margin.right]);
+    const y = d3.scaleBand().domain(data.map(d => d.term)).range([margin.top, H - margin.bottom]).padding(0.25);
+
+    const g = svg.append('g').attr('transform', `translate(${margin.left},0)`);
+
+    // Gradient
+    const grad = svg.append('defs').append('linearGradient').attr('id', 'bar-grad');
+    grad.append('stop').attr('offset', '0%').attr('stop-color', '#6c5ce7');
+    grad.append('stop').attr('offset', '100%').attr('stop-color', '#a29bfe');
+
+    g.selectAll('rect').data(data).join('rect')
+        .attr('y', d => y(d.term))
+        .attr('height', y.bandwidth())
+        .attr('x', 0)
+        .attr('width', 0)
+        .attr('fill', 'url(#bar-grad)')
+        .attr('rx', 4)
+        .transition().duration(600).delay((d, i) => i * 20)
+        .attr('width', d => x(d.count));
+
+    // Labels
+    g.selectAll('.bar-label').data(data).join('text')
+        .attr('class', 'bar-label')
+        .attr('x', d => x(d.count) + 5)
+        .attr('y', d => y(d.term) + y.bandwidth() / 2)
+        .attr('dy', '0.35em')
+        .attr('fill', '#a0a0c0')
+        .attr('font-size', '11px')
+        .text(d => d.count.toLocaleString());
+
+    // Y axis labels
+    svg.selectAll('.term-label').data(data).join('text')
+        .attr('class', 'term-label')
+        .attr('x', margin.left - 6)
+        .attr('y', d => y(d.term) + y.bandwidth() / 2)
+        .attr('dy', '0.35em')
+        .attr('text-anchor', 'end')
+        .attr('fill', '#e0e0f0')
+        .attr('font-size', '12px')
+        .attr('cursor', 'pointer')
+        .text(d => d.term)
+        .on('click', (e, d) => {
+            searchInput.value = d.term; doSearch(d.term);
+            document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+            document.querySelector('[data-view="search"]').classList.add('active');
+            document.getElementById('view-search').classList.add('active');
+        });
+}
+
+// ── Heatmap ──
+async function loadHeatmap() {
+    const container = document.getElementById('heatmap-chart');
+    container.innerHTML = '<div class="loading">加载学科关联矩阵…</div>';
+    try {
+        const res = await fetch(`${API}/api/analytics/heatmap`);
+        const data = await res.json();
+        renderHeatmap(container, data);
+    } catch (e) { container.innerHTML = `<div class="loading">加载失败: ${e.message}</div>`; }
+}
+
+function renderHeatmap(container, data) {
+    container.innerHTML = '';
+    const subjects = data.subjects;
+    const matrix = data.matrix;
+    const n = subjects.length;
+    const cellSize = Math.min(55, (Math.min(container.clientWidth, 600) - 80) / n);
+    const margin = { top: 80, left: 80 };
+    const W = margin.left + n * cellSize + 20;
+    const H = margin.top + n * cellSize + 20;
+
+    const svg = d3.select(container).append('svg')
+        .attr('width', W).attr('height', H);
+
+    const maxVal = d3.max(matrix.flat().filter(v => v > 0));
+    const color = d3.scaleSequential(d3.interpolateYlOrRd).domain([0, maxVal]);
+
+    const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+    // Cells
+    for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+            const val = matrix[i][j];
+            const cell = g.append('rect')
+                .attr('x', j * cellSize).attr('y', i * cellSize)
+                .attr('width', cellSize - 2).attr('height', cellSize - 2)
+                .attr('fill', val > 0 ? color(val) : 'rgba(255,255,255,0.03)')
+                .attr('rx', 4)
+                .attr('opacity', 0)
+                .transition().duration(400).delay((i + j) * 30)
+                .attr('opacity', 1);
+
+            if (val > 0) {
+                g.append('text')
+                    .attr('x', j * cellSize + cellSize / 2 - 1)
+                    .attr('y', i * cellSize + cellSize / 2)
+                    .attr('dy', '0.35em')
+                    .attr('text-anchor', 'middle')
+                    .attr('fill', val > maxVal * 0.6 ? '#000' : '#fff')
+                    .attr('font-size', '11px')
+                    .attr('font-weight', '600')
+                    .text(val);
+            }
+        }
+    }
+
+    // Axis labels
+    subjects.forEach((s, i) => {
+        svg.append('text')
+            .attr('x', margin.left + i * cellSize + cellSize / 2 - 1)
+            .attr('y', margin.top - 8)
+            .attr('text-anchor', 'middle')
+            .attr('fill', SUBJ_COLORS[s] || '#ccc')
+            .attr('font-size', '12px')
+            .attr('font-weight', '500')
+            .text(s);
+        svg.append('text')
+            .attr('x', margin.left - 8)
+            .attr('y', margin.top + i * cellSize + cellSize / 2)
+            .attr('dy', '0.35em')
+            .attr('text-anchor', 'end')
+            .attr('fill', SUBJ_COLORS[s] || '#ccc')
+            .attr('font-size', '12px')
+            .attr('font-weight', '500')
+            .text(s);
+    });
+
+    // Caption
+    svg.append('text')
+        .attr('x', W / 2).attr('y', H + 5)
+        .attr('text-anchor', 'middle')
+        .attr('fill', '#888')
+        .attr('font-size', '11px')
+        .text(`共 ${data.total_concepts} 个跨学科学术术语`);
+}
+
+// ── Coverage Analysis ──
+async function loadCoverage() {
+    try {
+        const res = await fetch(`${API}/api/analytics/coverage?limit=15`);
+        const data = await res.json();
+        renderCoverageList('coverage-hidden', data.hidden_exam_focus, 'exam');
+        renderCoverageList('coverage-low', data.low_exam_focus, 'textbook');
+    } catch (e) { }
+}
+
+function renderCoverageList(containerId, items, highlight) {
+    const el = document.getElementById(containerId);
+    el.innerHTML = items.map(item => `
+        <div class="coverage-item" data-term="${item.term}">
+            <span class="coverage-term">${item.term}</span>
+            <div class="coverage-bars">
+                <span class="cov-bar cov-textbook" style="width:${Math.min(100, item.textbook / 5)}%"
+                    title="教材 ${item.textbook} 次">📚 ${item.textbook}</span>
+                <span class="cov-bar cov-gaokao" style="width:${Math.min(100, item.gaokao * 5)}%"
+                    title="真题 ${item.gaokao} 次">📝 ${item.gaokao}</span>
+            </div>
+            <span class="coverage-ratio ${highlight === 'exam' ? 'ratio-hot' : 'ratio-cool'}">${item.ratio}%</span>
+        </div>
+    `).join('');
+
+    el.querySelectorAll('.coverage-item').forEach(item => {
+        item.addEventListener('click', () => {
+            searchInput.value = item.dataset.term;
+            doSearch(item.dataset.term);
+            document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+            document.querySelector('[data-view="search"]').classList.add('active');
+            document.getElementById('view-search').classList.add('active');
+        });
+    });
+}
+
+// ── Concept Breadth ──
+async function loadBreadth() {
+    const container = document.getElementById('breadth-chart');
+    container.innerHTML = '<div class="loading">加载概念广度排名…</div>';
+    try {
+        const res = await fetch(`${API}/api/analytics/concept-breadth?limit=30`);
+        const data = await res.json();
+        renderBreadth(container, data.concepts || []);
+    } catch (e) { container.innerHTML = `<div class="loading">加载失败</div>`; }
+}
+
+function renderBreadth(container, concepts) {
+    container.innerHTML = '';
+    const margin = { top: 10, right: 40, bottom: 30, left: 120 };
+    const W = Math.min(container.clientWidth, 700);
+    const barH = 28;
+    const H = margin.top + margin.bottom + concepts.length * barH;
+
+    const svg = d3.select(container).append('svg')
+        .attr('width', W).attr('height', H);
+
+    const maxSubj = d3.max(concepts, d => d.subjects);
+    const x = d3.scaleLinear().domain([0, maxSubj]).range([0, W - margin.left - margin.right]);
+    const y = d3.scaleBand().domain(concepts.map(d => d.term)).range([margin.top, H - margin.bottom]).padding(0.2);
+
+    const g = svg.append('g').attr('transform', `translate(${margin.left},0)`);
+
+    const colorScale = d3.scaleSequential(d3.interpolatePlasma).domain([2, maxSubj]);
+
+    g.selectAll('rect').data(concepts).join('rect')
+        .attr('y', d => y(d.term))
+        .attr('height', y.bandwidth())
+        .attr('x', 0)
+        .attr('width', 0)
+        .attr('fill', d => colorScale(d.subjects))
+        .attr('rx', 4)
+        .transition().duration(500).delay((d, i) => i * 15)
+        .attr('width', d => x(d.subjects));
+
+    g.selectAll('.breadth-val').data(concepts).join('text')
+        .attr('class', 'breadth-val')
+        .attr('x', d => x(d.subjects) + 5)
+        .attr('y', d => y(d.term) + y.bandwidth() / 2)
+        .attr('dy', '0.35em')
+        .attr('fill', '#a0a0c0')
+        .attr('font-size', '11px')
+        .text(d => `${d.subjects} 科`);
+
+    svg.selectAll('.breadth-label').data(concepts).join('text')
+        .attr('class', 'breadth-label')
+        .attr('x', margin.left - 6)
+        .attr('y', d => y(d.term) + y.bandwidth() / 2)
+        .attr('dy', '0.35em')
+        .attr('text-anchor', 'end')
+        .attr('fill', '#e0e0f0')
+        .attr('font-size', '12px')
+        .attr('cursor', 'pointer')
+        .text(d => d.term)
+        .on('click', (e, d) => {
+            searchInput.value = d.term; doSearch(d.term);
+            document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+            document.querySelector('[data-view="search"]').classList.add('active');
+            document.getElementById('view-search').classList.add('active');
+        });
+}
+
+// ── Search Result Concept Subgraph ──────────────────────────────
+async function loadSearchGraph(term) {
+    const existing = document.getElementById('search-graph-section');
+    if (existing) existing.remove();
+
+    try {
+        const res = await fetch(`${API}/api/graph/search?q=${encodeURIComponent(term)}`);
+        const data = await res.json();
+        if (!data.nodes || data.nodes.length < 3) return;
+
+        const section = document.createElement('div');
+        section.id = 'search-graph-section';
+        section.className = 'search-graph-section';
+        section.innerHTML = '<h3 class="search-graph-title">🔗 关联知识图谱</h3>';
+
+        const graphDiv = document.createElement('div');
+        graphDiv.className = 'search-graph-container';
+        section.appendChild(graphDiv);
+
+        const resultArea = document.getElementById('result-list') || document.querySelector('.results-area');
+        if (resultArea) resultArea.parentElement.insertBefore(section, resultArea.nextSibling);
+
+        renderSearchSubgraph(graphDiv, data);
+    } catch (_) { }
+}
+
+function renderSearchSubgraph(container, data) {
+    const W = Math.min(container.clientWidth || 500, 600);
+    const H = 320;
+
+    const svg = d3.select(container).append('svg')
+        .attr('width', W).attr('height', H)
+        .attr('viewBox', `0 0 ${W} ${H}`);
+
+    const nodes = data.nodes.map(n => ({ ...n }));
+    const links = data.links.map(l => ({ ...l }));
+
+    const sim = d3.forceSimulation(nodes)
+        .force('link', d3.forceLink(links).id(d => d.id).distance(80))
+        .force('charge', d3.forceManyBody().strength(-200))
+        .force('center', d3.forceCenter(W / 2, H / 2))
+        .force('collision', d3.forceCollide(25));
+
+    const link = svg.append('g').selectAll('line').data(links).join('line')
+        .attr('stroke', d => SUBJ_COLORS[d.subject] || '#6c5ce7')
+        .attr('stroke-opacity', 0.4)
+        .attr('stroke-width', 1.5);
+
+    const node = svg.append('g').selectAll('g').data(nodes).join('g')
+        .attr('cursor', 'pointer')
+        .on('click', (e, d) => { if (d.type !== 'subject') { searchInput.value = d.id; doSearch(d.id); } })
+        .call(d3.drag()
+            .on('start', (e, d) => { if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+            .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
+            .on('end', (e, d) => { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; })
+        );
+
+    node.append('circle')
+        .attr('r', d => d.type === 'center' ? 18 : d.type === 'subject' ? 14 : 10)
+        .attr('fill', d => d.type === 'center' ? '#6c5ce7' : d.type === 'subject' ? (SUBJ_COLORS[d.id] || '#555') : 'rgba(108,92,231,0.5)')
+        .attr('stroke', d => d.type === 'center' ? '#a29bfe' : 'none')
+        .attr('stroke-width', 2);
+
+    node.append('text')
+        .attr('dy', d => d.type === 'center' ? 28 : 22)
+        .attr('text-anchor', 'middle')
+        .attr('fill', '#e0e0f0')
+        .attr('font-size', d => d.type === 'center' ? '13px' : d.type === 'subject' ? '12px' : '10px')
+        .attr('font-weight', d => d.type === 'center' ? '700' : '400')
+        .text(d => d.id);
+
+    sim.on('tick', () => {
+        link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+            .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+        node.attr('transform', d => `translate(${Math.max(20, Math.min(W - 20, d.x))},${Math.max(20, Math.min(H - 20, d.y))})`);
+    });
 }
