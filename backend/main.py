@@ -44,19 +44,22 @@ if FAISS_AVAILABLE and FAISS_INDEX_PATH.exists():
         raw_index = faiss.read_index(str(FAISS_INDEX_PATH))
         d = raw_index.d  # vector dimension
         n = raw_index.ntotal
-        # Auto-convert to HNSW for faster search (works with Flat, IDMap, etc.)
+        # Auto-convert to HNSW for faster search
         if n > 0 and n < 500_000 and not isinstance(raw_index, faiss.IndexHNSWFlat):
-            print(f"Converting index ({type(raw_index).__name__}, {n} vectors, {d}D) to HNSW...", flush=True)
-            hnsw_index = faiss.IndexHNSWFlat(d, 32)  # 32 neighbors
-            hnsw_index.hnsw.efSearch = 64
-            hnsw_index.hnsw.efConstruction = 200
-            # Extract all vectors using reconstruct_n (works for any index type)
-            vectors = np.zeros((n, d), dtype='float32')
-            for i in range(n):
-                vectors[i] = raw_index.reconstruct(i)
-            hnsw_index.add(vectors)
-            faiss_index = hnsw_index
-            print(f"HNSW index built: {faiss_index.ntotal} vectors, efSearch=64", flush=True)
+            try:
+                print(f"Converting index ({type(raw_index).__name__}, {n} vectors, {d}D) to HNSW...", flush=True)
+                # Unwrap IndexIDMap to access underlying flat index
+                inner = raw_index.index if hasattr(raw_index, 'index') else raw_index
+                vectors = faiss.rev_swig_ptr(inner.get_xb(), n * d).reshape(n, d).copy()
+                hnsw_index = faiss.IndexHNSWFlat(d, 32)
+                hnsw_index.hnsw.efSearch = 64
+                hnsw_index.hnsw.efConstruction = 200
+                hnsw_index.add(vectors)
+                faiss_index = hnsw_index
+                print(f"HNSW index built: {faiss_index.ntotal} vectors, efSearch=64", flush=True)
+            except Exception as conv_err:
+                print(f"HNSW conversion failed ({conv_err}), using original index", flush=True)
+                faiss_index = raw_index
         else:
             faiss_index = raw_index
         embedder = SentenceTransformer(EMBEDDER_NAME)
