@@ -245,6 +245,76 @@ body {
     opacity: 0;
 }
 
+/* ── Trending Searches ────────────────────────────────────── */
+.trending-section {
+    margin-top: 18px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 14px;
+    animation: fadeIn 0.4s ease;
+}
+
+.trending-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.trending-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    margin-right: 2px;
+}
+
+.trending-tag {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 4px 12px;
+    border-radius: 16px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: var(--transition);
+    white-space: nowrap;
+}
+
+.trending-tag:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(108, 92, 231, 0.2);
+}
+
+.trending-tag.popular {
+    background: linear-gradient(135deg, rgba(255, 107, 107, 0.1), rgba(255, 159, 67, 0.1));
+    border-color: rgba(255, 107, 107, 0.3);
+    color: #ff6b6b;
+}
+
+.trending-tag.popular:hover {
+    border-color: #ff6b6b;
+    background: linear-gradient(135deg, rgba(255, 107, 107, 0.2), rgba(255, 159, 67, 0.2));
+}
+
+.trending-tag.popular .freq {
+    font-size: 10px;
+    opacity: 0.6;
+    margin-left: 2px;
+}
+
+.trending-tag.recent {
+    background: rgba(108, 92, 231, 0.06);
+    border-color: rgba(108, 92, 231, 0.2);
+    color: var(--accent-light);
+}
+
+.trending-tag.recent:hover {
+    border-color: var(--accent);
+    background: rgba(108, 92, 231, 0.12);
+}
+
 /* ── Download Button (Gaokao) ───────────────────────────── */
 .gk-download-link {
     text-align: center;

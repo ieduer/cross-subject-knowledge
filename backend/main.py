@@ -1,7 +1,7 @@
 """
 跨学科教材知识平台 · FastAPI 后端
 """
-import sqlite3, json, math, os, re
+import sqlite3, json, math, os, re, time
 from collections import Counter
 from pathlib import Path
 from typing import Optional
@@ -58,6 +58,49 @@ def get_db():
     con = sqlite3.connect(DB_PATH, check_same_thread=False)
     con.row_factory = sqlite3.Row
     return con
+
+
+# ── Search logs table ─────────────────────────────────────────────────
+def init_search_logs():
+    """Create search_logs table if not exists."""
+    con = get_db()
+    try:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS search_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                query TEXT NOT NULL,
+                query_normalized TEXT NOT NULL,
+                subject TEXT,
+                book_key TEXT,
+                source TEXT,
+                result_count INTEGER DEFAULT 0,
+                ts REAL NOT NULL
+            )
+        """)
+        con.execute("CREATE INDEX IF NOT EXISTS idx_logs_ts ON search_logs(ts DESC)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_logs_qn ON search_logs(query_normalized)")
+        con.commit()
+    finally:
+        con.close()
+
+init_search_logs()
+
+
+def log_search(query: str, subject=None, book_key=None, source=None, result_count=0):
+    """Record a search query asynchronously."""
+    normalized = re.sub(r'\s+', '', query.strip().lower())
+    if len(normalized) < 1:
+        return
+    try:
+        con = get_db()
+        con.execute(
+            "INSERT INTO search_logs (query, query_normalized, subject, book_key, source, result_count, ts) VALUES (?,?,?,?,?,?,?)",
+            (query.strip(), normalized, subject, book_key, source, result_count, time.time())
+        )
+        con.commit()
+        con.close()
+    except Exception:
+        pass  # never block search for logging failures
 
 
 @app.get("/api/search")
@@ -213,6 +256,9 @@ def search(
         if sort == "cross":
             groups.sort(key=lambda g: g["count"], reverse=True)
 
+        # Log the search query
+        log_search(q, subject=subject, book_key=book_key, source=source, result_count=total)
+
         return {
             "query": q,
             "total": total,
@@ -220,6 +266,40 @@ def search(
             "cross_hint": hint,
             "groups": groups,
         }
+    finally:
+        con.close()
+
+
+@app.get("/api/search/trending")
+def search_trending():
+    """Return recent queries and popular queries for display."""
+    con = get_db()
+    try:
+        # Recent unique queries (last 50, deduplicated, max 15)
+        recent_rows = con.execute("""
+            SELECT query, MAX(ts) as latest_ts, MAX(result_count) as cnt
+            FROM search_logs
+            WHERE result_count > 0
+            GROUP BY query_normalized
+            ORDER BY latest_ts DESC
+            LIMIT 15
+        """).fetchall()
+        recent = [{"query": r["query"], "count": r["cnt"]} for r in recent_rows]
+
+        # Popular queries (last 7 days, by frequency, min 2 searches)
+        week_ago = time.time() - 7 * 86400
+        popular_rows = con.execute("""
+            SELECT query, query_normalized, COUNT(*) as freq, MAX(result_count) as cnt
+            FROM search_logs
+            WHERE ts > ? AND result_count > 0
+            GROUP BY query_normalized
+            HAVING freq >= 1
+            ORDER BY freq DESC
+            LIMIT 20
+        """, (week_ago,)).fetchall()
+        popular = [{"query": r["query"], "freq": r["freq"], "count": r["cnt"]} for r in popular_rows]
+
+        return {"recent": recent, "popular": popular}
     finally:
         con.close()
 

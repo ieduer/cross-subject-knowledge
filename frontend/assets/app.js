@@ -185,6 +185,61 @@ function renderCarouselBatch() {
     setInterval(renderCarouselBatch, 3000);
 })();
 
+// ── Trending Searches ─────────────────────────────────────
+async function loadTrending() {
+    try {
+        const res = await fetch(`${API}/api/search/trending`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const section = document.getElementById('trending-section');
+        const popularGroup = document.getElementById('trending-popular');
+        const recentGroup = document.getElementById('trending-recent');
+        const popularTags = document.getElementById('trending-popular-tags');
+        const recentTags = document.getElementById('trending-recent-tags');
+
+        let hasContent = false;
+
+        // Popular searches
+        if (data.popular && data.popular.length > 0) {
+            popularTags.innerHTML = '';
+            data.popular.slice(0, 10).forEach(item => {
+                const btn = document.createElement('button');
+                btn.className = 'trending-tag popular';
+                btn.innerHTML = `${item.query} <span class="freq">${item.freq > 1 ? '×' + item.freq : ''}</span>`;
+                btn.addEventListener('click', () => {
+                    searchInput.value = item.query;
+                    doSearch(item.query);
+                });
+                popularTags.appendChild(btn);
+            });
+            popularGroup.classList.remove('hidden');
+            hasContent = true;
+        }
+
+        // Recent searches
+        if (data.recent && data.recent.length > 0) {
+            recentTags.innerHTML = '';
+            data.recent.slice(0, 8).forEach(item => {
+                const btn = document.createElement('button');
+                btn.className = 'trending-tag recent';
+                btn.textContent = item.query;
+                btn.addEventListener('click', () => {
+                    searchInput.value = item.query;
+                    doSearch(item.query);
+                });
+                recentTags.appendChild(btn);
+            });
+            recentGroup.classList.remove('hidden');
+            hasContent = true;
+        }
+
+        if (hasContent) section.classList.remove('hidden');
+    } catch (_) { /* silent */ }
+}
+
+// Load trending on page init
+loadTrending();
+
 let currentQuery = '';
 let currentData = null;
 
@@ -216,6 +271,8 @@ async function doSearch(q) {
         renderResults(currentData);
         // Load related concepts
         loadRelated(q);
+        // Refresh trending after search (new query logged)
+        setTimeout(() => loadTrending(), 500);
     } catch (e) {
         resultsEl.innerHTML = `<div class="loading">搜索出错: ${e.message}</div>`;
     }
