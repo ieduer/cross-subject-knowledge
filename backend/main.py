@@ -42,21 +42,21 @@ if FAISS_AVAILABLE and FAISS_INDEX_PATH.exists():
     try:
         print(f"Loading FAISS index from {FAISS_INDEX_PATH}...", flush=True)
         raw_index = faiss.read_index(str(FAISS_INDEX_PATH))
-        # Auto-convert Flat index to HNSW for faster search
-        if hasattr(raw_index, 'ntotal') and not isinstance(raw_index, faiss.IndexHNSWFlat):
-            d = raw_index.d  # vector dimension
-            n = raw_index.ntotal
-            if n > 0 and n < 500_000:  # only convert reasonable sizes
-                print(f"Converting Flat index ({n} vectors, {d}D) to HNSW...", flush=True)
-                hnsw_index = faiss.IndexHNSWFlat(d, 32)  # 32 neighbors
-                hnsw_index.hnsw.efSearch = 64
-                hnsw_index.hnsw.efConstruction = 200
-                vectors = faiss.rev_swig_ptr(raw_index.get_xb(), n * d).reshape(n, d).copy()
-                hnsw_index.add(vectors)
-                faiss_index = hnsw_index
-                print(f"HNSW index built: {faiss_index.ntotal} vectors, efSearch=64", flush=True)
-            else:
-                faiss_index = raw_index
+        d = raw_index.d  # vector dimension
+        n = raw_index.ntotal
+        # Auto-convert to HNSW for faster search (works with Flat, IDMap, etc.)
+        if n > 0 and n < 500_000 and not isinstance(raw_index, faiss.IndexHNSWFlat):
+            print(f"Converting index ({type(raw_index).__name__}, {n} vectors, {d}D) to HNSW...", flush=True)
+            hnsw_index = faiss.IndexHNSWFlat(d, 32)  # 32 neighbors
+            hnsw_index.hnsw.efSearch = 64
+            hnsw_index.hnsw.efConstruction = 200
+            # Extract all vectors using reconstruct_n (works for any index type)
+            vectors = np.zeros((n, d), dtype='float32')
+            for i in range(n):
+                vectors[i] = raw_index.reconstruct(i)
+            hnsw_index.add(vectors)
+            faiss_index = hnsw_index
+            print(f"HNSW index built: {faiss_index.ntotal} vectors, efSearch=64", flush=True)
         else:
             faiss_index = raw_index
         embedder = SentenceTransformer(EMBEDDER_NAME)
