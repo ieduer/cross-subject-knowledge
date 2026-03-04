@@ -116,7 +116,7 @@
 │       └── app.js              # D3.js 图谱 + 高级搜索 + AI 解读
 └── data/index/
     ├── textbook_mineru_fts.db  # FTS5 索引 + 概念图谱 (142MB)
-    └── textbook_chunks.index   # FAISS 向量索引 (130MB, 65,978 vectors)
+    └── textbook_chunks.index   # FAISS 向量索引 (61MB, 15,652 vectors)
 ```
 
 > 📷 **图片不在 Docker 中** — 87K 张原图托管在 Cloudflare R2（`img.rdfzer.com`），前端通过 CDN URL 直接加载。
@@ -342,13 +342,15 @@ certbot --nginx -d your-domain.com
 | 容器 | Docker | 单文件部署 |
 | 数据备份 | rclone → Google Drive / R2 | |
 
-### 关联发掘技术栈
+### 后端及发掘技术栈
 
 | 组件 | 技术 | 说明 |
 |------|------|------|
-| 中文向量模型 | `BAAI/bge-small-zh-v1.5` | 512D 中文语义嵌入，90MB，MTEB 中文榜前列 |
-| 向量检索 | `faiss-cpu` | 65,978 向量 flat index，130MB |
-| 中文分词 | `jieba` + POS tagging | 词性过滤（保留名词/专有名词），IDF 加权 |
+| 中文向量模型 | `BAAI/bge-m3` | 1024D 多语言/长文本嵌入，2.2GB，全面提升语义理解度 |
+| 向量检索 | `faiss-cpu` | 15,652 向量 IndexIDMap，61MB |
+| API 缓存 | `cachetools` | TTLCache (5min, maxsize=64) 加速读密集型高频 API |
+| 中文分词 | `jieba` + POS tagging | 启动时自动加载 `curated_keywords` 的 720 个学术术语为高权重用户词典，精准切词 |
+| 自动部署 | GitHub Actions | 提交触发 CI/CD 自动连入 VPS 拉取并在 Docker 重建 |
 | 概念图谱 | SQLite `concept_map` | 784 个学术概念，跨学科自动发现 |
 | 全文检索 | SQLite FTS5 | Porter 分词器，OR 组合查询 |
 | 评分算法 | 自定义 `_score_result` | IDF 加权词项匹配 + 概念命中 + 同学科加分，阈值 ≥15 |
@@ -356,11 +358,23 @@ certbot --nginx -d your-domain.com
 **关联检索流程** (3 层混合)：
 1. **概念图谱** → `_match_concepts` 从 concept_map 匹配学科核心概念
 2. **IDF 加权 FTS** → `_extract_weighted_terms` Jieba 分词后按 IDF 权重排序，FTS5 搜索
-3. **稠密向量** → `FAISS` 编码查询文本为 512D 向量，搜索 top-K 近邻 (cosine > 0.55)
+3. **稠密向量** → `FAISS` 编码查询文本为 1024D 向量，搜索 top-K 近邻 (cosine > 0.55)
 
 ---
 
 ## 📋 更新日志
+
+### 2026-03-04: 技术栈全面升级
+
+**AI与检索**
+- ✅ 向量模型：升级为强大的多语言模型 `BAAI/bge-m3` (1024D 嵌入) 替换原有的 bge-small
+- ✅ 向量索引：使用新模型重新编码 15,652 条核心教学切片至 1024D FAISS IndexIDMap (61MB)
+- ✅ 智能分词：启动时自动提取 `curated_keywords` 中 720 个核心学术术语（如"共价键"）装载进 Jieba 自定义词典，避免错误切词
+
+**性能与架构**
+- ✅ 接口缓存：引入 `cachetools.TTLCache` 为 `stats`、`keywords` 等只读 API 提供 5 分钟短效缓存，重复请求耗时降至 <1ms
+- ✅ 高可用监控：新增 `/api/health` 探针接口，结合 Docker `HEALTHCHECK` 实现容器挂死自动重启
+- ✅ CI/CD：添加 GitHub Actions Workflow，实现代码 Push 主分支后自动触发 VPS 侧热更重启
 
 ### 2026-03-04: 知识图谱全面重建 + D3.js 交互式可视化
 
