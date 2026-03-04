@@ -1,0 +1,30 @@
+name: Deploy to VPS
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /root/cross-subject-knowledge
+            git pull origin main
+            docker build -t textbook-knowledge .
+            docker stop textbook-knowledge || true
+            docker rm textbook-knowledge || true
+            docker run -d \
+              --name textbook-knowledge \
+              --restart unless-stopped \
+              -p 8080:8080 \
+              textbook-knowledge
+            # Wait for startup and verify health
+            sleep 15
+            curl -sf http://localhost:8080/api/health || echo "WARNING: health check failed"
+            echo "=== Deployed at $(date) ==="
