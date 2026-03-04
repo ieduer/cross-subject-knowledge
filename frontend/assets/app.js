@@ -671,6 +671,16 @@ function renderGraphNew(data, container, mode) {
             `<div class="stat-chip">${s.icon} ${s.name} <span class="count">${s.count.toLocaleString()}</span></div>`
         ).join('');
         el.classList.remove('hidden');
+
+        // Update hero subtitle with live stats
+        const heroSub = document.getElementById('hero-sub');
+        if (heroSub) {
+            const nSubjects = data.subjects.length;
+            const nTextbook = (data.textbook_chunks || 0).toLocaleString();
+            const nGaokao = (data.gaokao_chunks || 0).toLocaleString();
+            const nTotal = (data.total_chunks || 0).toLocaleString();
+            heroSub.textContent = `覆盖高中 ${nSubjects} 科 · ${nTotal} 条结构化语料 · ${nGaokao} 道高考真题`;
+        }
     } catch (e) { /* silent */ }
 })();
 
