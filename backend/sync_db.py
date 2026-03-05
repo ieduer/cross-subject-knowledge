@@ -8,7 +8,9 @@ _ALT_DATA_ROOT = PROJECT_ROOT.parent / "data"
 if not (_DEFAULT_DATA_ROOT / "index").exists() and (_ALT_DATA_ROOT / "index").exists():
     _DEFAULT_DATA_ROOT = _ALT_DATA_ROOT
 DATA_ROOT = Path(os.getenv("DATA_ROOT", _DEFAULT_DATA_ROOT)).expanduser().resolve()
-DB_PATH = DATA_ROOT / "index/textbook_mineru_fts.db"
+DB_PATH_PRIMARY = DATA_ROOT / "index" / "textbook_mineru_fts.db"
+DB_PATH_LEGACY = DATA_ROOT / "textbook_mineru_fts.db"
+DB_PATH = DB_PATH_PRIMARY if DB_PATH_PRIMARY.exists() or not DB_PATH_LEGACY.exists() else DB_PATH_LEGACY
 
 def download_db():
     print(f"Checking for DB updates from {DB_URL}...")

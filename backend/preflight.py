@@ -12,6 +12,16 @@ import sys
 from pathlib import Path
 
 
+def _resolve_data_asset(data_root: Path, filename: str) -> Path:
+    primary = data_root / "index" / filename
+    legacy = data_root / filename
+    if primary.exists():
+        return primary
+    if legacy.exists():
+        return legacy
+    return primary
+
+
 def main() -> int:
     project_root = Path(os.getenv("PROJECT_ROOT", Path(__file__).resolve().parents[1])).expanduser().resolve()
     default_data_root = project_root / "data"
@@ -26,8 +36,8 @@ def main() -> int:
         d.mkdir(parents=True, exist_ok=True)
 
     required_files = [
-        data_root / "index" / "textbook_mineru_fts.db",
-        data_root / "index" / "textbook_chunks.index",
+        _resolve_data_asset(data_root, "textbook_mineru_fts.db"),
+        _resolve_data_asset(data_root, "textbook_chunks.index"),
     ]
 
     missing = [str(p) for p in required_files if not p.exists()]

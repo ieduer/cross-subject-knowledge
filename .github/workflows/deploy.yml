@@ -17,8 +17,8 @@ jobs:
             cd /root/cross-subject-knowledge
             git pull origin main
             mkdir -p data/index state/logs state/cache state/tmp state/batch
-            if [ ! -f data/textbook_chunks.index ]; then
-              echo "ERROR: missing required runtime asset data/textbook_chunks.index"
+            if [ ! -f data/textbook_chunks.index ] && [ ! -f data/index/textbook_chunks.index ]; then
+              echo "ERROR: missing required runtime asset textbook_chunks.index (checked data/ and data/index/)"
               exit 1
             fi
             docker build -t textbook-knowledge .

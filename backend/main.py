@@ -36,9 +36,19 @@ STATE_ROOT.mkdir(parents=True, exist_ok=True)
 for d in ("logs", "cache", "tmp", "batch"):
     (STATE_ROOT / d).mkdir(parents=True, exist_ok=True)
 
-DB_PATH = DATA_ROOT / "index/textbook_mineru_fts.db"
+def _resolve_data_asset(filename: str) -> Path:
+    primary = DATA_ROOT / "index" / filename
+    legacy = DATA_ROOT / filename
+    if primary.exists():
+        return primary
+    if legacy.exists():
+        return legacy
+    return primary
+
+
+DB_PATH = _resolve_data_asset("textbook_mineru_fts.db")
 FRONTEND = Path(__file__).parent.parent / "frontend"
-FAISS_INDEX_PATH = DATA_ROOT / "index/textbook_chunks.index"
+FAISS_INDEX_PATH = _resolve_data_asset("textbook_chunks.index")
 
 app = FastAPI(title="跨学科教材知识平台", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
