@@ -395,6 +395,13 @@ body {
     display: none;
 }
 
+.ai-toolbar {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
 .ai-btn {
     display: flex;
     align-items: center;
@@ -410,6 +417,26 @@ body {
     transition: var(--transition);
     margin: 0 auto;
     box-shadow: 0 4px 20px rgba(108, 92, 231, 0.3);
+}
+
+.ai-copy-btn {
+    border: 1px solid rgba(108, 92, 231, 0.35);
+    background: rgba(108, 92, 231, 0.08);
+    color: var(--accent-light);
+    padding: 10px 16px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.ai-copy-btn:hover {
+    border-color: var(--accent-light);
+    background: rgba(108, 92, 231, 0.2);
+}
+
+.ai-copy-btn.hidden {
+    display: none;
 }
 
 .ai-btn:hover {
@@ -470,10 +497,80 @@ body {
 }
 
 .ai-content {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
     font-size: 14px;
-    line-height: 1.9;
+    line-height: 1.8;
     color: var(--text);
+}
+
+.ai-msg {
+    border-radius: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+}
+
+.ai-msg.user {
+    background: rgba(108, 92, 231, 0.08);
+    border-color: rgba(108, 92, 231, 0.28);
+}
+
+.ai-msg.assistant {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.ai-msg-role {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
+
+.ai-msg-text {
     white-space: pre-wrap;
+}
+
+.ai-compose {
+    margin-top: 14px;
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+}
+
+.ai-followup-input {
+    flex: 1;
+    resize: vertical;
+    min-height: 56px;
+    max-height: 180px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-input);
+    color: var(--text);
+    padding: 10px 12px;
+    font-size: 13px;
+    font-family: inherit;
+}
+
+.ai-followup-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(108, 92, 231, 0.2);
+}
+
+.ai-send-btn {
+    border: none;
+    background: linear-gradient(135deg, #6c5ce7, #8d7cff);
+    color: #fff;
+    border-radius: 10px;
+    padding: 10px 16px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.ai-send-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
 }
 
 .ai-content .ai-source {
@@ -978,6 +1075,25 @@ body {
     text-decoration: underline;
 }
 
+.about-feedback-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid rgba(108, 92, 231, 0.35);
+    background: rgba(108, 92, 231, 0.1);
+    color: var(--accent-light);
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.about-feedback-btn:hover {
+    background: rgba(108, 92, 231, 0.18);
+    text-decoration: none;
+}
+
 /* ── Footer ──────────────────────────────────────────────── */
 .footer {
     text-align: center;
@@ -1119,6 +1235,62 @@ body {
     gap: 8px;
     margin-bottom: 6px;
     flex-wrap: wrap;
+}
+
+.match-channel {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 500;
+    margin-left: 4px;
+}
+
+.match-channel.exact {
+    color: #ffe08a;
+    background: rgba(255, 224, 138, 0.12);
+}
+
+.match-channel.fts {
+    color: #74b9ff;
+    background: rgba(116, 185, 255, 0.13);
+}
+
+.result-trace {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin: 6px 0 8px;
+}
+
+.confidence-badge {
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.confidence-badge.high {
+    color: #55efc4;
+    background: rgba(85, 239, 196, 0.14);
+}
+
+.confidence-badge.mid {
+    color: #ffeaa7;
+    background: rgba(255, 234, 167, 0.14);
+}
+
+.confidence-badge.low {
+    color: #fab1a0;
+    background: rgba(250, 177, 160, 0.14);
+}
+
+.relation-path {
+    color: var(--text-muted);
+    font-size: 12px;
 }
 
 /* ── Image Count Badge ───────────────────────────────────── */
@@ -1949,12 +2121,22 @@ body {
     }
 
     /* ── AI Panel ──────────────────────────────────────── */
+    .ai-toolbar {
+        flex-direction: column;
+    }
+
     .ai-btn {
         width: 100%;
         justify-content: center;
         padding: 12px 20px;
         font-size: 15px;
         min-height: 48px;
+    }
+
+    .ai-copy-btn {
+        width: 100%;
+        min-height: 42px;
+        font-size: 13px;
     }
 
     .ai-result {
@@ -1973,6 +2155,20 @@ body {
     .ai-content {
         font-size: 13px;
         line-height: 1.8;
+    }
+
+    .ai-compose {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .ai-followup-input {
+        min-height: 64px;
+    }
+
+    .ai-send-btn {
+        width: 100%;
+        min-height: 42px;
     }
 
     /* ── Subject Tabs: horizontal scroll ───────────────── */
@@ -2077,6 +2273,25 @@ body {
     .source-badge {
         font-size: 10px;
         padding: 2px 6px;
+    }
+
+    .match-channel {
+        font-size: 10px;
+        padding: 2px 6px;
+    }
+
+    .result-trace {
+        gap: 6px;
+        margin: 4px 0 6px;
+    }
+
+    .confidence-badge {
+        font-size: 10px;
+        padding: 2px 8px;
+    }
+
+    .relation-path {
+        font-size: 11px;
     }
 
     .result-snippet {

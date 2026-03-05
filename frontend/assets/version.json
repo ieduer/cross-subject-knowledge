@@ -1,0 +1,11 @@
+{
+  "frontend_refactor_version": "2026.03.05-r1",
+  "updated_at": "2026-03-05",
+  "history": [
+    {
+      "version": "2026.03.05-r1",
+      "date": "2026-03-05",
+      "summary": "9-page viewer window, dual-channel tags + confidence/path, AI memory chat, issue feedback entry, footer versioning"
+    }
+  ]
+}

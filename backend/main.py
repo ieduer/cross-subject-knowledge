@@ -88,6 +88,29 @@ if FAISS_AVAILABLE and FAISS_INDEX_PATH.exists():
         print(f"Failed to load FAISS/model: {e}", flush=True)
         import traceback; traceback.print_exc()
 
+
+def _expected_vector_rows() -> Optional[int]:
+    try:
+        con = sqlite3.connect(DB_PATH)
+        row = con.execute(
+            "SELECT COUNT(*) FROM chunks WHERE source != 'gaokao' AND text IS NOT NULL AND text != ''"
+        ).fetchone()
+        con.close()
+        return int(row[0]) if row else None
+    except Exception:
+        return None
+
+
+if faiss_index is not None:
+    expected_rows = _expected_vector_rows()
+    if expected_rows is not None and faiss_index.ntotal != expected_rows:
+        print(
+            f"FAISS disabled: index vectors={faiss_index.ntotal}, expected_rows={expected_rows}. "
+            "Rebuild textbook_chunks.index to re-enable dense retrieval.",
+            flush=True,
+        )
+        faiss_index = None
+
 # ── Jieba custom dictionary ──────────────────────────────────────────
 try:
     import jieba
@@ -226,6 +249,7 @@ def search(
             d = dict(r)
             # Add basic highlighting for the LIKE snippet
             d['snippet'] = d['snippet'].replace(clean_q, f"<mark>{clean_q}</mark>")
+            d["match_channel"] = "exact"
             rows.append(d)
             existing_ids.add(d['id'])
 
@@ -252,7 +276,9 @@ def search(
 
         for r in fts_rows:
             if r['id'] not in existing_ids:
-                rows.append(dict(r))
+                d = dict(r)
+                d["match_channel"] = "fts"
+                rows.append(d)
                 existing_ids.add(r['id'])
 
         # 3. Sort by rank (exact matches get -100.0 so they appear first) and trim to limit
@@ -290,6 +316,7 @@ def search(
                 "text": text[:2000],
                 "image_count": img_count,
                 "source": r["source"] or "mineru",
+                "match_channel": r.get("match_channel", "fts"),
                 "page_url": page_url,
                 "page_num": page_num,
                 "total_pages": bm_info.get("pages", 0),
@@ -1631,7 +1658,7 @@ except Exception as e:
 def page_image(
     book_key: str = Query(..., description="book_key from search result"),
     page: int = Query(..., ge=0, description="Page number (0-indexed)"),
-    context: int = Query(2, ge=0, le=5, description="Number of context pages before/after"),
+    context: int = Query(4, ge=0, le=8, description="Number of context pages before/after"),
 ):
     """Return R2 CDN URLs for a page and surrounding context pages."""
     # Find the book in book_map

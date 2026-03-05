@@ -3,46 +3,121 @@
 const API = '';  // same origin
 const AI_API = 'https://ai.bdfz.net/';
 const IMG_CDN = 'https://img.rdfzer.com';
+const DEFAULT_FRONTEND_VERSION = 'refactor-2026.03.05-r1';
+const FRONTEND_VERSION_FILE = '/assets/version.json';
+const AI_MEMORY_LIMIT = 12;
 
-// ── AI Synthesis ──────────────────────────────────────────
+// ── AI Chat (Memory + Copy) ───────────────────────────────
 const aiPanel = document.getElementById('ai-panel');
 const aiBtn = document.getElementById('ai-btn');
 const aiResult = document.getElementById('ai-result');
 const aiContent = document.getElementById('ai-content');
+const aiFollowupInput = document.getElementById('ai-followup-input');
+const aiSendBtn = document.getElementById('ai-send-btn');
+const aiCopyBtn = document.getElementById('ai-copy-btn');
 
-aiBtn.addEventListener('click', () => requestAISynthesis());
+let aiConversation = [];
+let aiRequestPending = false;
 
-async function requestAISynthesis() {
-    if (!currentData || !currentQuery) return;
-    const groups = currentData.groups || [];
-    if (groups.length < 2) return;
+if (aiBtn) aiBtn.addEventListener('click', () => requestAISynthesis());
+if (aiSendBtn) aiSendBtn.addEventListener('click', () => requestAIFollowup());
+if (aiCopyBtn) aiCopyBtn.addEventListener('click', () => copyAIConversation());
+if (aiFollowupInput) {
+    aiFollowupInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            requestAIFollowup();
+        }
+    });
+}
 
-    // Build context from search results (top 3 per subject)
-    const context = groups.map(g => {
-        const snippets = g.results.slice(0, 3).map(r =>
-            `[${g.subject}·${r.title}·§${r.section}] ${r.text.slice(0, 300)}`
+function buildAIContext(groups) {
+    return groups.map(g => {
+        const snippets = (g.results || []).slice(0, 3).map(r =>
+            `[${g.subject}·${r.title}·p${r.logical_page ?? r.section}] ${String(r.text || '').slice(0, 280)}`
         ).join('\n');
         return `【${g.subject}】（${g.count}条）\n${snippets}`;
     }).join('\n\n');
+}
 
-    const prompt = `你是一位资深跨学科教育专家。用户搜索了「${currentQuery}」，以下是来自高中不同学科教材的相关内容：
+function buildAIPrompt(userMessage, groups, history) {
+    const context = buildAIContext(groups);
+    const historyText = history.length > 0
+        ? history.map(msg => `${msg.role === 'user' ? '用户' : '助手'}: ${msg.content}`).join('\n')
+        : '（无）';
 
+    return `你是一位资深跨学科教育专家。用户当前搜索词是「${currentQuery}」。
+
+教材上下文（多学科原文）：
 ${context}
 
-请完成以下任务：
-1. 用 200-300 字综合解释「${currentQuery}」这个概念如何在这些学科中体现，重点挖掘学生不容易发现但应该看到的跨学科联系。
-2. 说明不同学科对同一概念的不同视角如何互补。
-3. 在解释中标注出处，格式：[学科·书名]。
-4. 最后给出一个「学习建议」，帮助学生建立跨学科思维。
+历史对话：
+${historyText}
 
-要求：语言简洁有力，面向高中生，避免重复原文。`;
+用户本轮问题：
+${userMessage}
 
-    // Show loading
-    aiBtn.disabled = true;
-    aiBtn.classList.add('loading');
-    aiBtn.querySelector('.ai-sparkle').textContent = '⏳';
-    aiResult.classList.add('hidden');
+请按要求回答：
+1. 用高中生能理解的中文，先给结论再给理由，避免空泛。
+2. 回答中标注出处，格式：[学科·书名]。
+3. 如果用户追问，必须基于上文记忆连续回答，不重复整段前文。
+4. 若证据不足，明确说“证据不足”，并指出建议查看的学科/教材页。`;
+}
 
+function renderAIConversation() {
+    if (!aiContent) return;
+    if (!aiConversation.length) {
+        aiContent.innerHTML = '';
+        return;
+    }
+    aiContent.innerHTML = aiConversation.map(msg => `
+        <div class="ai-msg ${msg.role === 'user' ? 'user' : 'assistant'}">
+            <div class="ai-msg-role">${msg.role === 'user' ? '你' : 'AI'}</div>
+            <div class="ai-msg-text">${escHtml(msg.content)}</div>
+        </div>
+    `).join('') + `<span class="ai-source">📡 由 Gemini 生成 · 数据来源：${Object.keys(currentData?.subject_counts || {}).length} 个学科教材</span>`;
+}
+
+function setAIBusy(isBusy) {
+    aiRequestPending = isBusy;
+    if (aiBtn) {
+        aiBtn.disabled = isBusy;
+        aiBtn.classList.toggle('loading', isBusy);
+        const sparkle = aiBtn.querySelector('.ai-sparkle');
+        if (sparkle) sparkle.textContent = isBusy ? '⏳' : '✨';
+    }
+    if (aiSendBtn) aiSendBtn.disabled = isBusy;
+    if (aiFollowupInput) aiFollowupInput.disabled = isBusy;
+}
+
+function resetAIConversation() {
+    aiConversation = [];
+    if (aiContent) aiContent.innerHTML = '';
+    if (aiResult) aiResult.classList.add('hidden');
+    if (aiFollowupInput) aiFollowupInput.value = '';
+    if (aiCopyBtn) aiCopyBtn.classList.add('hidden');
+}
+
+async function sendAIMessage(userMessage) {
+    if (!currentData || !currentQuery || aiRequestPending) return;
+    const groups = currentData.groups || [];
+    if (groups.length < 2) return;
+    const cleanMessage = (userMessage || '').trim();
+    if (!cleanMessage) return;
+
+    const history = aiConversation.slice(-8);
+    const prompt = buildAIPrompt(cleanMessage, groups, history);
+
+    aiConversation.push({ role: 'user', content: cleanMessage });
+    if (aiConversation.length > AI_MEMORY_LIMIT) {
+        aiConversation = aiConversation.slice(-AI_MEMORY_LIMIT);
+    }
+    if (aiResult) aiResult.classList.remove('hidden');
+    renderAIConversation();
+    if (aiCopyBtn) aiCopyBtn.classList.remove('hidden');
+    if (aiFollowupInput) aiFollowupInput.value = '';
+
+    setAIBusy(true);
     try {
         const res = await fetch(AI_API, {
             method: 'POST',
@@ -52,22 +127,76 @@ ${context}
         const data = await res.json();
 
         if (data.answer) {
-            aiContent.innerHTML = escHtml(data.answer) +
-                `<span class="ai-source">📡 由 Gemini 生成 · 数据来源：${groups.length} 个学科的教材原文</span>`;
-            aiResult.classList.remove('hidden');
-        } else if (data.error) {
-            aiContent.textContent = `AI 服务暂时不可用: ${data.error}`;
-            aiResult.classList.remove('hidden');
+            aiConversation.push({ role: 'assistant', content: data.answer });
+        } else {
+            aiConversation.push({ role: 'assistant', content: `AI 服务暂时不可用: ${data.error || 'unknown error'}` });
         }
     } catch (e) {
-        aiContent.textContent = `请求失败: ${e.message}`;
-        aiResult.classList.remove('hidden');
+        aiConversation.push({ role: 'assistant', content: `请求失败: ${e.message}` });
     } finally {
-        aiBtn.disabled = false;
-        aiBtn.classList.remove('loading');
-        aiBtn.querySelector('.ai-sparkle').textContent = '✨';
+        if (aiConversation.length > AI_MEMORY_LIMIT) {
+            aiConversation = aiConversation.slice(-AI_MEMORY_LIMIT);
+        }
+        renderAIConversation();
+        setAIBusy(false);
     }
 }
+
+async function requestAISynthesis() {
+    if (!currentData || !currentQuery) return;
+    const groups = currentData.groups || [];
+    if (groups.length < 2) return;
+    await sendAIMessage(`请先综合解读「${currentQuery}」，突出跨学科联系，并给出学习建议。`);
+}
+
+async function requestAIFollowup() {
+    if (!aiFollowupInput) return;
+    await sendAIMessage(aiFollowupInput.value);
+}
+
+async function copyAIConversation() {
+    if (!aiConversation.length || !navigator.clipboard) return;
+    const text = aiConversation
+        .map(msg => `${msg.role === 'user' ? '你' : 'AI'}: ${msg.content}`)
+        .join('\n\n');
+    try {
+        await navigator.clipboard.writeText(text);
+        if (aiCopyBtn) {
+            const prev = aiCopyBtn.textContent;
+            aiCopyBtn.textContent = '✅ 已复制';
+            setTimeout(() => { aiCopyBtn.textContent = prev; }, 1200);
+        }
+    } catch (_) {
+        if (aiCopyBtn) {
+            const prev = aiCopyBtn.textContent;
+            aiCopyBtn.textContent = '❌ 复制失败';
+            setTimeout(() => { aiCopyBtn.textContent = prev; }, 1200);
+        }
+    }
+}
+
+// ── Footer Version ────────────────────────────────────────
+async function loadFrontendVersion() {
+    const footer = document.getElementById('footer-version-line');
+    if (!footer) return;
+
+    let version = DEFAULT_FRONTEND_VERSION;
+    let updatedAt = '';
+    try {
+        const res = await fetch(`${FRONTEND_VERSION_FILE}?v=${Date.now()}`, { cache: 'no-store' });
+        if (res.ok) {
+            const data = await res.json();
+            version = data.frontend_refactor_version || version;
+            updatedAt = data.updated_at || '';
+        }
+    } catch (_) {
+        // fallback to default version
+    }
+
+    footer.textContent = `AI 高中教材 · 开源项目 · MIT License · 前端重构版本 ${version}${updatedAt ? ` · ${updatedAt}` : ''}`;
+}
+
+loadFrontendVersion();
 
 // ── Navigation ────────────────────────────────────────────
 document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -248,6 +377,7 @@ async function doSearch(q) {
     q = q.trim();
     if (!q) return;
     currentQuery = q;
+    resetAIConversation();
 
     resultsEl.innerHTML = '<div class="loading">搜索中…</div>';
     crossHintEl.classList.add('hidden');
@@ -320,7 +450,6 @@ function renderResults(data, filterSubject = null) {
     const subjectCount = Object.keys(data.subject_counts || {}).length;
     if (subjectCount >= 2 && !filterSubject) {
         aiPanel.classList.remove('hidden');
-        aiResult.classList.add('hidden'); // reset
     } else {
         aiPanel.classList.add('hidden');
     }
@@ -359,6 +488,7 @@ function renderResults(data, filterSubject = null) {
     if (filterSubject) {
         groups = groups.filter(g => g.subject === filterSubject);
     }
+    const subjectBreadth = Object.keys(data.subject_counts || {}).length;
 
     if (groups.length === 0) {
         resultsEl.innerHTML = '<div class="loading">未找到相关结果</div>';
@@ -378,9 +508,11 @@ function renderResults(data, filterSubject = null) {
                     <div class="result-meta">
                         <span class="result-title">${escHtml(r.title)} · §${r.section}</span>
                         ${r.source === 'gaokao' ? '<span class="source-badge gaokao">📝 真题</span>' : '<span class="source-badge textbook">📚 教材</span>'}
+                        ${r.match_channel === 'exact' ? '<span class="match-channel exact">🎯 精确命中</span>' : '<span class="match-channel fts">🧠 语义召回</span>'}
                         ${r.image_count > 0 ? `<span class="img-badge">📷 ${r.image_count}</span>` : ''}
                         ${r.page_url ? `<span class="page-badge" title="第 ${r.page_num} 页 / 共 ${r.total_pages} 页">📄 p${r.logical_page ?? r.page_num}</span>` : ''}
                     </div>
+                    ${renderConfidenceAndPath(r, g.subject, subjectBreadth, data.query)}
                     <div class="result-snippet">${sanitizeSnippet(r.snippet)}</div>
                     <div class="result-text">${renderText(r.text, r.book_key)}</div>
                     ${r.page_url ? `<div class="result-actions">
@@ -406,6 +538,30 @@ function renderResults(data, filterSubject = null) {
 function getSubjectIcon(s) {
     const map = { '语文': '📖', '数学': '📐', '英语': '🌍', '物理': '⚛️', '化学': '🧪', '生物学': '🧬', '历史': '📜', '地理': '🗺️', '思想政治': '⚖️' };
     return map[s] || '📚';
+}
+
+function renderConfidenceAndPath(result, subject, subjectBreadth, query) {
+    let level = 'low';
+    let label = '中';
+    let score = 0.72;
+
+    if (result.page_url && result.match_channel === 'exact') {
+        level = 'high';
+        label = '高';
+        score = 0.93;
+    } else if (result.match_channel === 'exact' || result.image_count > 0) {
+        level = 'mid';
+        label = '中高';
+        score = 0.84;
+    }
+
+    const scorePct = Math.round(score * 100);
+    return `
+        <div class="result-trace">
+            <span class="confidence-badge ${level}">可信度 ${label} · ${scorePct}%</span>
+            <span class="relation-path">路径：${escHtml(query)} → ${escHtml(subject)} → ${subjectBreadth} 科关联</span>
+        </div>
+    `;
 }
 
 function escHtml(s) {
@@ -512,7 +668,7 @@ function openPageViewer(bookKey, page, totalPages) {
     const existing = document.getElementById('page-viewer');
     if (existing) existing.remove();
 
-    const context = 2; // ±2 pages
+    const context = 4; // ±4 pages -> total up to 9 pages
     const startPage = Math.max(0, page - context);
     const endPage = Math.min(totalPages - 1, page + context);
     let currentPage = page;
