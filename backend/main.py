@@ -193,7 +193,7 @@ def search(
         # Guarantees we NEVER miss a direct textual match due to FTS5 tokenization issues
         like_params = [clean_q, f"%{clean_q}%"] + filter_params + [limit, offset]
         like_rows = con.execute(f"""
-            SELECT c.id, c.subject, c.title, c.book_key, c.section,
+            SELECT c.id, c.subject, c.title, c.book_key, c.section, c.logical_page,
                    SUBSTR(c.text, MAX(1, INSTR(c.text, ?)-30), 120) as snippet,
                    c.text, c.source, c.year, c.category,
                    -100.0 as rank
@@ -219,7 +219,7 @@ def search(
             order_clause = "ORDER BY (LENGTH(c.text) - LENGTH(REPLACE(c.text, '![', ''))) DESC, rank"
 
         fts_rows = con.execute(f"""
-            SELECT c.id, c.subject, c.title, c.book_key, c.section,
+            SELECT c.id, c.subject, c.title, c.book_key, c.section, c.logical_page,
                    snippet(chunks_fts, 0, '<mark>', '</mark>', '…', 40) as snippet,
                    c.text, c.source, c.year, c.category,
                    f.rank as rank
@@ -265,6 +265,7 @@ def search(
                 "title": r["title"],
                 "book_key": bk,
                 "section": r["section"],
+                "logical_page": r["logical_page"] if "logical_page" in r.keys() and r["logical_page"] is not None else r["section"],
                 "snippet": r["snippet"],
                 "text": text[:2000],
                 "image_count": img_count,

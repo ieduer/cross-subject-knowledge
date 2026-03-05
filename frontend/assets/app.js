@@ -379,7 +379,7 @@ function renderResults(data, filterSubject = null) {
                         <span class="result-title">${escHtml(r.title)} · §${r.section}</span>
                         ${r.source === 'gaokao' ? '<span class="source-badge gaokao">📝 真题</span>' : '<span class="source-badge textbook">📚 教材</span>'}
                         ${r.image_count > 0 ? `<span class="img-badge">📷 ${r.image_count}</span>` : ''}
-                        ${r.page_url ? `<span class="page-badge" title="第 ${r.page_num} 页 / 共 ${r.total_pages} 页">📄 p${r.page_num}</span>` : ''}
+                        ${r.page_url ? `<span class="page-badge" title="第 ${r.page_num} 页 / 共 ${r.total_pages} 页">📄 p${r.logical_page ?? r.page_num}</span>` : ''}
                     </div>
                     <div class="result-snippet">${sanitizeSnippet(r.snippet)}</div>
                     <div class="result-text">${renderText(r.text, r.book_key)}</div>
