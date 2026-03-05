@@ -651,7 +651,7 @@ function renderGraphNew(data, container, mode) {
         .attr('dy', 4)
         .attr('font-size', 9)
         .attr('fill', '#fff')
-        .text(d => mode === 'cross' ? `${d.weight}科` : d.weight);
+        .text(d => mode === 'cross' ? `${d.weight}科` : `${d.weight}次`);
 
     // Hover interaction
     node.on('mouseenter', function (event, d) {
@@ -683,7 +683,7 @@ function renderGraphNew(data, container, mode) {
         // Tooltip
         const subjects = d.subjects ? d.subjects.join(' · ') : (d.type === 'subject' ? d.id : '');
         const info = d.type === 'concept'
-            ? `<strong>${d.id}</strong><br>出现学科：${d.weight || 1}科<br>${subjects}`
+            ? `<strong>${d.id}</strong><br>${mode === 'cross' ? `跨${d.weight || 1}个学科` : `出现${d.weight || 1}次`}<br>${subjects}`
             : `<strong>${d.id}</strong>`;
         tooltip.html(info)
             .style('display', 'block')
