@@ -1703,14 +1703,20 @@ body {
     color: var(--text);
 }
 
-/* ── Tablet ──────────────────────────────────────────────── */
-@media (max-width: 768px) {
+/* ══════════════════════════════════════════════════════════
+   RESPONSIVE: TABLET (≤1024px)
+   ══════════════════════════════════════════════════════════ */
+@media (max-width: 1024px) {
+    .view {
+        padding: 0 16px;
+    }
+
     .hero h1 {
-        font-size: 30px;
+        font-size: 32px;
     }
 
     .graph-container {
-        height: calc(100vh - 160px);
+        height: calc(100vh - 180px);
     }
 
     .about-content {
@@ -1724,78 +1730,130 @@ body {
     .ai-result {
         padding: 16px 18px;
     }
+
+    /* Gaokao filters: 2×2 grid on tablet */
+    .gaokao-filters {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+    }
+
+    .gk-search-btn {
+        grid-column: 1 / -1;
+    }
 }
 
-/* ── Mobile ──────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════
+   RESPONSIVE: MOBILE (≤640px)
+   Bottom tab bar, full-width layouts, 44px+ touch targets
+   ══════════════════════════════════════════════════════════ */
 @media (max-width: 640px) {
 
-    /* Header */
+    /* ── Bottom Tab Bar Navigation ─────────────────────── */
+    .header {
+        position: fixed;
+        bottom: 0;
+        top: auto;
+        z-index: 200;
+        border-bottom: none;
+        border-top: 1px solid var(--border);
+        background: rgba(10, 10, 15, 0.95);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+    }
+
     .header-inner {
-        padding: 0 12px;
-        height: 52px;
+        padding: 0;
+        height: auto;
+        flex-direction: column;
     }
 
-    .logo-text {
-        font-size: 15px;
-    }
-
-    .logo-icon {
-        font-size: 20px;
-    }
-
-    .logo-badge {
-        font-size: 9px;
-        padding: 1px 5px;
+    .logo {
+        display: none;
+        /* hide logo in bottom bar */
     }
 
     .nav {
-        gap: 2px;
+        width: 100%;
+        display: flex;
+        justify-content: space-around;
+        gap: 0;
+        padding: 0;
     }
 
     .nav-btn {
-        padding: 6px 10px;
-        font-size: 13px;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+        padding: 8px 4px 6px;
+        font-size: 11px;
+        min-height: 48px;
+        justify-content: center;
+        border-radius: 0;
+        position: relative;
     }
 
-    /* View */
+    .nav-btn.active {
+        background: rgba(108, 92, 231, 0.1);
+    }
+
+    .nav-btn.active::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 20%;
+        right: 20%;
+        height: 2px;
+        background: var(--accent);
+        border-radius: 0 0 2px 2px;
+    }
+
+    /* Body padding to offset bottom nav */
+    body {
+        padding-top: 0;
+        padding-bottom: calc(54px + env(safe-area-inset-bottom, 0px));
+    }
+
+    /* ── Views ─────────────────────────────────────────── */
     .view {
-        padding: 0 12px;
+        padding: 0 14px;
     }
 
-    /* Hero */
+    /* ── Hero / Search ────────────────────────────────── */
     .hero {
-        padding: 20px 0 16px;
-        /* Reduced vertical padding */
+        padding: 20px 0 14px;
     }
 
     .hero h1 {
-        font-size: 20px;
+        font-size: 22px;
         line-height: 1.3;
-        margin-bottom: 8px;
-        /* Added spacing */
+        margin-bottom: 6px;
     }
 
     .hero-sub {
-        font-size: 11px;
+        font-size: 12px;
         margin-bottom: 16px;
         opacity: 0.8;
-        padding: 0 12px;
-        line-height: 1.4;
+        padding: 0 8px;
+        line-height: 1.5;
     }
 
-    /* Search Box */
+    /* Search box: full width, larger touch targets */
     .search-box {
         border-radius: 12px;
-        padding: 4px 4px 4px 12px;
+        padding: 4px 4px 4px 14px;
     }
 
     .search-box input {
-        font-size: 14px;
-        padding: 8px 0;
+        font-size: 16px;
+        /* prevents iOS zoom */
+        padding: 10px 0;
     }
 
     .search-box input::placeholder {
-        font-size: 13px;
+        font-size: 14px;
     }
 
     .search-icon {
@@ -1804,63 +1862,84 @@ body {
     }
 
     .search-submit {
-        padding: 8px 16px;
-        font-size: 14px;
+        padding: 10px 20px;
+        font-size: 15px;
         border-radius: 10px;
+        min-height: 44px;
+        /* Apple HIG min touch target */
     }
 
-    /* Quick Tags */
+    /* Quick Tags: carousel wrap */
     .quick-tags {
-        margin-top: 14px;
+        margin-top: 12px;
         gap: 6px;
     }
 
     .quick-tag {
-        padding: 5px 10px;
-        font-size: 12px;
+        padding: 8px 14px;
+        font-size: 13px;
+        min-height: 36px;
     }
 
     .tag-label {
         font-size: 12px;
     }
 
-    /* Stats Bar */
+    /* Trending */
+    .trending-section {
+        margin-top: 12px;
+        gap: 8px;
+    }
+
+    .trending-tag {
+        padding: 6px 14px;
+        font-size: 12px;
+        min-height: 32px;
+    }
+
+    /* Stats Bar: 3-column grid */
     .stats-bar {
         display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 8px;
-        padding: 12px 0;
-        margin-bottom: 12px;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+        padding: 10px 0;
+        margin-bottom: 10px;
     }
 
     .stat-chip {
-        padding: 5px 10px;
-        font-size: 12px;
+        padding: 6px 8px;
+        font-size: 11px;
         justify-content: center;
+        gap: 4px;
     }
 
     /* Cross Hint */
     .cross-hint {
         font-size: 13px;
-        padding: 12px 16px;
-        margin-bottom: 16px;
+        padding: 12px 14px;
+        margin-bottom: 14px;
     }
 
-    /* AI Panel */
+    /* ── AI Panel ──────────────────────────────────────── */
     .ai-btn {
-        padding: 10px 20px;
-        font-size: 14px;
+        width: 100%;
+        justify-content: center;
+        padding: 12px 20px;
+        font-size: 15px;
+        min-height: 48px;
     }
 
     .ai-result {
-        padding: 14px 16px;
+        padding: 14px;
         margin-top: 12px;
     }
 
     .ai-result-header {
         font-size: 14px;
-        margin-bottom: 12px;
-        padding-bottom: 10px;
+        margin-bottom: 10px;
+        padding-bottom: 8px;
+        flex-wrap: wrap;
+        gap: 8px;
     }
 
     .ai-content {
@@ -1868,15 +1947,15 @@ body {
         line-height: 1.8;
     }
 
-    /* Subject Tabs — horizontal scroll */
+    /* ── Subject Tabs: horizontal scroll ───────────────── */
     .subject-tabs {
         flex-wrap: nowrap;
         overflow-x: auto;
         -webkit-overflow-scrolling: touch;
         scrollbar-width: none;
         gap: 6px;
-        margin-bottom: 16px;
-        padding-bottom: 12px;
+        margin-bottom: 14px;
+        padding-bottom: 10px;
     }
 
     .subject-tabs::-webkit-scrollbar {
@@ -1884,13 +1963,14 @@ body {
     }
 
     .subject-tab {
-        padding: 6px 12px;
+        padding: 8px 14px;
         font-size: 13px;
         white-space: nowrap;
         flex-shrink: 0;
+        min-height: 36px;
     }
 
-    /* Related bar — horizontal scroll on mobile */
+    /* ── Related bar: horizontal scroll ────────────────── */
     .related-bar {
         flex-wrap: nowrap;
         overflow-x: auto;
@@ -1903,9 +1983,15 @@ body {
         display: none;
     }
 
-    /* Advanced panel mobile layout */
+    .related-tag {
+        padding: 6px 14px;
+        min-height: 32px;
+    }
+
+    /* ── Advanced Panel ────────────────────────────────── */
     .advanced-panel {
-        padding: 12px 14px;
+        padding: 12px;
+        margin-top: 8px;
     }
 
     .filter-row {
@@ -1917,9 +2003,19 @@ body {
         min-width: 100%;
     }
 
-    /* Result Cards */
+    .filter-group select {
+        padding: 10px 14px;
+        font-size: 14px;
+        min-height: 44px;
+    }
+
+    .checkbox-label {
+        min-height: 44px;
+    }
+
+    /* ── Result Cards ──────────────────────────────────── */
     .result-group {
-        margin-bottom: 20px;
+        margin-bottom: 18px;
     }
 
     .group-header {
@@ -1937,35 +2033,44 @@ body {
     }
 
     .result-card {
-        padding: 12px 14px;
+        padding: 14px;
         margin-bottom: 8px;
         border-radius: 10px;
+    }
+
+    .result-meta {
+        gap: 6px;
     }
 
     .result-title {
         font-size: 12px;
     }
 
+    .source-badge {
+        font-size: 10px;
+        padding: 2px 6px;
+    }
+
     .result-snippet {
-        font-size: 13px;
+        font-size: 14px;
         line-height: 1.6;
     }
 
     .result-text {
         font-size: 13px;
         line-height: 1.7;
-        max-height: 300px;
+        max-height: 350px;
     }
 
     .result-img {
-        max-height: 260px;
+        max-height: 240px;
         border-radius: 6px;
         margin: 8px 0;
     }
 
-    /* Graph */
+    /* ── Knowledge Graph ───────────────────────────────── */
     .graph-header {
-        padding: 24px 0 12px;
+        padding: 16px 0 10px;
     }
 
     .graph-header h2 {
@@ -1973,62 +2078,141 @@ body {
     }
 
     .graph-header p {
+        font-size: 12px;
+    }
+
+    .graph-controls {
+        justify-content: center;
+        margin-top: 8px;
+    }
+
+    .graph-mode {
+        padding: 8px 16px;
         font-size: 13px;
+        min-height: 36px;
+    }
+
+    .graph-subject-select {
+        padding: 8px 14px;
+        font-size: 13px;
+        min-height: 36px;
     }
 
     .graph-container {
-        height: calc(100vh - 140px);
-        touch-action: manipulation;
+        height: calc(100vh - 210px);
+        height: calc(100dvh - 210px);
+        touch-action: none;
+        /* allow D3 zoom/pan */
+        border-radius: 10px;
     }
 
-    /* About */
+    /* Search subgraph */
+    .search-graph-section {
+        padding: 12px;
+        margin: 14px 0;
+    }
+
+    .search-graph-title {
+        font-size: 14px;
+    }
+
+    /* ── Data Insights ─────────────────────────────────── */
+    .insights-header {
+        padding: 16px 0 10px;
+    }
+
+    .insights-header h2 {
+        font-size: 22px;
+    }
+
+    .insights-tabs {
+        gap: 6px;
+        padding: 0 8px 12px;
+    }
+
+    .insight-tab {
+        padding: 8px 14px;
+        font-size: 12px;
+        min-height: 36px;
+    }
+
+    .insights-content {
+        padding: 0 4px 32px;
+    }
+
+    .freq-controls {
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    .freq-controls select {
+        flex: 1;
+        min-width: 120px;
+        min-height: 40px;
+        font-size: 13px;
+    }
+
+    /* Coverage items */
+    .coverage-item {
+        padding: 8px 10px;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .coverage-term {
+        min-width: 60px;
+        font-size: 12px;
+    }
+
+    .coverage-ratio {
+        font-size: 13px;
+        min-width: 45px;
+    }
+
+    /* ── About ─────────────────────────────────────────── */
     .about-content {
-        padding: 20px 0 60px;
+        padding: 16px 0 80px;
+        /* extra bottom for nav bar */
     }
 
     .about-content h2 {
-        font-size: 24px;
-        margin-bottom: 20px;
+        font-size: 22px;
+        margin-bottom: 16px;
     }
 
     .about-card {
-        padding: 16px;
-        margin-bottom: 12px;
+        padding: 14px;
+        margin-bottom: 10px;
     }
 
     .about-card h3 {
-        font-size: 16px;
+        font-size: 15px;
         margin-bottom: 8px;
     }
 
     .about-card p {
-        font-size: 14px;
+        font-size: 13px;
     }
 
-    /* Footer */
+    /* Footer: above bottom nav */
     .footer {
         padding: 16px 12px;
+        padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
         font-size: 12px;
     }
 
-    /* ── Gaokao Mobile Optimization ──────────────────────── */
-    .gaokao-filters {
-        flex-direction: column;
-        gap: 8px;
-        padding: 12px;
+    /* Results: extra bottom padding for nav */
+    .results {
+        padding-bottom: 20px;
     }
 
-    .gaokao-filters .filter-group {
-        min-width: 100%;
+    .gk-results {
+        padding-bottom: 20px;
     }
 
-    .gk-search-btn {
-        width: 100%;
-    }
-
-    /* Gaokao hero section */
+    /* ── Gaokao ────────────────────────────────────────── */
     .gaokao-hero {
-        padding: 24px 0 16px;
+        padding: 16px 0 12px;
     }
 
     .gaokao-hero h2 {
@@ -2039,7 +2223,27 @@ body {
         font-size: 12px;
     }
 
-    /* Gaokao cards */
+    .gaokao-filters {
+        flex-direction: column;
+        gap: 8px;
+        padding: 12px;
+    }
+
+    .gaokao-filters .filter-group {
+        min-width: 100%;
+    }
+
+    .gaokao-filters .filter-group select {
+        min-height: 44px;
+        font-size: 14px;
+    }
+
+    .gk-search-btn {
+        width: 100%;
+        min-height: 44px;
+        font-size: 15px;
+    }
+
     .gk-card-header {
         padding: 12px 14px;
     }
@@ -2050,11 +2254,15 @@ body {
 
     .gk-badge {
         font-size: 11px;
-        padding: 2px 8px;
+        padding: 3px 8px;
     }
 
     .gk-card-title {
         font-size: 14px;
+    }
+
+    .gk-card-preview {
+        font-size: 12px;
     }
 
     .gk-card-body {
@@ -2068,15 +2276,18 @@ body {
 
     .gk-actions {
         flex-direction: column;
+        gap: 8px;
     }
 
     .gk-link-btn,
     .gk-ai-btn {
         width: 100%;
         text-align: center;
+        min-height: 44px;
+        font-size: 14px;
     }
 
-    /* Gaokao link panel → bottom sheet */
+    /* Link panel → bottom sheet */
     .gk-link-panel {
         padding: 0;
         align-items: flex-end;
@@ -2084,6 +2295,7 @@ body {
 
     .gk-link-inner {
         max-height: 90vh;
+        max-height: 90dvh;
         border-radius: 16px 16px 0 0;
         padding: 16px;
         max-width: 100%;
@@ -2093,11 +2305,19 @@ body {
         font-size: 16px;
     }
 
+    .gk-link-close {
+        min-width: 44px;
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
     .gk-link-card {
         padding: 10px 12px;
     }
 
-    /* AI analysis result */
+    /* AI analysis */
     .gk-ai-answer {
         padding: 12px;
     }
@@ -2107,12 +2327,11 @@ body {
         line-height: 1.7;
     }
 
-    /* Question images */
     .gk-question-img {
         max-height: 200px;
     }
 
-    /* Semantic UI components on mobile */
+    /* Semantic elements */
     .gk-matched-concepts {
         gap: 4px;
     }
@@ -2124,7 +2343,7 @@ body {
 
     .link-type-tag {
         font-size: 10px;
-        padding: 1px 6px;
+        padding: 2px 6px;
     }
 
     .gk-link-score-text {
@@ -2134,41 +2353,114 @@ body {
     .gk-expanded-terms {
         font-size: 11px;
     }
-}
 
-/* ── Small phones ────────────────────────────────────────── */
-@media (max-width: 380px) {
-    .hero h1 {
-        font-size: 20px;
-    }
-
-    .logo-text {
-        font-size: 13px;
-    }
-
-    .nav-btn {
-        padding: 5px 8px;
-        font-size: 12px;
-    }
-
-    .search-submit {
-        padding: 8px 12px;
-        font-size: 13px;
-    }
-
-    .concept-carousel {
-        gap: 4px;
-    }
-}
-
-/* ── Download button mobile ───────────────────────────────── */
-@media (max-width: 640px) {
+    /* Download button */
     .gk-download-link {
         padding: 20px 12px;
     }
 
     .download-btn {
-        padding: 12px 24px;
-        font-size: 13px;
+        padding: 14px 28px;
+        font-size: 14px;
+        min-height: 48px;
+        width: 100%;
+        text-align: center;
+    }
+}
+
+/* ══════════════════════════════════════════════════════════
+   RESPONSIVE: SMALL PHONES (≤380px)
+   ══════════════════════════════════════════════════════════ */
+@media (max-width: 380px) {
+    .hero h1 {
+        font-size: 19px;
+    }
+
+    .nav-btn {
+        font-size: 10px;
+        padding: 6px 2px;
+    }
+
+    .search-submit {
+        padding: 10px 14px;
+        font-size: 14px;
+    }
+
+    .concept-carousel {
+        gap: 4px;
+    }
+
+    .quick-tag {
+        padding: 6px 10px;
+        font-size: 12px;
+    }
+
+    .stats-bar {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .stat-chip {
+        font-size: 10px;
+        padding: 5px 6px;
+    }
+
+    .subject-tab {
+        padding: 6px 10px;
+        font-size: 12px;
+    }
+
+    .insight-tab {
+        padding: 6px 10px;
+        font-size: 11px;
+    }
+
+    .graph-container {
+        height: calc(100vh - 190px);
+        height: calc(100dvh - 190px);
+    }
+}
+
+/* ══════════════════════════════════════════════════════════
+   RESPONSIVE: LANDSCAPE PHONE
+   ══════════════════════════════════════════════════════════ */
+@media (max-width: 640px) and (orientation: landscape) {
+    .hero {
+        padding: 10px 0 8px;
+    }
+
+    .hero h1 {
+        font-size: 18px;
+    }
+
+    .hero-sub {
+        font-size: 11px;
+        margin-bottom: 10px;
+    }
+
+    .graph-container {
+        height: calc(100vh - 120px);
+        height: calc(100dvh - 120px);
+    }
+
+    .nav-btn {
+        flex-direction: row;
+        gap: 4px;
+        padding: 6px 8px;
+        min-height: 40px;
+    }
+}
+
+/* ══════════════════════════════════════════════════════════
+   iOS Safe Areas (notch, home indicator)
+   ══════════════════════════════════════════════════════════ */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+    @media (max-width: 640px) {
+        .header {
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+
+        body {
+            padding-bottom: calc(54px + env(safe-area-inset-bottom));
+        }
     }
 }
