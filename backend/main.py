@@ -1325,45 +1325,95 @@ def graph_search(q: str = Query(..., min_length=1)):
         q_clean = q.strip()
         curated = {r["term"] for r in con.execute("SELECT term FROM curated_keywords").fetchall()}
 
-        # Find the search term's subject distribution
-        center_dist = con.execute("""
-            SELECT subject, COUNT(*) as cnt FROM chunks
-            WHERE text LIKE ? GROUP BY subject ORDER BY cnt DESC
-        """, [f"%{q_clean}%"]).fetchall()
+        # Use FTS for precise subject distribution (not LIKE)
+        try:
+            center_dist = con.execute("""
+                SELECT c.subject, COUNT(*) as cnt
+                FROM chunks c JOIN chunks_fts ON chunks_fts.rowid = c.id
+                WHERE chunks_fts MATCH ? AND c.source = 'mineru'
+                GROUP BY c.subject ORDER BY cnt DESC
+            """, (q_clean,)).fetchall()
+        except Exception:
+            center_dist = []
 
         if not center_dist:
             return {"center": q_clean, "nodes": [], "links": []}
 
         center_subjects = {r["subject"] for r in center_dist}
 
-        # Find related curated concepts that share subjects with the search term
-        related = []
+        # ── Priority 1: cross_subject_map cluster siblings ──────────
+        cluster_related = []
+        try:
+            clusters = con.execute(
+                "SELECT DISTINCT cluster_name FROM cross_subject_map WHERE concept = ?",
+                (q_clean,)
+            ).fetchall()
+            for cl in clusters:
+                siblings = con.execute(
+                    "SELECT concept, subject FROM cross_subject_map WHERE cluster_name = ? AND concept != ?",
+                    (cl["cluster_name"], q_clean)
+                ).fetchall()
+                for s in siblings:
+                    cluster_related.append({
+                        "term": s["concept"],
+                        "shared_subjects": [s["subject"]],
+                        "overlap": 10,  # high priority
+                        "source": "cluster",
+                        "cluster": cl["cluster_name"],
+                    })
+        except Exception:
+            pass
+
+        # ── Priority 2: curated concepts with overlap >= 2 ──────────
+        curated_related = []
+        seen_terms = {r["term"] for r in cluster_related}
         for term in curated:
-            if term == q_clean:
+            if term == q_clean or term in seen_terms:
                 continue
-            term_subjects_row = con.execute("""
-                SELECT DISTINCT subject FROM concept_map WHERE concept = ?
-            """, (term,)).fetchall()
+            term_subjects_row = con.execute(
+                "SELECT DISTINCT subject FROM concept_map WHERE concept = ?", (term,)
+            ).fetchall()
             term_subjects = {r["subject"] for r in term_subjects_row}
             overlap = center_subjects & term_subjects
-            if len(overlap) >= 1:
-                related.append({
+            if len(overlap) >= 2:  # stricter threshold
+                curated_related.append({
                     "term": term,
                     "shared_subjects": list(overlap),
                     "overlap": len(overlap),
+                    "source": "curated",
                 })
 
-        related.sort(key=lambda x: x["overlap"], reverse=True)
-        related = related[:20]  # Top 20 related concepts
+        curated_related.sort(key=lambda x: x["overlap"], reverse=True)
 
-        # Build nodes and links
+        # Merge: clusters first, then curated (max 15 total)
+        related = cluster_related + curated_related[:15 - len(cluster_related)]
+
+        # Deduplicate by term
+        seen = set()
+        deduped = []
+        for r in related:
+            if r["term"] not in seen:
+                seen.add(r["term"])
+                deduped.append(r)
+        related = deduped[:15]
+
+        # ── Build nodes and links ───────────────────────────────────
         nodes = [{"id": q_clean, "type": "center", "subjects": [r["subject"] for r in center_dist]}]
         links = []
 
         for r in related:
-            nodes.append({"id": r["term"], "type": "related", "overlap": r["overlap"]})
-            for s in r["shared_subjects"]:
-                links.append({"source": q_clean, "target": r["term"], "subject": s})
+            node_data = {"id": r["term"], "type": "related", "overlap": r["overlap"]}
+            if r.get("cluster"):
+                node_data["cluster"] = r["cluster"]
+            if r.get("source"):
+                node_data["link_source"] = r["source"]
+            nodes.append(node_data)
+            # Unique link per concept (not per shared subject)
+            links.append({
+                "source": q_clean, "target": r["term"],
+                "subjects": r["shared_subjects"],
+                "strength": r["overlap"],
+            })
 
         # Add subject nodes
         for s in sorted(center_subjects):
@@ -1387,7 +1437,7 @@ def graph_overview(
         links = []
 
         if mode == "subject" and subject:
-            # Per-subject mode: show concepts within one subject, linked by co-occurrence
+            # Per-subject mode: show concepts within one subject
             rows = con.execute("""
                 SELECT concept, count FROM concept_map
                 WHERE subject = ? ORDER BY count DESC LIMIT ?
@@ -1396,37 +1446,81 @@ def graph_overview(
             for c in concepts:
                 nodes.append({"id": c["term"], "type": "concept", "weight": c["count"]})
 
-            # Link concepts that co-occur in the same chunk
+            # Link concepts that co-occur in the same chunk (use FTS)
             terms = [c["term"] for c in concepts]
-            for i, t1 in enumerate(terms[:30]):  # limit link computation
+            for i, t1 in enumerate(terms[:30]):
                 for t2 in terms[i+1:30]:
-                    co = con.execute("""
-                        SELECT COUNT(*) as cnt FROM chunks
-                        WHERE subject = ? AND text LIKE ? AND text LIKE ?
-                    """, (subject, f"%{t1}%", f"%{t2}%")).fetchone()
-                    if co and co["cnt"] >= 2:
-                        links.append({"source": t1, "target": t2, "weight": co["cnt"]})
+                    try:
+                        co = con.execute("""
+                            SELECT COUNT(*) as cnt FROM chunks c
+                            JOIN chunks_fts ON chunks_fts.rowid = c.id
+                            WHERE c.subject = ? AND chunks_fts MATCH ?
+                        """, (subject, f'"{t1}" AND "{t2}"')).fetchone()
+                        if co and co["cnt"] >= 2:
+                            links.append({"source": t1, "target": t2, "weight": co["cnt"]})
+                    except Exception:
+                        pass
 
         else:
-            # Cross-subject mode: show concepts spanning multiple subjects
-            rows = con.execute("""
-                SELECT concept, COUNT(DISTINCT subject) as subj_count, SUM(count) as total
-                FROM concept_map GROUP BY concept
-                HAVING subj_count >= 2
-                ORDER BY subj_count DESC, total DESC LIMIT ?
-            """, (limit,)).fetchall()
-            concepts = [{"term": r["concept"], "subjects": r["subj_count"], "total": r["total"]} for r in rows]
+            # Cross-subject mode: use cross_subject_map clusters as primary edges
+            # Then supplement with high-overlap concept_map concepts
 
-            # Add concept nodes
-            for c in concepts:
-                subjs = con.execute(
-                    "SELECT DISTINCT subject FROM concept_map WHERE concept = ?", (c["term"],)
-                ).fetchall()
-                nodes.append({
-                    "id": c["term"], "type": "concept",
-                    "weight": c["subjects"], "total": c["total"],
-                    "subjects": [s["subject"] for s in subjs],
+            # ── Layer 1: cross_subject_map clusters (high quality) ───
+            try:
+                cluster_rows = con.execute("""
+                    SELECT cluster_name, concept, subject FROM cross_subject_map
+                    ORDER BY cluster_name
+                """).fetchall()
+            except Exception:
+                cluster_rows = []
+
+            cluster_concepts = {}  # cluster_name -> [{concept, subject}]
+            for r in cluster_rows:
+                cluster_concepts.setdefault(r["cluster_name"], []).append({
+                    "concept": r["concept"], "subject": r["subject"]
                 })
+
+            cluster_node_ids = set()
+            for cl_name, members in cluster_concepts.items():
+                for m in members:
+                    cid = m["concept"]
+                    if cid not in cluster_node_ids:
+                        cluster_node_ids.add(cid)
+                        subjs = con.execute(
+                            "SELECT DISTINCT subject FROM concept_map WHERE concept = ?", (cid,)
+                        ).fetchall()
+                        nodes.append({
+                            "id": cid, "type": "concept",
+                            "weight": len(subjs), "cluster": cl_name,
+                            "subjects": [s["subject"] for s in subjs],
+                        })
+                # Link cluster members to each other
+                for i, m1 in enumerate(members):
+                    for m2 in members[i+1:]:
+                        links.append({
+                            "source": m1["concept"], "target": m2["concept"],
+                            "cluster": cl_name, "weight": 3,
+                        })
+
+            # ── Layer 2: top cross-subject concepts (≥3 subjects, supplement) ─
+            extra_needed = max(0, limit - len(cluster_node_ids))
+            if extra_needed > 0:
+                rows = con.execute("""
+                    SELECT concept, COUNT(DISTINCT subject) as subj_count, SUM(count) as total
+                    FROM concept_map GROUP BY concept
+                    HAVING subj_count >= 3
+                    ORDER BY subj_count DESC, total DESC LIMIT ?
+                """, (extra_needed,)).fetchall()
+                for r in rows:
+                    if r["concept"] not in cluster_node_ids:
+                        subjs = con.execute(
+                            "SELECT DISTINCT subject FROM concept_map WHERE concept = ?", (r["concept"],)
+                        ).fetchall()
+                        nodes.append({
+                            "id": r["concept"], "type": "concept",
+                            "weight": r["subj_count"], "total": r["total"],
+                            "subjects": [s["subject"] for s in subjs],
+                        })
 
             # Add subject nodes
             all_subjects = set()
@@ -1437,11 +1531,11 @@ def graph_overview(
             for s in sorted(all_subjects):
                 nodes.append({"id": s, "type": "subject"})
 
-            # Links: concept -> subject
+            # Links: concept -> subject (only for non-cluster nodes)
             for n in nodes:
-                if n["type"] == "concept":
+                if n["type"] == "concept" and not n.get("cluster"):
                     for s in n.get("subjects", []):
-                        links.append({"source": n["id"], "target": s})
+                        links.append({"source": n["id"], "target": s, "weight": 1})
 
         # Get available subjects for mode selector
         subjects = [r["subject"] for r in con.execute(
