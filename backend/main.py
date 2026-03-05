@@ -254,15 +254,24 @@ def search(
             # Count images in this chunk
             text = r["text"] or ""
             img_count = text.count('![')
+            # Page image URL from R2
+            bk = r["book_key"]
+            short_key = _book_key_to_short.get(bk, "")
+            page_num = r["section"] or 0
+            page_url = f"{IMG_CDN}/pages/{short_key}/p{page_num}.webp" if short_key else None
+            bm_info = _book_map.get(bk, {})
             result_item = {
                 "id": r["id"],
                 "title": r["title"],
-                "book_key": r["book_key"],
+                "book_key": bk,
                 "section": r["section"],
                 "snippet": r["snippet"],
                 "text": text[:2000],
                 "image_count": img_count,
                 "source": r["source"] or "mineru",
+                "page_url": page_url,
+                "page_num": page_num,
+                "total_pages": bm_info.get("pages", 0),
             }
             if r["source"] == "gaokao":
                 result_item["year"] = r["year"]
@@ -1582,6 +1591,67 @@ def health():
 
 # Images served from Cloudflare R2 CDN
 IMG_CDN = os.getenv("IMG_CDN", "https://img.rdfzer.com")
+
+# ── Book Map for page images ─────────────────────────────────────────
+_book_map = {}  # book_key -> {key, title, pages}
+_book_key_to_short = {}  # book_key -> short_key (12-char hash)
+try:
+    _bm_path = FRONTEND / "assets/pages/book_map.json"
+    if _bm_path.exists():
+        with open(_bm_path) as _f:
+            _book_map = json.load(_f)
+        _book_key_to_short = {bk: info["key"] for bk, info in _book_map.items()}
+        print(f"Book map loaded: {len(_book_map)} books", flush=True)
+except Exception as e:
+    print(f"Book map load failed: {e}", flush=True)
+
+
+@app.get("/api/page-image")
+def page_image(
+    book_key: str = Query(..., description="book_key from search result"),
+    page: int = Query(..., ge=0, description="Page number (0-indexed)"),
+    context: int = Query(2, ge=0, le=5, description="Number of context pages before/after"),
+):
+    """Return R2 CDN URLs for a page and surrounding context pages."""
+    # Find the book in book_map
+    info = _book_map.get(book_key)
+    if not info:
+        raise HTTPException(404, f"Book not found: {book_key[:60]}")
+
+    short_key = info["key"]
+    total_pages = info["pages"]
+    title = info["title"]
+
+    # Clamp page to valid range
+    page = max(0, min(page, total_pages - 1))
+
+    # Build context page list
+    start = max(0, page - context)
+    end = min(total_pages - 1, page + context)
+    pages = []
+    for p in range(start, end + 1):
+        pages.append({
+            "page": p,
+            "url": f"{IMG_CDN}/pages/{short_key}/p{p}.webp",
+            "current": p == page,
+        })
+
+    return {
+        "book_key": book_key,
+        "short_key": short_key,
+        "title": title,
+        "current_page": page,
+        "total_pages": total_pages,
+        "pages": pages,
+    }
+
+
+@app.get("/api/book-pages")
+def book_pages():
+    """Return the full book map for frontend use."""
+    return {bk: {"key": info["key"], "title": info["title"], "pages": info["pages"]}
+            for bk, info in _book_map.items()}
+
 
 # Serve frontend
 if FRONTEND.exists():

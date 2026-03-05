@@ -379,9 +379,15 @@ function renderResults(data, filterSubject = null) {
                         <span class="result-title">${escHtml(r.title)} · §${r.section}</span>
                         ${r.source === 'gaokao' ? '<span class="source-badge gaokao">📝 真题</span>' : '<span class="source-badge textbook">📚 教材</span>'}
                         ${r.image_count > 0 ? `<span class="img-badge">📷 ${r.image_count}</span>` : ''}
+                        ${r.page_url ? `<span class="page-badge" title="第 ${r.page_num} 页 / 共 ${r.total_pages} 页">📄 p${r.page_num}</span>` : ''}
                     </div>
                     <div class="result-snippet">${sanitizeSnippet(r.snippet)}</div>
                     <div class="result-text">${renderText(r.text, r.book_key)}</div>
+                    ${r.page_url ? `<div class="result-actions">
+                        <button class="view-page-btn" onclick="event.stopPropagation(); openPageViewer('${escAttr(r.book_key)}', ${r.page_num}, ${r.total_pages})">
+                            📖 查看原文
+                        </button>
+                    </div>` : ''}
                 </div>
             `).join('')}
         </div>
@@ -390,6 +396,10 @@ function renderResults(data, filterSubject = null) {
     // Trigger Math rendering for search results
     if (typeof renderMath === 'function') {
         renderMath(resultsEl);
+    }
+    // Trigger KaTeX rendering if available
+    if (typeof katex !== 'undefined') {
+        renderKaTeX(resultsEl);
     }
 }
 
@@ -432,16 +442,7 @@ function sanitizeSnippet(html) {
     return html;
 }
 
-// Clean raw text for expanded view
-function cleanText(s) {
-    if (!s) return '';
-    s = s.replace(/<[^>]+>/g, ' ');
-    s = s.replace(/!\[.*?\]\(.*?\)/g, '[图片]');
-    s = s.replace(/\s+/g, ' ').trim();
-    return s;
-}
-
-// Render text with images for expanded view
+// Render text with images, formulas, and rich formatting for expanded view
 function renderText(text, bookKey) {
     if (!text) return '';
     // Strip HTML tags except preserve content
@@ -450,10 +451,232 @@ function renderText(text, bookKey) {
     s = s.replace(/!\[([^\]]*)\]\(images\/([^)]+)\)/g, (_, alt, src) => {
         return `<img class="result-img" src="${IMG_CDN}/orig/${encodeURIComponent(bookKey)}/${src}" alt="${alt || '教材图片'}" loading="lazy">`;
     });
-    // Escape remaining HTML-like content (but preserve our img tags)
-    const parts = s.split(/(<img[^>]+>)/g);
-    s = parts.map(p => p.startsWith('<img') ? p : p.replace(/</g, '&lt;').replace(/>/g, '&gt;')).join('');
+
+    // Wrap LaTeX formulas for KaTeX rendering
+    // Display math: $$...$$
+    s = s.replace(/\$\$([^$]+?)\$\$/g, '<span class="katex-display" data-formula="$1"></span>');
+    // Inline math: $...$
+    s = s.replace(/\$([^$\n]+?)\$/g, '<span class="katex-inline" data-formula="$1"></span>');
+
+    // Render markdown tables as HTML tables
+    s = s.replace(/((?:\|.+\|\n?)+)/g, (tableBlock) => {
+        const rows = tableBlock.trim().split('\n').filter(r => r.trim());
+        if (rows.length < 2) return tableBlock;
+        // Check if second row is separator (|---|---|
+        const isSep = /^[\|\s:-]+$/.test(rows[1]);
+        let html = '<table class="result-table">';
+        rows.forEach((row, i) => {
+            if (isSep && i === 1) return; // skip separator
+            const cells = row.split('|').filter(c => c.trim() !== '');
+            const tag = (i === 0 && isSep) ? 'th' : 'td';
+            html += '<tr>' + cells.map(c => `<${tag}>${c.trim()}</${tag}>`).join('') + '</tr>';
+        });
+        html += '</table>';
+        return html;
+    });
+
+    // Single line breaks → <br> within text
+    s = s.replace(/(?<!\n)\n(?!\n)/g, '<br>');
+
+    // Split paragraphs by double newline
+    const parts = s.split(/\n\n+/);
+    if (parts.length > 1) {
+        s = parts.map(p => {
+            const trimmed = p.trim();
+            if (!trimmed) return '';
+            if (trimmed.startsWith('<table') || trimmed.startsWith('<img')) return trimmed;
+            return `<p class="result-para">${trimmed}</p>`;
+        }).join('');
+    }
+
     return s;
+}
+
+// KaTeX rendering helper
+function renderKaTeX(container) {
+    if (typeof katex === 'undefined') return;
+    container.querySelectorAll('.katex-display, .katex-inline').forEach(el => {
+        try {
+            const formula = el.dataset.formula;
+            const isDisplay = el.classList.contains('katex-display');
+            katex.render(formula, el, { displayMode: isDisplay, throwOnError: false });
+        } catch (e) {
+            el.textContent = el.dataset.formula; // fallback
+        }
+    });
+}
+
+// ── Page Image Viewer (Lightbox) ─────────────────────────
+function openPageViewer(bookKey, page, totalPages) {
+    // Remove existing viewer
+    const existing = document.getElementById('page-viewer');
+    if (existing) existing.remove();
+
+    const context = 2; // ±2 pages
+    const startPage = Math.max(0, page - context);
+    const endPage = Math.min(totalPages - 1, page + context);
+    let currentPage = page;
+
+    // Find the short_key from the API (we'll use the book_map loaded at startup if available)
+    const viewer = document.createElement('div');
+    viewer.id = 'page-viewer';
+    viewer.className = 'page-viewer-overlay';
+    viewer.innerHTML = `
+        <div class="page-viewer-modal">
+            <div class="page-viewer-header">
+                <span class="page-viewer-title">加载中...</span>
+                <span class="page-viewer-page">p${page}</span>
+                <button class="page-viewer-close" onclick="closePageViewer()">✕</button>
+            </div>
+            <div class="page-viewer-body">
+                <button class="page-nav-btn prev" onclick="pageViewerNav(-1)">‹</button>
+                <div class="page-viewer-image-wrap">
+                    <div class="page-viewer-loading">
+                        <div class="page-loading-spinner"></div>
+                        <span>加载页面中...</span>
+                    </div>
+                    <img class="page-viewer-img" src="" alt="" style="display:none" />
+                </div>
+                <button class="page-nav-btn next" onclick="pageViewerNav(1)">›</button>
+            </div>
+            <div class="page-viewer-thumbnails"></div>
+            <div class="page-viewer-footer">
+                <span class="page-viewer-info"></span>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(viewer);
+    document.body.style.overflow = 'hidden';
+
+    // Close on overlay click
+    viewer.addEventListener('click', (e) => {
+        if (e.target === viewer) closePageViewer();
+    });
+
+    // Keyboard navigation
+    window._pageViewerKeyHandler = (e) => {
+        if (e.key === 'Escape') closePageViewer();
+        if (e.key === 'ArrowLeft') pageViewerNav(-1);
+        if (e.key === 'ArrowRight') pageViewerNav(1);
+    };
+    document.addEventListener('keydown', window._pageViewerKeyHandler);
+
+    // Touch swipe support for mobile
+    let touchStartX = 0, touchStartY = 0;
+    const body = viewer.querySelector('.page-viewer-body');
+    body.addEventListener('touchstart', (e) => {
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+    }, { passive: true });
+    body.addEventListener('touchend', (e) => {
+        const dx = e.changedTouches[0].clientX - touchStartX;
+        const dy = e.changedTouches[0].clientY - touchStartY;
+        if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+            if (dx > 0) pageViewerNav(-1); // swipe right = prev
+            else pageViewerNav(1);         // swipe left = next
+        }
+    }, { passive: true });
+
+    // Fetch page data from API
+    fetch(`${API}/api/page-image?book_key=${encodeURIComponent(bookKey)}&page=${page}&context=${context}`)
+        .then(r => r.json())
+        .then(data => {
+            window._pageViewerData = data;
+            window._pageViewerIdx = data.pages.findIndex(p => p.current);
+
+            // Update header
+            viewer.querySelector('.page-viewer-title').textContent = data.title;
+            viewer.querySelector('.page-viewer-info').textContent =
+                `第 ${page + 1} 页 / 共 ${data.total_pages} 页`;
+
+            // Build thumbnails
+            const thumbs = viewer.querySelector('.page-viewer-thumbnails');
+            thumbs.innerHTML = data.pages.map((p, i) => `
+                <div class="page-thumb ${p.current ? 'active' : ''}" data-idx="${i}" onclick="pageViewerGo(${i})">
+                    <img src="${p.url}" alt="p${p.page}" loading="lazy" />
+                    <span>p${p.page + 1}</span>
+                </div>
+            `).join('');
+
+            // Show current page
+            showPageViewerImage(window._pageViewerIdx);
+        })
+        .catch(e => {
+            viewer.querySelector('.page-viewer-title').textContent = '加载失败';
+        });
+}
+
+function showPageViewerImage(idx) {
+    const data = window._pageViewerData;
+    if (!data || idx < 0 || idx >= data.pages.length) return;
+
+    window._pageViewerIdx = idx;
+    const page = data.pages[idx];
+    const viewer = document.getElementById('page-viewer');
+    if (!viewer) return;
+
+    const img = viewer.querySelector('.page-viewer-img');
+    const loading = viewer.querySelector('.page-viewer-loading');
+
+    // Show loading, hide image
+    img.style.display = 'none';
+    img.style.opacity = '0';
+    if (loading) loading.style.display = 'flex';
+
+    // Fade in on load
+    img.onload = () => {
+        if (loading) loading.style.display = 'none';
+        img.style.display = 'block';
+        requestAnimationFrame(() => { img.style.opacity = '1'; });
+    };
+    img.onerror = () => {
+        if (loading) loading.innerHTML = '<span>图片加载失败</span>';
+    };
+    img.src = page.url;
+    img.alt = `第 ${page.page + 1} 页`;
+
+    viewer.querySelector('.page-viewer-page').textContent = `p${page.page + 1}`;
+    viewer.querySelector('.page-viewer-info').textContent =
+        `第 ${page.page + 1} 页 / 共 ${data.total_pages} 页`;
+
+    // Update thumbnail active state
+    viewer.querySelectorAll('.page-thumb').forEach((t, i) => {
+        t.classList.toggle('active', i === idx);
+    });
+
+    // Update nav button state
+    viewer.querySelector('.page-nav-btn.prev').disabled = idx === 0;
+    viewer.querySelector('.page-nav-btn.next').disabled = idx === data.pages.length - 1;
+
+    // Preload adjacent images
+    [idx - 1, idx + 1].forEach(pi => {
+        if (pi >= 0 && pi < data.pages.length) {
+            const preImg = new Image();
+            preImg.src = data.pages[pi].url;
+        }
+    });
+}
+
+function pageViewerNav(delta) {
+    const newIdx = (window._pageViewerIdx || 0) + delta;
+    showPageViewerImage(newIdx);
+}
+
+function pageViewerGo(idx) {
+    showPageViewerImage(idx);
+}
+
+function closePageViewer() {
+    const viewer = document.getElementById('page-viewer');
+    if (viewer) {
+        viewer.classList.add('closing');
+        setTimeout(() => viewer.remove(), 200);
+    }
+    document.body.style.overflow = '';
+    if (window._pageViewerKeyHandler) {
+        document.removeEventListener('keydown', window._pageViewerKeyHandler);
+        delete window._pageViewerKeyHandler;
+    }
 }
 
 // ── Knowledge Graph ───────────────────────────────────────
