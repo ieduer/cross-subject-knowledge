@@ -236,8 +236,35 @@ docker run -d --name textbook-knowledge \
 | 服务 | 内容 | 大小 |
 |------|------|------|
 | VPS | Docker 容器（代码 + 索引） | 467 MB |
-| Cloudflare R2 (`img.rdfzer.com`) | 87,156 张教材原图 | 3.4 GB |
+| Cloudflare R2 (`img.rdfzer.com`) | 87,156 张跨学科教材原图及页面图 | 4.2 GB |
 | GitHub | 源代码 | < 1 MB |
+
+---
+
+## 🏗️ 架构与部署逻辑 (CI/CD)
+
+本项目采用了**「代码库与大体积数据彻底剥离」**的设计原则。
+
+### 1. 资源存储隔离
+*   **源代码 (GitHub)**：前端页面、后端 API、Dockerfile、各种配置。**绝对不含**庞大的数据库和图片。
+*   **图片资源 (R2 CDN)**：所有的教材原图、单页截图等，托管在 Cloudflare R2 (`img.rdfzer.com`)，全球加速分发，不消耗部署服务器 (VPS) 的带宽。
+*   **检索数据库 (VPS 本地)**：`textbook_mineru_fts.db` (全文检索) 和 `textbook_chunks.index` (向量索引)，加起来 <500MB，存放于 VPS 本地 `data/` 目录，通过 Docker 挂载提供服务。
+
+### 2. 自动化部署 (GitHub Actions)
+项目利用 GitHub Actions 实现了完全自动化的持续部署：
+1.  开发者在本地修改代码后，`git push` 到 GitHub `main` 分支。
+2.  GitHub Actions 自动触发，SSH 连入生产服务器 (VPS: `sun.bdfz.net`)。
+3.  在 VPS 上执行 `git pull` 拉取最新代码。
+4.  基于新的代码 `docker build` 重建应用镜像。
+5.  重启 Docker 容器，服务在后台无缝热更新。
+
+### 3. 服务器 (VPS) 迁移指南
+由于大头数据 (4GB+ 图片) 都在云端 CDN，如果未来需要更换服务器提供商，迁移将极其简单轻量：
+1.  **准备环境**：在新 VPS 安装 Git 和 Docker。
+2.  **拉取代码**：`git clone` 本仓库。
+3.  **搬运核心库**：把本地或旧服务器上的两个数据库文件 (`textbook_mineru_fts.db` 和 `textbook_chunks.index`) 复制到新服务器的 `data/` 目录。
+4.  **启动**：执行 `docker build` 和 `docker run`（或配置新的 GitHub 部署密钥触发自动流）。
+5.  **切换域名**：在 Cloudflare 中将 `sun.bdfz.net` 的 A 记录指向新 VPS 的 IP。
 
 ---
 
