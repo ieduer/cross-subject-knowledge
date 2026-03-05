@@ -19,17 +19,15 @@ RUN pip install --no-cache-dir \
 COPY backend/ backend/
 COPY frontend/ frontend/
 
-# Copy database + FAISS vector index
-# Copy database + FAISS vector index (SQLite is overwritten by sync_db.py if a newer version is on R2)
-RUN mkdir -p /app/data/index
-COPY data/textbook_mineru_fts.db /app/data/index/textbook_mineru_fts.db
-COPY data/textbook_chunks.index /app/data/index/textbook_chunks.index
-RUN python /app/backend/sync_db.py
+# Runtime-mounted data/state directories
+RUN mkdir -p /data/index /state/logs /state/cache /state/tmp /state/batch
 
 # Images served from Cloudflare R2 CDN (img.rdfzer.com)
 # No longer baked into Docker image
 
-ENV DATA_ROOT=/app
+ENV PROJECT_ROOT=/app
+ENV DATA_ROOT=/data
+ENV STATE_ROOT=/state
 ENV PORT=8080
 # Pre-download the embedding model at build time so startup is fast
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-m3')"
@@ -40,5 +38,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=60s --timeout=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health')" || exit 1
 
-# Single worker to keep memory usage low with FAISS loaded
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
+CMD ["sh", "/app/backend/entrypoint.sh"]

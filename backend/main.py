@@ -25,10 +25,20 @@ except ImportError:
     FAISS_AVAILABLE = False
 
 # ── paths ─────────────────────────────────────────────────────────────
-ROOT = Path(os.getenv("DATA_ROOT", "/home/suen/.openclaw/workspace/textbook_ai"))
-DB_PATH = ROOT / "data/index/textbook_mineru_fts.db"
+PROJECT_ROOT = Path(os.getenv("PROJECT_ROOT", Path(__file__).resolve().parents[1])).expanduser().resolve()
+_DEFAULT_DATA_ROOT = PROJECT_ROOT / "data"
+_ALT_DATA_ROOT = PROJECT_ROOT.parent / "data"
+if not (_DEFAULT_DATA_ROOT / "index" / "textbook_chunks.index").exists() and (_ALT_DATA_ROOT / "index" / "textbook_chunks.index").exists():
+    _DEFAULT_DATA_ROOT = _ALT_DATA_ROOT
+DATA_ROOT = Path(os.getenv("DATA_ROOT", _DEFAULT_DATA_ROOT)).expanduser().resolve()
+STATE_ROOT = Path(os.getenv("STATE_ROOT", PROJECT_ROOT / "state")).expanduser().resolve()
+STATE_ROOT.mkdir(parents=True, exist_ok=True)
+for d in ("logs", "cache", "tmp", "batch"):
+    (STATE_ROOT / d).mkdir(parents=True, exist_ok=True)
+
+DB_PATH = DATA_ROOT / "index/textbook_mineru_fts.db"
 FRONTEND = Path(__file__).parent.parent / "frontend"
-FAISS_INDEX_PATH = ROOT / "data/index/textbook_chunks.index"
+FAISS_INDEX_PATH = DATA_ROOT / "index/textbook_chunks.index"
 
 app = FastAPI(title="跨学科教材知识平台", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
