@@ -9,4 +9,5 @@ Thumbs.db
 *.tar.gz
 *.log
 logs/
-frontend/assets/pages/
+frontend/assets/pages/*.webp
+frontend/assets/pages/*/
