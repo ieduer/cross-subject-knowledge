@@ -20,9 +20,11 @@ COPY backend/ backend/
 COPY frontend/ frontend/
 
 # Copy database + FAISS vector index
+# Copy database + FAISS vector index (SQLite is overwritten by sync_db.py if a newer version is on R2)
 RUN mkdir -p /app/data/index
 COPY data/textbook_mineru_fts.db /app/data/index/textbook_mineru_fts.db
 COPY data/textbook_chunks.index /app/data/index/textbook_chunks.index
+RUN python /app/backend/sync_db.py
 
 # Images served from Cloudflare R2 CDN (img.rdfzer.com)
 # No longer baked into Docker image
