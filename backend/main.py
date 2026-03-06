@@ -1532,7 +1532,6 @@ def search(
         # Optional: filter to only results with images
         if has_images:
             all_rows = [r for r in all_rows if '![' in (r['text'] or '')]
-        total = len(all_rows)
         rows = all_rows[offset: offset + limit]
 
         # Group by subject
@@ -1579,6 +1578,7 @@ def search(
             filter_params,
             has_images=has_images,
         )
+        total = sum(subject_counts.values())
 
         # Cross-subject hint
         cross_subjects = [s for s in subject_counts if subject_counts[s] > 0]
