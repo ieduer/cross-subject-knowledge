@@ -618,9 +618,6 @@ def _derive_chat_search_terms(query: str, user_message: str) -> list[str]:
         for token in filtered[:6]:
             add_term(token)
 
-        if len(terms) < 2:
-            add_term(message_clean[:24])
-
     return terms[:5]
 
 
