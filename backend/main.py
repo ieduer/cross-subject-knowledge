@@ -64,7 +64,9 @@ faiss_manifest = None
 # Frontend should stay on ai.bdfz.net, but the current VPS reaches the same Worker more reliably via workers.dev.
 AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "https://apis.bdfz.workers.dev/")
 AI_SERVICE_LABEL = os.getenv("AI_SERVICE_LABEL", "Gemini")
-AI_SERVICE_TIMEOUT = float(os.getenv("AI_SERVICE_TIMEOUT_SEC", "25"))
+AI_SERVICE_TIMEOUT = float(os.getenv("AI_SERVICE_TIMEOUT_SEC", "35"))
+AI_SERVICE_RETRIES = max(0, int(os.getenv("AI_SERVICE_RETRIES", "1")))
+AI_SERVICE_RETRY_DELAY = max(0.0, float(os.getenv("AI_SERVICE_RETRY_DELAY_SEC", "0.8")))
 AI_SERVICE_MODEL = os.getenv("AI_SERVICE_MODEL", "gemini-flash-latest").strip() or "gemini-flash-latest"
 AI_SERVICE_ORIGIN = os.getenv("AI_SERVICE_ORIGIN", "https://sun.bdfz.net").rstrip("/")
 AI_SERVICE_REFERER = os.getenv("AI_SERVICE_REFERER", f"{AI_SERVICE_ORIGIN}/")
@@ -971,22 +973,48 @@ def _call_ai_service(prompt: str) -> dict:
     if AI_INTERNAL_TOKEN:
         headers["X-Internal-Token"] = AI_INTERNAL_TOKEN
 
-    request = urllib.request.Request(
-        AI_SERVICE_URL,
-        data=payload,
-        headers=headers,
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=AI_SERVICE_TIMEOUT) as response:
-            raw = response.read().decode("utf-8")
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", errors="ignore")[:400]
-        raise HTTPException(502, f"AI service http error: {e.code} {detail}") from e
-    except urllib.error.URLError as e:
-        raise HTTPException(502, f"AI service unavailable: {e.reason}") from e
-    except TimeoutError as e:
-        raise HTTPException(504, "AI service timeout") from e
+    last_http_error: Optional[tuple[int, str]] = None
+    last_network_error: Optional[str] = None
+    timeout_hit = False
+
+    for attempt in range(AI_SERVICE_RETRIES + 1):
+        request = urllib.request.Request(
+            AI_SERVICE_URL,
+            data=payload,
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=AI_SERVICE_TIMEOUT) as response:
+                raw = response.read().decode("utf-8")
+            break
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", errors="ignore")[:400]
+            last_http_error = (e.code, detail)
+            if e.code >= 500 and attempt < AI_SERVICE_RETRIES:
+                time.sleep(AI_SERVICE_RETRY_DELAY)
+                continue
+            raise HTTPException(502, f"AI service http error: {e.code} {detail}") from e
+        except urllib.error.URLError as e:
+            last_network_error = str(e.reason)
+            if attempt < AI_SERVICE_RETRIES:
+                time.sleep(AI_SERVICE_RETRY_DELAY)
+                continue
+            raise HTTPException(502, f"AI service unavailable: {e.reason}") from e
+        except TimeoutError as e:
+            timeout_hit = True
+            if attempt < AI_SERVICE_RETRIES:
+                time.sleep(AI_SERVICE_RETRY_DELAY)
+                continue
+            raise HTTPException(504, "AI service timeout") from e
+    else:
+        if last_http_error:
+            raise HTTPException(502, f"AI service http error: {last_http_error[0]} {last_http_error[1]}")
+        if last_network_error:
+            raise HTTPException(502, f"AI service unavailable: {last_network_error}")
+        if timeout_hit:
+            raise HTTPException(504, "AI service timeout")
+        raise HTTPException(502, "AI service unavailable")
 
     try:
         data = json.loads(raw)

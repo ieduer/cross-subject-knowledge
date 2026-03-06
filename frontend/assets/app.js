@@ -4,9 +4,12 @@ const API = '';  // same origin
 // Canonical external AI gateway for this project: Worker custom domain -> service `apis` / production.
 const AI_API = 'https://ai.bdfz.net/';
 const AI_CHAT_MODEL = 'gemini-flash-latest';
-const AI_REQUEST_TIMEOUT_MS = 20000;
+const AI_CONTEXT_TIMEOUT_MS = 15000;
+const AI_SERVER_CHAT_TIMEOUT_MS = 45000;
+const AI_DIRECT_REQUEST_TIMEOUT_MS = 25000;
+const AI_SERVER_CHAT_RETRIES = 1;
 const IMG_CDN = 'https://img.rdfzer.com';
-const DEFAULT_FRONTEND_VERSION = '2026.03.06-r11';
+const DEFAULT_FRONTEND_VERSION = '2026.03.06-r12';
 const FRONTEND_VERSION_FILE = '/assets/version.json';
 const AI_MEMORY_LIMIT = 12;
 const DOWNLOADABLE_LIBRARY_BOOKS = 316;
@@ -59,7 +62,7 @@ function logClientAIChat({ query, userMessage, summary, provider, success, error
     }).catch(() => {});
 }
 
-async function fetchWithTimeout(url, options = {}, timeoutMs = AI_REQUEST_TIMEOUT_MS) {
+async function fetchWithTimeout(url, options = {}, timeoutMs = AI_SERVER_CHAT_TIMEOUT_MS) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -131,12 +134,35 @@ async function fetchAIContext(userMessage, history) {
             user_message: userMessage,
             history,
         }),
-    });
+    }, AI_CONTEXT_TIMEOUT_MS);
     const { data, raw } = await readJsonLike(res);
     if (!res.ok || !data) {
         throw new Error(responseErrorMessage(res, data, raw, '上下文构建失败'));
     }
     return data;
+}
+
+async function requestServerChat(payload) {
+    let lastError = null;
+    for (let attempt = 0; attempt <= AI_SERVER_CHAT_RETRIES; attempt += 1) {
+        try {
+            const res = await fetchWithTimeout(`${API}/api/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            }, AI_SERVER_CHAT_TIMEOUT_MS);
+            const { data, raw } = await readJsonLike(res);
+            if (!res.ok || !data) {
+                throw new Error(responseErrorMessage(res, data, raw, 'AI 对话失败'));
+            }
+            return data;
+        } catch (error) {
+            lastError = error;
+            if (attempt >= AI_SERVER_CHAT_RETRIES) break;
+            await new Promise(resolve => setTimeout(resolve, 350));
+        }
+    }
+    throw lastError || new Error('AI 对话失败');
 }
 
 function buildClientAIPrompt(userMessage, contextPayload, history) {
@@ -324,19 +350,11 @@ async function sendAIMessage(userMessage) {
         let usedBrowserFallback = false;
 
         try {
-            const res = await fetchWithTimeout(`${API}/api/chat`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    query: currentQuery,
-                    user_message: cleanMessage,
-                    history,
-                }),
+            const data = await requestServerChat({
+                query: currentQuery,
+                user_message: cleanMessage,
+                history,
             });
-            const { data, raw } = await readJsonLike(res);
-            if (!res.ok || !data) {
-                throw new Error(responseErrorMessage(res, data, raw, 'AI 对话失败'));
-            }
             answer = data.answer || '';
             contextPayload = data.context || {};
             setSearchAIProviderLabel(data.provider || aiProviderLabel);
@@ -353,7 +371,7 @@ async function sendAIMessage(userMessage) {
                     taskType: 'chat',
                     thinkingLevel: 'low',
                 }),
-            });
+            }, AI_DIRECT_REQUEST_TIMEOUT_MS);
             const { data: aiData, raw: aiRaw } = await readJsonLike(aiRes);
             if (!aiRes.ok || !aiData?.answer) {
                 throw new Error(responseErrorMessage(aiRes, aiData, aiRaw, serverChatError.message || 'AI 服务错误'));
@@ -438,19 +456,17 @@ async function loadFrontendVersion() {
     if (!footer) return;
 
     let version = DEFAULT_FRONTEND_VERSION;
-    let updatedAt = '';
     try {
         const res = await fetch(`${FRONTEND_VERSION_FILE}?v=${Date.now()}`, { cache: 'no-store' });
         if (res.ok) {
             const data = await res.json();
             version = data.frontend_refactor_version || version;
-            updatedAt = data.updated_at || '';
         }
     } catch (_) {
         // fallback to default version
     }
 
-    footer.textContent = `重构版本 ${version}${updatedAt ? ` · ${updatedAt}` : ''}`;
+    footer.textContent = `重构版本 ${version}`;
 }
 
 loadFrontendVersion();
@@ -1850,7 +1866,7 @@ ${crossSubjectContext || '（未找到直接跨学科教材）'}
                 taskType: 'chat',
                 thinkingLevel: 'low',
             }),
-        });
+        }, AI_DIRECT_REQUEST_TIMEOUT_MS);
         const { data: aiData, raw: aiRaw } = await readJsonLike(aiRes);
         if (!aiRes.ok || !aiData) {
             throw new Error(responseErrorMessage(aiRes, aiData, aiRaw, 'AI 服务错误'));
@@ -1907,6 +1923,11 @@ function renderMath(el) {
                 { left: '\\[', right: '\\]', display: true }
             ],
             throwOnError: false,
+            strict: (errorCode) => (
+                errorCode === 'unicodeTextInMathMode' || errorCode === 'mathVsTextAccents'
+                    ? 'ignore'
+                    : 'warn'
+            ),
             errorColor: '#e74c3c'
         });
     }
