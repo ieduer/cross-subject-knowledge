@@ -609,7 +609,7 @@ async function doSearch(q) {
         currentData = await res.json();
         renderResults(currentData);
         // Load related concepts
-        loadRelated(q);
+        loadRelated(currentData, q);
         // Refresh trending after search (new query logged)
         setTimeout(() => loadTrending(), 500);
         // Show concept subgraph for the search term
@@ -620,10 +620,29 @@ async function doSearch(q) {
 }
 
 // ── Related Concepts ──────────────────────────────────────
-async function loadRelated(q) {
+async function loadRelated(searchData, q) {
     try {
-        const res = await fetch(`${API}/api/related?q=${encodeURIComponent(q)}&limit=10`);
-        const data = await res.json();
+        const conceptCounts = new Map();
+        const groups = Array.isArray(searchData?.groups) ? searchData.groups : [];
+        for (const item of groups) {
+            const concepts = Array.isArray(item?.matched_concepts) ? item.matched_concepts : [];
+            for (const concept of concepts) {
+                const term = String(concept || '').trim();
+                if (!term || term === q || term.includes(q) || q.includes(term)) continue;
+                conceptCounts.set(term, (conceptCounts.get(term) || 0) + 1);
+            }
+        }
+
+        let data = Array.from(conceptCounts.entries())
+            .sort((a, b) => b[1] - a[1] || a[0].length - b[0].length)
+            .slice(0, 10)
+            .map(([term, count]) => ({ term, count }));
+
+        if (data.length === 0) {
+            const res = await fetch(`${API}/api/related?q=${encodeURIComponent(q)}&limit=10`);
+            data = await res.json();
+        }
+
         if (data.length > 0) {
             relatedBarEl.innerHTML = `
                 <span class="related-label">🔗 相关概念：</span>

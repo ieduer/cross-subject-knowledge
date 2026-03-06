@@ -1556,7 +1556,7 @@ def related(
     q: str = Query(..., min_length=1, max_length=200),
     limit: int = Query(8, ge=1, le=20),
 ):
-    """Find concepts that co-occur with the query term."""
+    """Find recognized concepts that co-occur with the query term."""
     con = get_db()
     try:
         clean_q = re.sub(r'[^\w\u4e00-\u9fff\s]', '', q).strip()
@@ -1565,7 +1565,7 @@ def related(
 
         # Get text chunks matching the query
         rows = con.execute("""
-            SELECT c.text
+            SELECT c.subject, c.text
             FROM chunks c
             JOIN chunks_fts f ON c.id = f.rowid
             WHERE chunks_fts MATCH ?
@@ -1575,26 +1575,26 @@ def related(
         if not rows:
             return []
 
-        # Extract Chinese word candidates (2-4 char sequences) from matching chunks
+        # Aggregate only exact concept hits already recognized by concept_map.
         word_counter = Counter()
         query_chars = set(clean_q)
         for r in rows:
             text = r["text"] or ""
-            # Find Chinese word-like sequences (2-4 chars)
-            words = re.findall(r'[\u4e00-\u9fff]{2,4}', text)
-            for w in words:
-                # Skip if the word is part of the query or too generic
+            subject = r["subject"] or ""
+            for concept in _match_concepts(text, subject, con):
+                w = concept["concept"]
                 if w == clean_q or w in clean_q or clean_q in w:
+                    continue
+                if w in GRAPH_GENERIC_TERMS:
                     continue
                 if len(w) < 2:
                     continue
                 word_counter[w] += 1
 
-        # Return top co-occurring terms (appearing in multiple chunks)
         candidates = [
             {"term": term, "count": count}
             for term, count in word_counter.most_common(limit * 3)
-            if count >= 2  # must appear in at least 2 chunks
+            if count >= 2
         ][:limit]
 
         return candidates

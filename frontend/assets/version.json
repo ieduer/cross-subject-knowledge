@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.03.06-r9",
+  "frontend_refactor_version": "2026.03.06-r10",
   "updated_at": "2026-03-06",
   "history": [
+    {
+      "version": "2026.03.06-r10",
+      "date": "2026-03-06",
+      "summary": "search related concepts now aggregate recognized matched_concepts instead of broken 2-4 character fragments"
+    },
     {
       "version": "2026.03.06-r9",
       "date": "2026-03-06",
