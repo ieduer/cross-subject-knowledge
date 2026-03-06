@@ -121,6 +121,9 @@ CHAT_STOPWORDS = {
     "综合", "综合解读", "解读", "突出", "跨学科", "联动", "整合", "对比", "比较",
     "展开", "展开讲讲", "梳理", "串联", "理解", "给出", "提出",
 }
+CHAT_HISTORY_MAX_MESSAGES = max(2, int(os.getenv("CHAT_HISTORY_MAX_MESSAGES", "6")))
+CHAT_HISTORY_TRUNCATED_CHARS = max(200, int(os.getenv("CHAT_HISTORY_TRUNCATED_CHARS", "600")))
+CHAT_HISTORY_FULL_TAIL_MESSAGES = max(2, int(os.getenv("CHAT_HISTORY_FULL_TAIL_MESSAGES", "4")))
 
 
 def _compute_vector_source_fingerprint(text_limit: int) -> tuple[Optional[int], Optional[str]]:
@@ -329,6 +332,11 @@ def _build_token_phrases(tokens: list[str], max_window: int = 4) -> set[str]:
     return phrases
 
 
+def _build_text_match_context(text: str | None) -> tuple[str, set[str]]:
+    normalized_text = _normalize_match_text(text)
+    return normalized_text, _build_token_phrases(_segment_text_tokens(normalized_text))
+
+
 @functools.lru_cache(maxsize=2048)
 def _compile_non_cjk_term_pattern(term: str):
     return re.compile(rf"(?<![0-9A-Za-z]){re.escape(term)}(?![0-9A-Za-z])", re.IGNORECASE)
@@ -344,9 +352,15 @@ def _concept_matches_text(concept: str, normalized_text: str, phrase_set: set[st
     return bool(_compile_non_cjk_term_pattern(concept).search(normalized_text))
 
 
-def _present_terms_in_text(terms: list[str], text: str) -> list[str]:
-    normalized_text = _normalize_match_text(text)
-    phrase_set = _build_token_phrases(_segment_text_tokens(normalized_text))
+def _present_terms_in_text(
+    terms: list[str],
+    text: str,
+    *,
+    normalized_text: str | None = None,
+    phrase_set: set[str] | None = None,
+) -> list[str]:
+    if normalized_text is None or phrase_set is None:
+        normalized_text, phrase_set = _build_text_match_context(text)
     present = []
     for term in terms:
         if _concept_matches_text(term, normalized_text, phrase_set):
@@ -460,6 +474,21 @@ def _load_json_list(raw: str | None) -> list:
 
 def _normalize_text_line(text: str | None) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
+
+
+def _format_chat_history_lines(history: list[dict] | None) -> list[str]:
+    recent_messages = list((history or [])[-CHAT_HISTORY_MAX_MESSAGES:])
+    full_tail_start = max(0, len(recent_messages) - CHAT_HISTORY_FULL_TAIL_MESSAGES)
+    history_lines = []
+    for idx, msg in enumerate(recent_messages):
+        role = "用户" if msg.get("role") == "user" else "助手"
+        content = (msg.get("content") or "").strip()
+        if not content:
+            continue
+        if idx < full_tail_start and len(content) > CHAT_HISTORY_TRUNCATED_CHARS:
+            content = content[:CHAT_HISTORY_TRUNCATED_CHARS].rstrip() + "…"
+        history_lines.append(f"{role}: {content}")
+    return history_lines
 
 
 def _load_ai_summary(con, chunk_id: int) -> str:
@@ -1008,12 +1037,7 @@ def _build_chat_context_payload(con, query: str, user_message: str, history: lis
         for item in relation_hints
     ]
 
-    history_lines = []
-    for msg in (history or [])[-6:]:
-        role = "用户" if msg.get("role") == "user" else "助手"
-        content = (msg.get("content") or "").strip()
-        if content:
-            history_lines.append(f"{role}: {content[:300]}")
+    history_lines = _format_chat_history_lines(history)
 
     summary = {
         "subject_count": len(groups),
@@ -1071,11 +1095,7 @@ def _build_chat_context_for_request(query: str, user_message: str, history: list
 def _build_chat_prompt(query: str, user_message: str, context_payload: dict, history: list[dict] | None = None) -> str:
     history_text = (context_payload.get("history_text") or "").strip()
     if history and not history_text:
-        history_text = "\n".join(
-            f"{'用户' if msg.get('role') == 'user' else '助手'}: {(msg.get('content') or '').strip()[:300]}"
-            for msg in history[-6:]
-            if (msg.get("content") or "").strip()
-        )
+        history_text = "\n".join(_format_chat_history_lines(history))
     if not history_text:
         history_text = "（无）"
 
@@ -1805,17 +1825,12 @@ def related(
 
 
 @app.post("/api/chat/context")
-def chat_context(payload: dict = Body(...)):
+async def chat_context(payload: dict = Body(...)):
     """Build grounded context for AI chat before calling an external model service."""
     query = str(payload.get("query", "")).strip()
     user_message = str(payload.get("user_message", "")).strip()
     history = payload.get("history") or []
-
-    con = get_db()
-    try:
-        return _build_chat_context_payload(con, query, user_message, history=history)
-    finally:
-        con.close()
+    return await run_in_threadpool(_build_chat_context_for_request, query, user_message, history)
 
 
 @app.post("/api/chat/log")
@@ -2101,11 +2116,12 @@ def _expand_cross_subject(concepts: list[dict], con) -> list[str]:
 
 
 def _score_result(result_text: str, query_terms: list[str],
-                  matched_concepts: list[str], is_same_subject: bool) -> int:
+                  matched_concepts: list[str], is_same_subject: bool,
+                  *, normalized_text: str | None = None, phrase_set: set[str] | None = None) -> int:
     """Compute relevance score 0-100 with IDF-weighted term importance."""
     score = 0
-    normalized_text = _normalize_match_text(result_text)
-    phrase_set = _build_token_phrases(_segment_text_tokens(normalized_text))
+    if normalized_text is None or phrase_set is None:
+        normalized_text, phrase_set = _build_text_match_context(result_text)
     
     # Term overlap — weight longer/rarer terms higher (max 35 points)
     term_hits = 0
@@ -2298,10 +2314,22 @@ def gaokao_link(
         scoring_concepts = list(dict.fromkeys(precomputed_terms[:6] + concept_names[:8]))
         for r, link_type in all_results:
             r_text = r["text"] or ""
+            normalized_text, phrase_set = _build_text_match_context(r_text)
             # Find which concepts matched in this result
-            r_matched = _present_terms_in_text(scoring_concepts, r_text)
-            score = _score_result(r_text, scoring_terms, scoring_concepts,
-                                  r["subject"] == q_subject)
+            r_matched = _present_terms_in_text(
+                scoring_concepts,
+                r_text,
+                normalized_text=normalized_text,
+                phrase_set=phrase_set,
+            )
+            score = _score_result(
+                r_text,
+                scoring_terms,
+                scoring_concepts,
+                r["subject"] == q_subject,
+                normalized_text=normalized_text,
+                phrase_set=phrase_set,
+            )
             # Skip results below minimum quality threshold
             if score < 15:
                 continue
@@ -2434,8 +2462,21 @@ def textbook_links(
         results = []
         for r in rows:
             r_text = r["text"] or ""
-            r_matched = _present_terms_in_text(concept_names, r_text)
-            score = _score_result(r_text, top_terms, concept_names, False)
+            normalized_text, phrase_set = _build_text_match_context(r_text)
+            r_matched = _present_terms_in_text(
+                concept_names,
+                r_text,
+                normalized_text=normalized_text,
+                phrase_set=phrase_set,
+            )
+            score = _score_result(
+                r_text,
+                top_terms,
+                concept_names,
+                False,
+                normalized_text=normalized_text,
+                phrase_set=phrase_set,
+            )
             results.append({
                 "id": r["id"],
                 "subject": r["subject"],
