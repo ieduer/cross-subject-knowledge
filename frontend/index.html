@@ -23,7 +23,7 @@
     <script defer src="https://unpkg.com/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
 
-    <link rel="stylesheet" href="assets/style.css?v=20260306g">
+    <link rel="stylesheet" href="assets/style.css?v=20260306h">
 </head>
 
 <body>
@@ -265,50 +265,18 @@
         <!-- About View -->
         <main id="view-about" class="view">
             <div class="about-content">
-                <div class="about-intro">
-                    <h2>关于本平台</h2>
-                    <p class="about-lead">把教材检索、真题关联、知识图谱和 AI 对话接到同一套可回溯证据底座上，让跨学科学习不再只靠记忆跳跃。</p>
-                </div>
-                <div class="about-grid">
-                    <div class="about-card about-card-wide">
-                        <h3>🎯 它在解决什么问题？</h3>
-                        <p>同一个概念会在 9 个学科里被拆开讲。学生知道它们都重要，却很难判断这些内容是不是在谈同一件事、哪些知识点可以互相迁移。</p>
-                        <p>这个平台把教材段落、高考真题、概念图谱和 AI 对话放到同一个检索底座里。每次搜索和追问都尽量回到具体教材页、题目与证据，而不是只给一段悬空答案。</p>
-                        <p>目标不是替代教材，而是把原本分散的知识重新接成一张网，帮助学生更快建立整体知识观。</p>
-                    </div>
-
-                    <div class="about-card">
-                        <h3>📚 当前线上底座</h3>
-                        <div id="about-metrics" class="about-metrics">
-                            <span class="about-metric-chip">数据加载中…</span>
-                        </div>
-                        <p id="about-scale-text"><strong>教材规模加载中…</strong></p>
-                        <p id="about-corpus-text">结构化语料规模加载中…</p>
-                        <p id="about-ai-text">AI 与检索底座状态加载中…</p>
-                        <p id="about-precompute-text">AI 预计算数据加载中…</p>
-                    </div>
-
-                    <div class="about-card">
-                        <h3>🧱 运行与发布</h3>
-                        <p id="about-runtime-text">运行态说明加载中…</p>
-                        <p id="about-deploy-text">发布链路加载中…</p>
-                        <p class="about-note">生产运行不依赖 GPU；OCR、FAISS 重建和大批量补数在离线机器完成，线上只负责检索与对话服务。</p>
-                    </div>
-
-                    <div class="about-card">
-                        <h3>🔓 开源与反馈</h3>
-                        <p>代码、部署链和数据处理流程都保持可追溯；图片资源走 Cloudflare R2，AI 入口统一走 Worker 自定义域名 <code>ai.bdfz.net</code>。</p>
-                        <p><a href="https://github.com/ieduer/cross-subject-knowledge" target="_blank">🐙 GitHub — ieduer/cross-subject-knowledge</a></p>
-                        <p>
-                            <a class="about-feedback-btn"
-                                href="https://github.com/ieduer/cross-subject-knowledge/issues/new?title=%5BFeedback%5D%20sun.bdfz.net%20&body=%23%23%20%E9%97%AE%E9%A2%98%E6%88%96%E5%BB%BA%E8%AE%AE%0A%0A%23%23%20%E6%A3%80%E7%B4%A2%E8%AF%8D%0A%0A%23%23%20%E5%AF%B9%E5%BA%94%E9%A1%B5%E9%9D%A2%2F%E4%B9%A6%E7%B1%8D%0A%0A%23%23%20%E5%A4%8D%E7%8E%B0%E6%AD%A5%E9%AA%A4"
-                                target="_blank" rel="noopener noreferrer">🛠️ 反馈问题 / 提交建议</a>
-                        </p>
-                        <div class="about-signoff">
-                            <span>作者</span>
-                            <strong>孙玉磊 · 北大附中</strong>
-                            <a href="https://bdfz.net/posts/sun/" target="_blank">🏫 bdfz.net/posts/sun/</a>
-                        </div>
+                <div class="about-card">
+                    <h3>🔓 开源与反馈</h3>
+                    <p><a href="https://github.com/ieduer/cross-subject-knowledge" target="_blank" rel="noopener noreferrer">🐙 GitHub — ieduer/cross-subject-knowledge</a></p>
+                    <p>
+                        <a class="about-feedback-btn"
+                            href="https://github.com/ieduer/cross-subject-knowledge/issues/new?title=%5BFeedback%5D%20sun.bdfz.net%20&body=%23%23%20%E9%97%AE%E9%A2%98%E6%88%96%E5%BB%BA%E8%AE%AE%0A%0A%23%23%20%E6%A3%80%E7%B4%A2%E8%AF%8D%0A%0A%23%23%20%E5%AF%B9%E5%BA%94%E9%A1%B5%E9%9D%A2%2F%E4%B9%A6%E7%B1%8D%0A%0A%23%23%20%E5%A4%8D%E7%8E%B0%E6%AD%A5%E9%AA%A4"
+                            target="_blank" rel="noopener noreferrer">🛠️ 反馈问题 / 提交建议</a>
+                    </p>
+                    <div class="about-signoff">
+                        <span>作者</span>
+                        <strong>孙玉磊 · 北大附中</strong>
+                        <a href="https://bdfz.net/posts/sun/" target="_blank" rel="noopener noreferrer">🏫 bdfz.net/posts/sun/</a>
                     </div>
                 </div>
             </div>
@@ -318,7 +286,7 @@
             <p id="footer-version-line">AI 高中教材 · 开源项目 · MIT License · 前端版本加载中…</p>
         </footer>
     </div>
-    <script src="assets/app.js?v=20260306g"></script>
+    <script src="assets/app.js?v=20260306h"></script>
 </body>
 
 </html>

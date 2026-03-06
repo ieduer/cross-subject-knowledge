@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.03.06-r8",
+  "frontend_refactor_version": "2026.03.06-r9",
   "updated_at": "2026-03-06",
   "history": [
+    {
+      "version": "2026.03.06-r9",
+      "date": "2026-03-06",
+      "summary": "tightened graph search around local high-signal chunk evidence and simplified the About page to open-source feedback only"
+    },
     {
       "version": "2026.03.06-r8",
       "date": "2026-03-06",

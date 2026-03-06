@@ -2478,13 +2478,119 @@ def concept_breadth(limit: int = Query(50, ge=1, le=200)):
         con.close()
 
 
+def _is_high_signal_graph_chunk(text: str) -> bool:
+    """Suppress glossary/index-style chunks when mining related graph concepts."""
+    compact = re.sub(r"\s+", " ", text or "").strip()
+    if len(compact) < 40:
+        return False
+
+    title_count = compact.count("《")
+    latin_token_count = len(re.findall(r"[A-Za-z]{3,}", compact))
+    number_count = len(re.findall(r"\b\d+\b", compact))
+
+    if title_count >= 3 and (latin_token_count >= 6 or number_count >= 6):
+        return False
+
+    if re.search(r"[。！？；]", compact):
+        return True
+
+    return bool(re.search(r"[，、：:;；]", compact)) and len(compact) >= 80 and title_count < 3
+
+
+GRAPH_GENERIC_TERMS = {
+    "描写", "引用", "命题", "修辞", "叙事", "抒情",
+    "阅读", "思考", "写作",
+}
+
+
+def _fetch_graph_local_related(con, center_term: str, center_subjects: set[str], limit: int = 15) -> list[dict]:
+    """Mine related graph concepts from the center term's own high-signal chunks."""
+    try:
+        chunk_rows = con.execute("""
+            SELECT c.subject, c.text
+            FROM chunks c JOIN chunks_fts ON chunks_fts.rowid = c.id
+            WHERE chunks_fts MATCH ? AND c.source = 'mineru'
+            LIMIT 80
+        """, (center_term,)).fetchall()
+    except Exception:
+        return []
+
+    signal_chunks = [row for row in chunk_rows if _is_high_signal_graph_chunk(row["text"] or "")]
+    if not signal_chunks:
+        signal_chunks = chunk_rows
+    if not signal_chunks:
+        return []
+
+    curated_rows = con.execute("SELECT term, subject_count, total_count FROM curated_keywords").fetchall()
+    concept_rows = con.execute("SELECT concept, subject FROM concept_map").fetchall()
+
+    concept_subjects: dict[str, set[str]] = {}
+    for row in concept_rows:
+        concept_subjects.setdefault(row["concept"], set()).add(row["subject"])
+
+    candidates = []
+    for row in curated_rows:
+        term = row["term"]
+        if term == center_term:
+            continue
+        if term in GRAPH_GENERIC_TERMS:
+            continue
+
+        term_subjects = concept_subjects.get(term, set())
+        overlap = center_subjects & term_subjects
+        if len(overlap) < 2:
+            continue
+
+        local_hits = 0
+        local_subjects = set()
+        for chunk in signal_chunks:
+            chunk_text = chunk["text"] or ""
+            if term in chunk_text:
+                local_hits += 1
+                local_subjects.add(chunk["subject"])
+
+        if local_hits == 0:
+            continue
+
+        subject_count = int(row["subject_count"] or len(term_subjects))
+        total_count = int(row["total_count"] or 0)
+
+        if local_hits < 2 and total_count > 20:
+            continue
+
+        score = local_hits * 10 + len(local_subjects) * 4 + len(overlap) - subject_count
+        candidates.append({
+            "term": term,
+            "shared_subjects": sorted(overlap),
+            "overlap": len(overlap),
+            "source": "local_chunks",
+            "local_hits": local_hits,
+            "local_subjects": sorted(local_subjects),
+            "subject_count": subject_count,
+            "total_count": total_count,
+            "score": score,
+        })
+
+    candidates.sort(
+        key=lambda item: (
+            item["score"],
+            item["local_hits"],
+            len(item["local_subjects"]),
+            item["overlap"],
+            -item["subject_count"],
+            -item["total_count"],
+        ),
+        reverse=True,
+    )
+    return candidates[:limit]
+
+
 @app.get("/api/graph/search")
 def graph_search(q: str = Query(..., min_length=1)):
     """Return a concept subgraph centered on the search term."""
     con = get_db()
     try:
         q_clean = q.strip()
-        curated = {r["term"] for r in con.execute("SELECT term FROM curated_keywords").fetchall()}
 
         # Use FTS for precise subject distribution (not LIKE)
         try:
@@ -2525,26 +2631,13 @@ def graph_search(q: str = Query(..., min_length=1)):
         except Exception:
             pass
 
-        # ── Priority 2: curated concepts with overlap >= 2 ──────────
+        # ── Priority 2: local co-mentions in high-signal center chunks ─────
         curated_related = []
         seen_terms = {r["term"] for r in cluster_related}
-        for term in curated:
-            if term == q_clean or term in seen_terms:
+        for item in _fetch_graph_local_related(con, q_clean, center_subjects, limit=20):
+            if item["term"] == q_clean or item["term"] in seen_terms:
                 continue
-            term_subjects_row = con.execute(
-                "SELECT DISTINCT subject FROM concept_map WHERE concept = ?", (term,)
-            ).fetchall()
-            term_subjects = {r["subject"] for r in term_subjects_row}
-            overlap = center_subjects & term_subjects
-            if len(overlap) >= 2:  # stricter threshold
-                curated_related.append({
-                    "term": term,
-                    "shared_subjects": list(overlap),
-                    "overlap": len(overlap),
-                    "source": "curated",
-                })
-
-        curated_related.sort(key=lambda x: x["overlap"], reverse=True)
+            curated_related.append(item)
 
         # Merge: clusters first, then curated (max 15 total)
         related = cluster_related + curated_related[:15 - len(cluster_related)]
@@ -2575,6 +2668,8 @@ def graph_search(q: str = Query(..., min_length=1)):
                 "subjects": r["shared_subjects"],
                 "strength": r["overlap"],
             }
+            if r.get("local_hits"):
+                link_data["evidence_hits"] = r["local_hits"]
             ai_rel = get_ai_relation(con, q_clean, r["term"])
             if ai_rel:
                 link_data["relation"] = ai_rel["type"]
