@@ -1168,15 +1168,36 @@ body {
 
 /* ── About ───────────────────────────────────────────────── */
 .about-content {
-    max-width: 700px;
+    max-width: 980px;
     margin: 0 auto;
     padding: 40px 0 80px;
+}
+
+.about-intro {
+    margin-bottom: 24px;
 }
 
 .about-content h2 {
     font-size: 32px;
     font-weight: 700;
-    margin-bottom: 32px;
+    margin-bottom: 12px;
+}
+
+.about-lead {
+    max-width: 760px;
+    color: var(--text-dim);
+    line-height: 1.8;
+    font-size: 15px;
+}
+
+.about-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.about-card-wide {
+    grid-column: 1 / -1;
 }
 
 .about-card {
@@ -1195,6 +1216,7 @@ body {
 .about-card p {
     color: var(--text-dim);
     margin-bottom: 8px;
+    line-height: 1.8;
 }
 
 .about-card a {
@@ -1223,6 +1245,45 @@ body {
 .about-feedback-btn:hover {
     background: rgba(108, 92, 231, 0.18);
     text-decoration: none;
+}
+
+.about-metrics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.about-metric-chip {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 5px 10px;
+    font-size: 11px;
+    color: #d7e9ff;
+    background: rgba(116, 185, 255, 0.12);
+    border: 1px solid rgba(116, 185, 255, 0.18);
+}
+
+.about-note {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: rgba(255, 234, 167, 0.06);
+    border: 1px solid rgba(255, 234, 167, 0.12);
+}
+
+.about-signoff {
+    margin-top: 14px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+    color: var(--text-dim);
+}
+
+.about-signoff strong {
+    color: var(--text);
 }
 
 /* ── Footer ──────────────────────────────────────────────── */
@@ -2128,6 +2189,14 @@ body {
 
     .about-content h2 {
         font-size: 26px;
+    }
+
+    .about-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .about-card-wide {
+        grid-column: auto;
     }
 
     .ai-result {

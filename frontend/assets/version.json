@@ -1,11 +1,16 @@
 {
-  "frontend_refactor_version": "2026.03.06-r7",
+  "frontend_refactor_version": "2026.03.06-r8",
   "updated_at": "2026-03-06",
   "history": [
     {
+      "version": "2026.03.06-r8",
+      "date": "2026-03-06",
+      "summary": "rewrote the About page around live runtime stats, operations boundaries, and current deployment flow"
+    },
+    {
       "version": "2026.03.06-r7",
       "date": "2026-03-06",
-      "summary": "AI chat now uses precomputed gaokao analysis and textbook summaries; gaokao link panels prioritize precomputed refs before live retrieval"
+        "summary": "AI chat now uses precomputed gaokao analysis and textbook summaries; gaokao link panels prioritize precomputed refs before live retrieval"
     },
     {
       "version": "2026.03.06-r6",

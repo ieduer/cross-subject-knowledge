@@ -4,9 +4,10 @@ const API = '';  // same origin
 // Canonical external AI gateway for this project: Worker custom domain -> service `apis` / production.
 const AI_API = 'https://ai.bdfz.net/';
 const IMG_CDN = 'https://img.rdfzer.com';
-const DEFAULT_FRONTEND_VERSION = 'refactor-2026.03.06-r6';
+const DEFAULT_FRONTEND_VERSION = 'refactor-2026.03.06-r8';
 const FRONTEND_VERSION_FILE = '/assets/version.json';
 const AI_MEMORY_LIMIT = 12;
+const DOWNLOADABLE_LIBRARY_BOOKS = 316;
 let latestStats = null;
 let aiProviderLabel = 'Gemini';
 
@@ -1420,9 +1421,23 @@ function applyLiveStatsToUI(data) {
     }
 
     const aboutScaleText = document.getElementById('about-scale-text');
+    const aboutMetrics = document.getElementById('about-metrics');
     if (aboutScaleText) {
         const nBooks = (data.textbook_books || 0).toLocaleString();
-        aboutScaleText.innerHTML = `<strong>${nBooks}</strong> 本高中教材（人教版），使用 <a href="https://github.com/opendatalab/MinerU" target="_blank">MinerU</a> GPU 加速 OCR，提取结构化 Markdown（含表格、公式、图片）。`;
+        aboutScaleText.innerHTML = `当前线上索引已入库 <strong>${nBooks}</strong> 本教材语料；完整教材 PDF 下载区独立提供 <strong>${DOWNLOADABLE_LIBRARY_BOOKS}</strong> 本。`;
+        if (aboutMetrics) {
+            const chips = [
+                `${nBooks} 本已入库教材`,
+                `${DOWNLOADABLE_LIBRARY_BOOKS} 本 PDF 下载`,
+                `${(data.total_chunks || 0).toLocaleString()} 条语料`,
+                `${(data.gaokao_chunks || 0).toLocaleString()} 道真题`,
+                data.faiss_enabled
+                    ? `FAISS ${(data.faiss_vectors || 0).toLocaleString()} 向量`
+                    : 'FAISS 未启用',
+                `${data.ai_model || aiProviderLabel} 对话`,
+            ];
+            aboutMetrics.innerHTML = chips.map(text => `<span class="about-metric-chip">${escHtml(text)}</span>`).join('');
+        }
     }
 
     const aboutCorpusText = document.getElementById('about-corpus-text');
@@ -1431,7 +1446,10 @@ function applyLiveStatsToUI(data) {
         const nTextbook = (data.textbook_chunks || 0).toLocaleString();
         const nGaokao = (data.gaokao_chunks || 0).toLocaleString();
         const nSubjects = data.subjects_count || (data.subjects || []).length;
-        aboutCorpusText.innerHTML = `全文检索基于 SQLite FTS5，<strong>${nTotal}</strong> 条结构化语料（教材 ${nTextbook} / 真题 ${nGaokao}），覆盖 <strong>${nSubjects}</strong> 个学科。`;
+        const [startYear, endYear] = data.gaokao_year_range || [];
+        const yearRange = startYear && endYear ? `${startYear}-${endYear}` : '历年';
+        const multimodal = data.gaokao_multimodal ? `，其中 <strong>${data.gaokao_multimodal.toLocaleString()}</strong> 道含图题` : '';
+        aboutCorpusText.innerHTML = `全文检索基于 SQLite FTS5，当前共有 <strong>${nTotal}</strong> 条结构化语料（教材 ${nTextbook} / 真题 ${nGaokao}），覆盖 <strong>${nSubjects}</strong> 个学科；真题时间范围为 <strong>${yearRange}</strong>${multimodal}。`;
     }
 
     const aboutAiText = document.getElementById('about-ai-text');
@@ -1439,7 +1457,23 @@ function applyLiveStatsToUI(data) {
         const faissPart = data.faiss_enabled
             ? `FAISS 已启用（${(data.faiss_vectors || 0).toLocaleString()} 条教材向量）`
             : 'FAISS 当前未启用';
-        aboutAiText.textContent = `AI 跨学科解读由 ${data.ai_model || aiProviderLabel} 提供；检索底座为 SQLite FTS5 + ${faissPart}。`;
+        aboutAiText.textContent = `AI 对话入口统一走 ai.bdfz.net；模型侧显示为 ${data.ai_model || aiProviderLabel}。检索底座为 SQLite FTS5 + ${faissPart}。`;
+    }
+
+    const aboutPrecomputeText = document.getElementById('about-precompute-text');
+    if (aboutPrecomputeText) {
+        const tables = data.ai_tables || {};
+        aboutPrecomputeText.textContent = `AI 预计算已入库：解读 ${Number(tables.explanations || 0).toLocaleString()}、同义/别名 ${Number(tables.synonyms || 0).toLocaleString()}、关系 ${Number(tables.relations || 0).toLocaleString()}、教材摘要 ${Number(tables.summaries || 0).toLocaleString()}、真题关联 ${Number(tables.gaokao_links || 0).toLocaleString()}。`;
+    }
+
+    const aboutRuntimeText = document.getElementById('about-runtime-text');
+    if (aboutRuntimeText) {
+        aboutRuntimeText.textContent = '线上运行只依赖 Docker 容器、/data/index 检索资产和 /state/cache 模型缓存；生产宿主机不承担 OCR、批处理和 FAISS 重建。';
+    }
+
+    const aboutDeployText = document.getElementById('about-deploy-text');
+    if (aboutDeployText) {
+        aboutDeployText.textContent = '发布由 GitHub Actions 触发，在 VPS 上使用临时干净 release checkout 构建 CPU-only 镜像，通过 /api/health 后切换；失败会自动回滚。';
     }
 }
 

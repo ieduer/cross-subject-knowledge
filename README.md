@@ -13,8 +13,8 @@
 - 🔍 **跨学科搜索** — 搜索一个概念，按学科分组展示不同教材中的内容
 - 💡 **自动关联提示** — 检测到概念横跨多学科时，自动提示跨学科联系
 - ✨ **AI 跨学科解读** — 一键调用 Gemini，综合多学科教材内容生成带出处的解读
-- 🗺️ **知识图谱** — D3.js 力导向交互式图谱，可视化 784 个学术概念在 9 学科间的关联网络，支持缩放/拖拽/悬停高亮
-- 📊 **数据洞察** — 720 个精选学术术语的词频分析、学科关联热力图、考试覆盖分析、概念广度排名
+- 🗺️ **知识图谱** — D3.js 力导向交互式图谱，可视化 788 个学术概念在 9 学科间的关联网络，支持缩放/拖拽/悬停高亮
+- 📊 **数据洞察** — 726 个精选学术术语的词频分析、学科关联热力图、考试覆盖分析、概念广度排名
 - 📚 **教材下载** — 全部 316 本高中教材 PDF 可从 [jks.bdfz.net](https://jks.bdfz.net/) 下载
 
 ### 高级检索
@@ -30,15 +30,17 @@
 
 | 指标 | 数值 |
 |------|------|
-| 教材总数 | **316 本**（人教版高中全科） |
+| 在线索引教材 | **63 本**（当前线上已入库教材语料） |
+| PDF 下载库 | **316 本**（独立教材下载区） |
 | 学科覆盖 | **9 科**：语文、数学、英语、物理、化学、生物学、历史、地理、思想政治 |
-| 结构化语料 | **70,007 条** chunks (包含 65,978 条教材知识 + **4,029 道高考真题**) |
-| 高考真题 | **4,029 道** (2010-2024 全国/地方卷 + gk.bdfz.net 北京卷语文，含 904 张多模态题图) |
-| 学术概念图谱 | **784 个**有效概念，1,714 条学科映射，83 个跨学科聚类 |
-| 精选术语 | **720 个**精选学术术语，2,825 条频次统计 |
+| 结构化语料 | **20,553 条**（教材 **16,524** + 高考真题 **4,029**） |
+| 高考真题 | **4,029 道**（`2002-2025`，其中 **651** 道含图题） |
+| 学术概念图谱 | **788 个**概念，1,723 条学科映射，83 条跨学科聚合记录 |
+| 精选术语 | **726 个**精选学术术语 |
 | 教材插图 | **87,156 张**（3.4 GB，由 R2 CDN 全球分发） |
-| FTS 索引大小 | **142 MB**（SQLite FTS5） |
-| Docker 镜像 | **467 MB**（仅代码 + 索引，图片走 CDN） |
+| FTS 索引大小 | **110 MB**（SQLite FTS5 运行库） |
+| FAISS 索引大小 | **65 MB**（`BAAI/bge-m3`，16,524 向量） |
+| Docker 运行镜像 | **2.07 GB**（CPU-only，运行时数据和缓存走宿主机挂载） |
 
 ### 概念图谱各学科分布
 
@@ -91,11 +93,12 @@
     │           └── Docker: textbook-knowledge
     │               ├── FastAPI 后端 (Python 3.13)
     │               ├── NLP/ML 引擎
-    │               │   ├── BAAI/bge-small-zh-v1.5 ── 中文语义向量 (512D)
-    │               │   ├── FAISS ── 65,978 向量稠密检索
+    │               │   ├── BAAI/bge-m3 ── 多语言语义向量 (1024D)
+    │               │   ├── FAISS ── 16,524 条教材向量稠密检索
     │               │   └── Jieba ── 中文分词 + 词性标注
     │               ├── 前端 (HTML/CSS/JS + D3.js + KaTeX)
-    │               └── SQLite FTS5 索引 + 概念图谱 (142MB)
+    │               ├── SQLite FTS5 检索库 (110MB)
+    │               └── 宿主机挂载 data/index + state/cache
     │
     ├── HTTPS → img.rdfzer.com (Cloudflare R2 CDN)
     │           └── 87,156 张教材原图（3.4GB，全球加速，免费出站）
@@ -110,19 +113,22 @@
 - `ai.bdfz.net` 是 Cloudflare Worker custom domain，实际绑定到 service `apis` / `production`
 - 在 Cloudflare Dashboard 里看到的 `apis` 是服务名，不是这个项目应优先暴露给用户的 canonical 域名
 - 详细说明见 [docs/ai_gateway_rule.md](docs/ai_gateway_rule.md)
+- 运行时与运维总览见 [docs/runtime_operations_overview.md](docs/runtime_operations_overview.md)
 
 ### Docker 内容
 
 ```
-/app/
+/app/                           # 镜像内代码
 ├── backend/main.py             # FastAPI 应用
 ├── frontend/
 │   ├── index.html              # 主页（搜索/真题/图谱/数据/关于）
 │   └── assets/
-│       ├── style.css           # 暗色主题 + 响应式（640px/380px）
-│       └── app.js              # D3.js 图谱 + 高级搜索 + AI 解读
+│       ├── style.css
+│       └── app.js
+├── requirements.runtime.txt    # 运行时 Python 依赖
+└── scripts/deploy_vps.sh       # 生产发布脚本
 
-/data/index/                    # 宿主机挂载的运行时数据
+/data/index/                    # 宿主机挂载的运行时检索资产
 ├── textbook_mineru_fts.db      # FTS5 索引 + 概念图谱
 ├── textbook_chunks.index       # FAISS 向量索引
 └── textbook_chunks.manifest.json
@@ -190,7 +196,11 @@ CREATE TABLE chunks (
 CREATE VIRTUAL TABLE chunks_fts USING fts5(text, content=chunks, content_rowid=id);
 ```
 
-**产物**：`data/index/textbook_mineru_fts.db` → **142 MB**
+**产物**：
+
+- `data/index/textbook_mineru_fts.db` → **110 MB**
+- `data/index/textbook_chunks.index` → **65 MB**
+- `data/index/textbook_chunks.manifest.json` → 运行时向量校验清单
 
 ### Phase 4: 概念图谱构建
 
@@ -222,13 +232,9 @@ rclone sync data/images/ r2:textbook-images/orig/ --transfers 16 --progress
 ### Phase 6: 部署
 
 ```bash
-# 构建 Docker 镜像（仅含代码 + FTS 索引，不含图片）
-docker build -t textbook-knowledge .
-
-# 部署
-docker run -d --name textbook-knowledge \
-  --restart unless-stopped \
-  -p 8080:8080 textbook-knowledge
+# 生产推荐：运行带健康闸门和回滚的发布脚本
+chmod +x scripts/deploy_vps.sh
+RUNTIME_ROOT=/root/cross-subject-knowledge ./scripts/deploy_vps.sh
 ```
 
 ---
@@ -242,13 +248,13 @@ docker run -d --name textbook-knowledge \
 | `data/raw_pdf/` | **31 GB** | 316 本原始 PDF | ❌ 需重新下载 |
 | `data/mineru_output/` | **101 GB** | MinerU OCR 产物 | ✅ 从 PDF 重新生成（~20h） |
 | `data/images/` | **3.4 GB** | 87K 张提取的教材图片 | ✅ 从 MinerU 产物提取 |
-| `data/index/` | **308 MB** | FTS 索引 + chunks JSONL | ✅ 从 MinerU 产物重建 |
+| `data/index/` | **175 MB** | 运行时 FTS 库 + FAISS 索引 + manifest | ✅ 从 MinerU 产物重建 |
 
 ### 云端
 
 | 服务 | 内容 | 大小 |
 |------|------|------|
-| VPS | Docker 镜像 + 容器（代码，运行时数据走挂载） | 约 1-2 GB |
+| VPS | Docker 镜像 + 容器（代码） | 约 2.1 GB |
 | Cloudflare R2 (`img.rdfzer.com`) | 87,156 张跨学科教材原图及页面图 | 4.2 GB |
 | GitHub | 源代码 | < 1 MB |
 
@@ -284,7 +290,8 @@ docker run -d --name textbook-knowledge \
 ### 1. 资源存储隔离
 *   **源代码 (GitHub)**：前端页面、后端 API、Dockerfile、各种配置。**绝对不含**庞大的数据库和图片。
 *   **图片资源 (R2 CDN)**：所有的教材原图、单页截图等，托管在 Cloudflare R2 (`img.rdfzer.com`)，全球加速分发，不消耗部署服务器 (VPS) 的带宽。
-*   **检索数据库 (VPS 本地)**：`textbook_mineru_fts.db` (全文检索) 和 `textbook_chunks.index` (向量索引)，加起来 <500MB，存放于 VPS 本地 `data/` 目录，通过 Docker 挂载提供服务。
+*   **检索数据库 (VPS 本地)**：`textbook_mineru_fts.db`、`textbook_chunks.index` 和 manifest，存放于 VPS 本地 `data/index/`，通过 Docker 挂载提供服务。
+*   **模型缓存 (VPS 本地)**：Hugging Face / sentence-transformers 缓存保存在 VPS 本地 `state/cache/`，不再烘进镜像。
 
 ### 2. 自动化部署 (GitHub Actions)
 项目利用 GitHub Actions 实现了完全自动化的持续部署：
@@ -311,7 +318,8 @@ docker run -d --name textbook-knowledge \
 ### 本地运行
 
 ```bash
-pip install fastapi uvicorn sentence-transformers faiss-cpu jieba
+pip install -r requirements.runtime.txt
+pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.10.0+cpu"
 
 # 将 textbook_mineru_fts.db 和 textbook_chunks.index 放到 data/index/ 目录
 uvicorn backend.main:app --host 0.0.0.0 --port 8080
@@ -362,23 +370,25 @@ rclone sync data/images/ r2:textbook-images/orig/ --transfers 16
 python scripts/17_process_beijing_gaokao.py
 
 # 8. 部署
-docker build -t textbook-knowledge .
-docker run -d -p 8080:8080 --restart unless-stopped textbook-knowledge
+chmod +x scripts/deploy_vps.sh
+RUNTIME_ROOT=/root/cross-subject-knowledge ./scripts/deploy_vps.sh
 ```
 
 ---
 
 ## 🔄 VPS 迁移指南
 
-### 最低配置
+### 运行规格
 
 | 参数 | 最低 | 推荐 |
 |---|---|---|
 | CPU | 2 核 | 4 核 |
-| 内存 | 2 GB | 4 GB |
-| 磁盘 | 5 GB | 10 GB |
+| 内存 | 4 GB | 8 GB |
+| 磁盘 | 25 GB | 60 GB |
 | OS | Ubuntu 22.04+ | Ubuntu 24.04 |
 | Docker | 必须 | ✅ |
+
+> 如果同机还需要执行 `docker build`、承载别的服务，或希望给模型缓存和回滚镜像留余量，建议直接用 **4 vCPU / 8 GB RAM / 80 GB SSD**。
 
 ### 迁移步骤
 
@@ -387,15 +397,18 @@ docker run -d -p 8080:8080 --restart unless-stopped textbook-knowledge
 git clone https://github.com/ieduer/cross-subject-knowledge.git
 cd cross-subject-knowledge
 
-# 2. 获取 FTS 数据库（从旧容器或本机复制）
-docker cp textbook-knowledge:/app/data/index/textbook_mineru_fts.db data/
+# 2. 获取运行时目录
+mkdir -p /root/cross-subject-knowledge/data/index /root/cross-subject-knowledge/state/cache
 
-# 3. 获取 FAISS 向量索引
-docker cp textbook-knowledge:/app/data/index/textbook_chunks.index data/
+# 3. 复制运行时检索资产
+cp /old-host/data/index/textbook_mineru_fts.db /root/cross-subject-knowledge/data/index/
+cp /old-host/data/index/textbook_chunks.index /root/cross-subject-knowledge/data/index/
+cp /old-host/data/index/textbook_chunks.manifest.json /root/cross-subject-knowledge/data/index/
 
-# 4. 构建并运行
-docker build -t textbook-knowledge .
-docker run -d --name textbook-knowledge --restart unless-stopped -p 8080:8080 textbook-knowledge
+# 4. 运行发布脚本
+cd cross-subject-knowledge
+chmod +x scripts/deploy_vps.sh
+RUNTIME_ROOT=/root/cross-subject-knowledge ./scripts/deploy_vps.sh
 
 # 5. 可选：nginx + SSL
 apt install -y nginx certbot python3-certbot-nginx
@@ -415,7 +428,7 @@ certbot --nginx -d your-domain.com
 | 公式渲染 | KaTeX | LaTeX 数学公式 |
 | 图片 CDN | Cloudflare R2 | `img.rdfzer.com` |
 | AI 解读 | Gemini (via Cloudflare Worker service `apis` / `production`) | `ai.bdfz.net`（custom domain） |
-| 容器 | Docker | 单文件部署 |
+| 容器 | Docker | CPU-only 运行镜像，运行时数据/缓存走宿主机挂载 |
 | 数据备份 | rclone → Google Drive / R2 | |
 
 ### 后端及发掘技术栈
@@ -423,11 +436,11 @@ certbot --nginx -d your-domain.com
 | 组件 | 技术 | 说明 |
 |------|------|------|
 | 中文向量模型 | `BAAI/bge-m3` | 1024D 多语言/长文本嵌入，2.2GB，全面提升语义理解度 |
-| 向量检索 | `faiss-cpu` | 15,652 向量 IndexIDMap，61MB |
+| 向量检索 | `faiss-cpu` | 16,524 向量 IndexIDMap，65MB |
 | API 缓存 | `cachetools` | TTLCache (5min, maxsize=64) 加速读密集型高频 API |
-| 中文分词 | `jieba` + POS tagging | 启动时自动加载 `curated_keywords` 的 720 个学术术语为高权重用户词典，精准切词 |
-| 自动部署 | GitHub Actions | 提交触发 CI/CD 自动连入 VPS 拉取并在 Docker 重建 |
-| 概念图谱 | SQLite `concept_map` | 784 个学术概念，跨学科自动发现 |
+| 中文分词 | `jieba` + POS tagging | 启动时自动加载 `curated_keywords` 的 726 个学术术语为高权重用户词典，精准切词 |
+| 自动部署 | GitHub Actions + `deploy_vps.sh` | 干净 release checkout 构建、健康检查、失败回滚 |
+| 概念图谱 | SQLite `concept_map` | 788 个学术概念，跨学科自动发现 |
 | 全文检索 | SQLite FTS5 | Porter 分词器，OR 组合查询 |
 | 评分算法 | 自定义 `_score_result` | IDF 加权词项匹配 + 概念命中 + 同学科加分，阈值 ≥15 |
 

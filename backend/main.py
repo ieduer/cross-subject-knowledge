@@ -1347,6 +1347,13 @@ def stats():
         gaokao_by_subject = con.execute(
             "SELECT subject, COUNT(*) as cnt FROM chunks WHERE source='gaokao' GROUP BY subject ORDER BY cnt DESC"
         ).fetchall()
+        ai_table_counts = {
+            "explanations": con.execute("SELECT COUNT(*) FROM ai_explanations").fetchone()[0],
+            "synonyms": con.execute("SELECT COUNT(*) FROM ai_synonyms").fetchone()[0],
+            "relations": con.execute("SELECT COUNT(*) FROM ai_relations").fetchone()[0],
+            "summaries": con.execute("SELECT COUNT(*) FROM ai_summaries").fetchone()[0],
+            "gaokao_links": con.execute("SELECT COUNT(*) FROM ai_gaokao_links").fetchone()[0],
+        }
 
         result = {
             "total_chunks": total,
@@ -1356,6 +1363,7 @@ def stats():
             "gaokao_multimodal": gaokao_multimodal,
             "subjects_count": len(dist),
             "ai_model": AI_SERVICE_LABEL,
+            "ai_tables": ai_table_counts,
             "faiss_enabled": faiss_index is not None,
             "faiss_vectors": faiss_index.ntotal if faiss_index else 0,
             "gaokao_year_range": [gaokao_years["min_y"], gaokao_years["max_y"]] if gaokao_years and gaokao_years["min_y"] else None,
