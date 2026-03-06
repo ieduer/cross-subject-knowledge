@@ -121,9 +121,15 @@
 │   └── assets/
 │       ├── style.css           # 暗色主题 + 响应式（640px/380px）
 │       └── app.js              # D3.js 图谱 + 高级搜索 + AI 解读
-└── data/index/
-    ├── textbook_mineru_fts.db  # FTS5 索引 + 概念图谱 (142MB)
-    └── textbook_chunks.index   # FAISS 向量索引 (61MB, 15,652 vectors)
+
+/data/index/                    # 宿主机挂载的运行时数据
+├── textbook_mineru_fts.db      # FTS5 索引 + 概念图谱
+├── textbook_chunks.index       # FAISS 向量索引
+└── textbook_chunks.manifest.json
+
+/state/cache/                   # 宿主机挂载的运行时缓存
+├── huggingface/                # Transformers / HF 模型缓存
+└── sentence_transformers/
 ```
 
 > 📷 **图片不在 Docker 中** — 87K 张原图托管在 Cloudflare R2（`img.rdfzer.com`），前端通过 CDN URL 直接加载。
@@ -242,9 +248,32 @@ docker run -d --name textbook-knowledge \
 
 | 服务 | 内容 | 大小 |
 |------|------|------|
-| VPS | Docker 容器（代码 + 索引） | 467 MB |
+| VPS | Docker 镜像 + 容器（代码，运行时数据走挂载） | 约 1-2 GB |
 | Cloudflare R2 (`img.rdfzer.com`) | 87,156 张跨学科教材原图及页面图 | 4.2 GB |
 | GitHub | 源代码 | < 1 MB |
+
+---
+
+## VPS 推荐规格
+
+当前线上运行时实测：
+
+- 应用容器常驻内存约 **1.2 GiB**
+- 宿主机总内存 **5.8 GiB** 时运行稳定
+- 运行时数据目录约 **< 1 GiB**
+- 生产风险点主要不在数据库，而在 **Docker 镜像体积** 和 **历史镜像堆积**
+
+推荐规格：
+
+- **最低可用**：2 vCPU / 4 GB RAM / 25 GB SSD
+- **推荐生产**：4 vCPU / 8 GB RAM / 60 GB SSD
+- **如果同机还跑别的服务或要在 VPS 本机 `docker build`**：建议 4 vCPU / 8 GB RAM / 80 GB SSD
+
+说明：
+
+- 本项目生产不需要 GPU
+- FAISS 重建和批量数据加工继续放在离线机器，本 VPS 只承担运行时检索与对话服务
+- 模型缓存现在建议落在宿主机 `state/cache/`，不要再烘进镜像层
 
 ---
 
@@ -262,8 +291,10 @@ docker run -d --name textbook-knowledge \
 1.  开发者在本地修改代码后，`git push` 到 GitHub `main` 分支。
 2.  GitHub Actions 自动触发，SSH 连入生产服务器 (VPS: `sun.bdfz.net`)。
 3.  在 VPS 上执行 `git pull` 拉取最新代码。
-4.  基于新的代码 `docker build` 重建应用镜像。
-5.  重启 Docker 容器，服务在后台无缝热更新。
+4.  在 VPS 上先构建新镜像，再停旧容器，避免“构建失败直接打挂线上”。
+5.  新容器通过 `/api/health` 健康检查后才算部署成功；失败则自动回滚到上一镜像。
+6.  运行时模型缓存保存在宿主机 `state/cache/`，避免每次发版都把 Hugging Face 缓存烘进镜像。
+7.  部署完成后自动清理悬空镜像，并只保留最近几份 `pre-*` 回滚镜像。
 
 ### 3. 服务器 (VPS) 迁移指南
 由于大头数据 (4GB+ 图片) 都在云端 CDN，如果未来需要更换服务器提供商，迁移将极其简单轻量：
@@ -290,9 +321,20 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8080
 ### Docker 运行
 
 ```bash
-# 需要将 FTS 数据库和 FAISS 索引放到 data/ 目录
+# 需要先准备运行时数据目录
 docker build -t textbook-knowledge .
-docker run -p 8080:8080 textbook-knowledge
+docker run -d --name textbook-knowledge \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -e PROJECT_ROOT=/app \
+  -e DATA_ROOT=/data \
+  -e STATE_ROOT=/state \
+  -e HF_HOME=/state/cache/huggingface \
+  -e SENTENCE_TRANSFORMERS_HOME=/state/cache/sentence_transformers \
+  -e TRANSFORMERS_CACHE=/state/cache/huggingface/transformers \
+  -v "$(pwd)/data:/data" \
+  -v "$(pwd)/state:/state" \
+  textbook-knowledge
 ```
 
 ### 从头处理数据

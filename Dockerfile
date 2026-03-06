@@ -2,40 +2,43 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
-# Install system deps for faiss
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential && \
-    rm -rf /var/lib/apt/lists/*
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PROJECT_ROOT=/app \
+    DATA_ROOT=/data \
+    STATE_ROOT=/state \
+    PORT=8080 \
+    HF_HOME=/state/cache/huggingface \
+    SENTENCE_TRANSFORMERS_HOME=/state/cache/sentence_transformers \
+    TRANSFORMERS_CACHE=/state/cache/huggingface/transformers
 
-# Install Python deps: web framework + AI/NLP stack
-RUN pip install --no-cache-dir \
-    fastapi uvicorn \
-    faiss-cpu \
-    sentence-transformers \
-    jieba \
-    cachetools
+COPY requirements.runtime.txt ./
 
-# Copy app
+# Force CPU-only torch wheels on Linux x86 to avoid pulling multi-GB CUDA deps
+# into a no-GPU production image.
+RUN python -m pip install --no-cache-dir --upgrade pip && \
+    python -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu "torch==2.10.0+cpu" && \
+    python -m pip install --no-cache-dir -r requirements.runtime.txt
+
 COPY backend/ backend/
 COPY frontend/ frontend/
 
 # Runtime-mounted data/state directories
-RUN mkdir -p /data/index /state/logs /state/cache /state/tmp /state/batch
+RUN mkdir -p \
+    /data/index \
+    /state/logs \
+    /state/cache/huggingface \
+    /state/cache/sentence_transformers \
+    /state/tmp \
+    /state/batch
 
 # Images served from Cloudflare R2 CDN (img.rdfzer.com)
-# No longer baked into Docker image
-
-ENV PROJECT_ROOT=/app
-ENV DATA_ROOT=/data
-ENV STATE_ROOT=/state
-ENV PORT=8080
-# Pre-download the embedding model at build time so startup is fast
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-m3')"
+# No longer baked into Docker image.
 
 EXPOSE 8080
 
-# Health check: auto-restart if backend is unresponsive
-HEALTHCHECK --interval=60s --timeout=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health')" || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=5)" || exit 1
 
 CMD ["sh", "/app/backend/entrypoint.sh"]

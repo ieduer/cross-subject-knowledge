@@ -1,4 +1,10 @@
 .venv*/
+.venv-batch/
+.venv-mineru/
+.venv-vector/
+data/
+state/
+scripts/
 data/raw_pdf/
 data/parsed/
 data/mineru_output/

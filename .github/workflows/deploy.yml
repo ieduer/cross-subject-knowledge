@@ -16,25 +16,5 @@ jobs:
           script: |
             cd /root/cross-subject-knowledge
             git pull origin main
-            mkdir -p data/index state/logs state/cache state/tmp state/batch
-            if [ ! -f data/textbook_chunks.index ] && [ ! -f data/index/textbook_chunks.index ]; then
-              echo "ERROR: missing required runtime asset textbook_chunks.index (checked data/ and data/index/)"
-              exit 1
-            fi
-            docker build -t textbook-knowledge .
-            docker stop textbook-knowledge || true
-            docker rm textbook-knowledge || true
-            docker run -d \
-              --name textbook-knowledge \
-              --restart unless-stopped \
-              -p 8080:8080 \
-              -e PROJECT_ROOT=/app \
-              -e DATA_ROOT=/data \
-              -e STATE_ROOT=/state \
-              -v /root/cross-subject-knowledge/data:/data \
-              -v /root/cross-subject-knowledge/state:/state \
-              textbook-knowledge
-            # Wait for startup and verify health
-            sleep 15
-            curl -sf http://localhost:8080/api/health || echo "WARNING: health check failed"
-            echo "=== Deployed at $(date) ==="
+            chmod +x scripts/deploy_vps.sh
+            ./scripts/deploy_vps.sh
