@@ -737,11 +737,14 @@ loadTrending();
 
 let currentQuery = '';
 let currentData = null;
+let currentOverviewData = null;
+let currentSubjectFilter = null;
 
-async function doSearch(q) {
+async function doSearch(q, { subject = null } = {}) {
     q = q.trim();
     if (!q) return;
     currentQuery = q;
+    currentSubjectFilter = subject || null;
     resetAIConversation();
 
     resultsEl.innerHTML = '<div class="loading">搜索中…</div>';
@@ -751,6 +754,7 @@ async function doSearch(q) {
 
     // Build search URL with advanced filters
     const params = new URLSearchParams({ q, limit: 100 });
+    if (currentSubjectFilter) params.set('subject', currentSubjectFilter);
 
     const bookKey = filterBook.value;
     if (bookKey) params.set('book_key', bookKey);
@@ -763,8 +767,16 @@ async function doSearch(q) {
     try {
         const res = await fetch(`${API}/api/search?${params}`);
         if (!res.ok) throw new Error('Search failed');
-        currentData = await res.json();
-        renderResults(currentData);
+        const data = await res.json();
+        currentData = data;
+        if (!currentSubjectFilter) {
+            currentOverviewData = data;
+        }
+        renderResults(
+            currentData,
+            currentSubjectFilter,
+            currentOverviewData?.subject_counts || currentData.subject_counts || {},
+        );
         // Load related concepts
         loadRelated(currentData, q);
         // Refresh trending after search (new query logged)
@@ -821,7 +833,7 @@ async function loadRelated(searchData, q) {
     }
 }
 
-function renderResults(data, filterSubject = null) {
+function renderResults(data, filterSubject = null, subjectCountsOverride = null) {
     // Cross hint
     if (data.cross_hint && !filterSubject) {
         crossHintEl.textContent = data.cross_hint;
@@ -831,7 +843,8 @@ function renderResults(data, filterSubject = null) {
     }
 
     // AI panel: show only when 2+ subjects found
-    const subjectCount = Object.keys(data.subject_counts || {}).length;
+    const counts = subjectCountsOverride || data.subject_counts || {};
+    const subjectCount = Object.keys(counts).length;
     if (subjectCount >= 2 && !filterSubject) {
         aiPanel.classList.remove('hidden');
         renderAIStarters();
@@ -844,12 +857,12 @@ function renderResults(data, filterSubject = null) {
     }
 
     // Subject tabs
-    const counts = data.subject_counts || {};
+    const totalForTabs = currentOverviewData?.total ?? data.total;
     const subjects = Object.entries(counts).sort((a, b) => b[1] - a[1]);
     if (subjects.length > 1) {
         subjectTabsEl.innerHTML = `
             <div class="subject-tab ${!filterSubject ? 'active' : ''}" data-subj="">
-                全部 <span class="tab-count">${data.total}</span>
+                全部 <span class="tab-count">${totalForTabs}</span>
             </div>
             ${subjects.map(([s, c]) => `
                 <div class="subject-tab ${filterSubject === s ? 'active' : ''}" data-subj="${s}">
@@ -862,9 +875,15 @@ function renderResults(data, filterSubject = null) {
             tab.addEventListener('click', () => {
                 const s = tab.dataset.subj || null;
                 if (s) {
-                    renderResults(currentData, s);
+                    doSearch(currentQuery, { subject: s });
                 } else {
-                    renderResults(currentData);
+                    if (currentOverviewData) {
+                        currentSubjectFilter = null;
+                        currentData = currentOverviewData;
+                        renderResults(currentOverviewData, null, currentOverviewData.subject_counts || {});
+                    } else {
+                        doSearch(currentQuery);
+                    }
                 }
             });
         });
@@ -877,7 +896,7 @@ function renderResults(data, filterSubject = null) {
     if (filterSubject) {
         groups = groups.filter(g => g.subject === filterSubject);
     }
-    const subjectBreadth = Object.keys(data.subject_counts || {}).length;
+    const subjectBreadth = Object.keys(counts).length;
 
     if (groups.length === 0) {
         resultsEl.innerHTML = '<div class="loading">未找到相关结果</div>';
