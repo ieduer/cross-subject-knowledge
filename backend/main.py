@@ -61,8 +61,8 @@ embedder = None
 EMBEDDER_NAME = os.getenv("EMBEDDER", "BAAI/bge-m3")  # upgraded from bge-small-zh-v1.5
 faiss_status_reason = None
 faiss_manifest = None
-# Canonical external AI gateway for this project: Worker custom domain -> service `apis` / production.
-AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "https://ai.bdfz.net/")
+# Frontend should stay on ai.bdfz.net, but the current VPS reaches the same Worker more reliably via workers.dev.
+AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "https://apis.bdfz.workers.dev/")
 AI_SERVICE_LABEL = os.getenv("AI_SERVICE_LABEL", "Gemini")
 AI_SERVICE_TIMEOUT = float(os.getenv("AI_SERVICE_TIMEOUT_SEC", "25"))
 AI_SERVICE_MODEL = os.getenv("AI_SERVICE_MODEL", "gemini-flash-latest").strip() or "gemini-flash-latest"
