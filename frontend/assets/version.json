@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.03.06-r12",
+  "frontend_refactor_version": "2026.03.06-r13",
   "updated_at": "2026-03-06",
   "history": [
+    {
+      "version": "2026.03.06-r13",
+      "date": "2026-03-06",
+      "summary": "search chat now launches browser fallback after an 8-second server head-start and tries workers.dev if the custom domain stalls; KaTeX warnings are silenced"
+    },
     {
       "version": "2026.03.06-r12",
       "date": "2026-03-06",

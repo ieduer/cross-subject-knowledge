@@ -3,13 +3,14 @@
 const API = '';  // same origin
 // Canonical external AI gateway for this project: Worker custom domain -> service `apis` / production.
 const AI_API = 'https://ai.bdfz.net/';
+const AI_API_FALLBACK = 'https://apis.bdfz.workers.dev/';
 const AI_CHAT_MODEL = 'gemini-flash-latest';
 const AI_CONTEXT_TIMEOUT_MS = 15000;
 const AI_SERVER_CHAT_TIMEOUT_MS = 45000;
 const AI_DIRECT_REQUEST_TIMEOUT_MS = 25000;
-const AI_SERVER_CHAT_RETRIES = 1;
+const AI_BROWSER_FALLBACK_DELAY_MS = 8000;
 const IMG_CDN = 'https://img.rdfzer.com';
-const DEFAULT_FRONTEND_VERSION = '2026.03.06-r12';
+const DEFAULT_FRONTEND_VERSION = '2026.03.06-r13';
 const FRONTEND_VERSION_FILE = '/assets/version.json';
 const AI_MEMORY_LIMIT = 12;
 const DOWNLOADABLE_LIBRARY_BOOKS = 316;
@@ -75,6 +76,10 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = AI_SERVER_CHAT_TI
     } finally {
         clearTimeout(timer);
     }
+}
+
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 async function readJsonLike(response) {
@@ -143,26 +148,48 @@ async function fetchAIContext(userMessage, history) {
 }
 
 async function requestServerChat(payload) {
+    const res = await fetchWithTimeout(`${API}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    }, AI_SERVER_CHAT_TIMEOUT_MS);
+    const { data, raw } = await readJsonLike(res);
+    if (!res.ok || !data) {
+        throw new Error(responseErrorMessage(res, data, raw, 'AI 对话失败'));
+    }
+    return data;
+}
+
+async function requestDirectChat(prompt, fallbackMessage = 'AI 服务错误') {
+    const endpoints = [AI_API, AI_API_FALLBACK];
     let lastError = null;
-    for (let attempt = 0; attempt <= AI_SERVER_CHAT_RETRIES; attempt += 1) {
+
+    for (const endpoint of endpoints) {
         try {
-            const res = await fetchWithTimeout(`${API}/api/chat`, {
+            const aiRes = await fetchWithTimeout(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-            }, AI_SERVER_CHAT_TIMEOUT_MS);
-            const { data, raw } = await readJsonLike(res);
-            if (!res.ok || !data) {
-                throw new Error(responseErrorMessage(res, data, raw, 'AI 对话失败'));
+                body: JSON.stringify({
+                    prompt,
+                    model: AI_CHAT_MODEL,
+                    taskType: 'chat',
+                    thinkingLevel: 'low',
+                }),
+            }, AI_DIRECT_REQUEST_TIMEOUT_MS);
+            const { data: aiData, raw: aiRaw } = await readJsonLike(aiRes);
+            if (!aiRes.ok || !aiData?.answer) {
+                throw new Error(responseErrorMessage(aiRes, aiData, aiRaw, fallbackMessage));
             }
-            return data;
+            return {
+                answer: aiData.answer,
+                providerLabel: endpoint === AI_API ? 'Gemini · 浏览器直连' : 'Gemini · 浏览器备用链路',
+            };
         } catch (error) {
             lastError = error;
-            if (attempt >= AI_SERVER_CHAT_RETRIES) break;
-            await new Promise(resolve => setTimeout(resolve, 350));
         }
     }
-    throw lastError || new Error('AI 对话失败');
+
+    throw lastError || new Error(fallbackMessage);
 }
 
 function buildClientAIPrompt(userMessage, contextPayload, history) {
@@ -209,6 +236,86 @@ ${userMessage}
 4. 可以参考“概念别名 / 关系提示”组织答案，但不能把它们当成教材原文引用。
 5. 语言简洁、具体，避免空泛套话。
 6. 总长度尽量控制在 280 字以内。`;
+}
+
+function toPlainText(value) {
+    return String(value || '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function defaultFollowupPrompts() {
+    if (!currentQuery) return [];
+    return [
+        `请用一个关键词概括「${currentQuery}」的核心。`,
+        `「${currentQuery}」在高考里最常见的考法是什么？`,
+        `围绕「${currentQuery}」最容易混淆的概念有哪些？`,
+    ];
+}
+
+function buildFallbackContextPayload(userMessage, history) {
+    const groups = Array.isArray(currentData?.groups) ? currentData.groups : [];
+    const evidence = [];
+    const textbookLines = [];
+    const gaokaoLines = [];
+    let textbookCount = 0;
+    let gaokaoCount = 0;
+
+    groups.slice(0, 6).forEach(group => {
+        (group.results || []).slice(0, 2).forEach(result => {
+            const plainSnippet = toPlainText(result.snippet || result.text).slice(0, 180);
+            const title = result.title || group.subject || currentQuery;
+            const line = `${group.subject}｜${title}｜${plainSnippet || '见当前检索结果'}`;
+
+            if (result.source === 'gaokao') {
+                gaokaoCount += 1;
+                gaokaoLines.push(line);
+            } else {
+                textbookCount += 1;
+                textbookLines.push(line);
+            }
+
+            evidence.push({
+                title,
+                subject: group.subject,
+                source: result.source,
+                book_key: result.book_key,
+                page_num: result.page_num,
+                logical_page: result.logical_page,
+                page_url: result.page_url,
+                snippet: plainSnippet,
+                citation: `${group.subject}·${title}`,
+            });
+        });
+    });
+
+    const matchedConcepts = Array.from(new Set(
+        groups.flatMap(group => (group.results || []).flatMap(result => result.matched_concepts || []))
+    )).slice(0, 8);
+    const coverageLine = `覆盖 ${Object.keys(currentData?.subject_counts || {}).length} 个学科，教材命中 ${textbookCount} 条，真题例子 ${gaokaoCount} 条`;
+
+    return {
+        query: currentQuery,
+        user_message: userMessage,
+        search_terms_used: [currentQuery],
+        retrieval_terms_used: [currentQuery],
+        alias_text: '（无）',
+        relation_text: matchedConcepts.length ? `相关概念：${matchedConcepts.join('、')}` : '（无）',
+        context_text: textbookLines.join('\n') || '（无）',
+        gaokao_text: gaokaoLines.join('\n') || '（无）',
+        history_text: history.map(msg => `${msg.role === 'user' ? '用户' : '助手'}: ${msg.content}`).join('\n') || '（无）',
+        summary: {
+            coverage_line: coverageLine,
+            search_terms_used: [currentQuery],
+            retrieval_terms_used: [currentQuery],
+            top_subjects: groups.slice(0, 4).map(group => ({ subject: group.subject, count: group.count || 0 })),
+            relation_hint_count: matchedConcepts.length,
+            gaokao_hit_count: gaokaoCount,
+        },
+        suggested_questions: defaultFollowupPrompts().filter(prompt => prompt !== userMessage),
+        evidence: evidence.slice(0, 6),
+    };
 }
 
 function bindOpenPageButtons(root, selector = '.ai-source-chip') {
@@ -348,43 +455,48 @@ async function sendAIMessage(userMessage) {
         let answer = '';
         let contextPayload = null;
         let usedBrowserFallback = false;
+        const contextPromise = fetchAIContext(cleanMessage, history);
 
-        try {
-            const data = await requestServerChat({
-                query: currentQuery,
-                user_message: cleanMessage,
-                history,
-            });
-            answer = data.answer || '';
-            contextPayload = data.context || {};
-            setSearchAIProviderLabel(data.provider || aiProviderLabel);
-        } catch (serverChatError) {
-            console.warn('Server-side chat failed, falling back to direct AI call.', serverChatError);
-            const fullContext = await fetchAIContext(cleanMessage, history);
-            const prompt = buildClientAIPrompt(cleanMessage, fullContext, history);
-            const aiRes = await fetchWithTimeout(AI_API, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    prompt,
-                    model: AI_CHAT_MODEL,
-                    taskType: 'chat',
-                    thinkingLevel: 'low',
-                }),
-            }, AI_DIRECT_REQUEST_TIMEOUT_MS);
-            const { data: aiData, raw: aiRaw } = await readJsonLike(aiRes);
-            if (!aiRes.ok || !aiData?.answer) {
-                throw new Error(responseErrorMessage(aiRes, aiData, aiRaw, serverChatError.message || 'AI 服务错误'));
+        const payload = {
+            query: currentQuery,
+            user_message: cleanMessage,
+            history,
+        };
+
+        const serverPromise = requestServerChat(payload).then(data => ({
+            channel: 'server',
+            answer: data.answer || '',
+            contextPayload: data.context || {},
+            providerLabel: data.provider || aiProviderLabel,
+        }));
+
+        const browserPromise = (async () => {
+            await delay(AI_BROWSER_FALLBACK_DELAY_MS);
+            let fullContext = null;
+            try {
+                fullContext = await contextPromise;
+            } catch (_) {
+                fullContext = buildFallbackContextPayload(cleanMessage, history);
             }
-            answer = aiData.answer;
-            contextPayload = {
-                summary: fullContext.summary || null,
-                suggested_questions: fullContext.suggested_questions || [],
-                evidence: fullContext.evidence || [],
+            const prompt = buildClientAIPrompt(cleanMessage, fullContext, history);
+            const direct = await requestDirectChat(prompt, 'AI 服务错误');
+            return {
+                channel: 'browser',
+                answer: direct.answer,
+                contextPayload: {
+                    summary: fullContext.summary || null,
+                    suggested_questions: fullContext.suggested_questions || [],
+                    evidence: fullContext.evidence || [],
+                },
+                providerLabel: direct.providerLabel,
             };
-            usedBrowserFallback = true;
-            setSearchAIProviderLabel('Gemini · 浏览器直连');
-        }
+        })();
+
+        const winner = await Promise.any([serverPromise, browserPromise]);
+        answer = winner.answer;
+        contextPayload = winner.contextPayload;
+        usedBrowserFallback = winner.channel === 'browser';
+        setSearchAIProviderLabel(winner.providerLabel);
 
         if (usedBrowserFallback) {
             logClientAIChat({
@@ -1857,22 +1969,9 @@ ${crossSubjectContext || '（未找到直接跨学科教材）'}
 2. 只根据给定证据回答，不要编造教材内容。
 3. 如果跨学科证据不足，必须明确写“跨学科证据不足”。`;
 
-        const aiRes = await fetchWithTimeout(AI_API, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                prompt,
-                model: AI_CHAT_MODEL,
-                taskType: 'chat',
-                thinkingLevel: 'low',
-            }),
-        }, AI_DIRECT_REQUEST_TIMEOUT_MS);
-        const { data: aiData, raw: aiRaw } = await readJsonLike(aiRes);
-        if (!aiRes.ok || !aiData) {
-            throw new Error(responseErrorMessage(aiRes, aiData, aiRaw, 'AI 服务错误'));
-        }
+        const direct = await requestDirectChat(prompt, 'AI 服务错误');
 
-        if (aiData.answer) {
+        if (direct.answer) {
             resultEl.innerHTML = `
                 <div class="gk-ai-answer">
                     <div class="gk-ai-header">✨ AI 关联分析 <span class="ai-model">Gemini</span></div>
@@ -1883,7 +1982,7 @@ ${crossSubjectContext || '（未找到直接跨学科教材）'}
                         <span class="gk-ai-meta-chip">同学科 ${linkData.links?.length || 0}</span>
                         <span class="gk-ai-meta-chip">跨学科 ${linkData.cross_links?.length || 0}</span>
                     </div>
-                    <div class="gk-ai-text">${escHtml(aiData.answer)}</div>
+                    <div class="gk-ai-text">${escHtml(direct.answer)}</div>
                     ${renderGaokaoAISources(sourceItems)}
                 </div>
             `;
@@ -1923,11 +2022,7 @@ function renderMath(el) {
                 { left: '\\[', right: '\\]', display: true }
             ],
             throwOnError: false,
-            strict: (errorCode) => (
-                errorCode === 'unicodeTextInMathMode' || errorCode === 'mathVsTextAccents'
-                    ? 'ignore'
-                    : 'warn'
-            ),
+            strict: 'ignore',
             errorColor: '#e74c3c'
         });
     }
