@@ -290,7 +290,7 @@ docker run -d --name textbook-knowledge \
 项目利用 GitHub Actions 实现了完全自动化的持续部署：
 1.  开发者在本地修改代码后，`git push` 到 GitHub `main` 分支。
 2.  GitHub Actions 自动触发，SSH 连入生产服务器 (VPS: `sun.bdfz.net`)。
-3.  在 VPS 上执行 `git pull` 拉取最新代码。
+3.  在 VPS 上创建临时的干净 release checkout，避免生产目录里历史热补丁或临时改动阻塞发布。
 4.  在 VPS 上先构建新镜像，再停旧容器，避免“构建失败直接打挂线上”。
 5.  新容器通过 `/api/health` 健康检查后才算部署成功；失败则自动回滚到上一镜像。
 6.  运行时模型缓存保存在宿主机 `state/cache/`，避免每次发版都把 Hugging Face 缓存烘进镜像。

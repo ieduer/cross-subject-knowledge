@@ -14,7 +14,8 @@ jobs:
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            cd /root/cross-subject-knowledge
-            git pull origin main
+            RELEASE_ROOT="$(mktemp -d /tmp/csk-release.XXXXXX)"
+            git clone --depth 1 --branch main https://github.com/ieduer/cross-subject-knowledge.git "$RELEASE_ROOT"
+            cd "$RELEASE_ROOT"
             chmod +x scripts/deploy_vps.sh
-            ./scripts/deploy_vps.sh
+            RUNTIME_ROOT=/root/cross-subject-knowledge ./scripts/deploy_vps.sh

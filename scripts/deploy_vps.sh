@@ -1,28 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_ROOT="/root/cross-subject-knowledge"
+SOURCE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+RUNTIME_ROOT="${RUNTIME_ROOT:-/root/cross-subject-knowledge}"
 CONTAINER_NAME="textbook-knowledge"
 REPO_NAME="textbook-knowledge"
 EMBEDDER_NAME="${EMBEDDER_NAME:-BAAI/bge-m3}"
 
-cd "$APP_ROOT"
+cd "$SOURCE_ROOT"
 
 mkdir -p \
-  data/index \
-  state/logs \
-  state/cache/huggingface \
-  state/cache/sentence_transformers \
-  state/tmp \
-  state/batch
+  "${RUNTIME_ROOT}/data/index" \
+  "${RUNTIME_ROOT}/state/logs" \
+  "${RUNTIME_ROOT}/state/cache/huggingface" \
+  "${RUNTIME_ROOT}/state/cache/sentence_transformers" \
+  "${RUNTIME_ROOT}/state/tmp" \
+  "${RUNTIME_ROOT}/state/batch"
 
-if [ ! -f data/index/textbook_mineru_fts.db ]; then
-  echo "ERROR: missing runtime DB data/index/textbook_mineru_fts.db"
+if [ ! -f "${RUNTIME_ROOT}/data/index/textbook_mineru_fts.db" ]; then
+  echo "ERROR: missing runtime DB ${RUNTIME_ROOT}/data/index/textbook_mineru_fts.db"
   exit 1
 fi
 
-if [ ! -f data/index/textbook_chunks.index ]; then
-  echo "ERROR: missing runtime FAISS index data/index/textbook_chunks.index"
+if [ ! -f "${RUNTIME_ROOT}/data/index/textbook_chunks.index" ]; then
+  echo "ERROR: missing runtime FAISS index ${RUNTIME_ROOT}/data/index/textbook_chunks.index"
   exit 1
 fi
 
@@ -33,7 +34,7 @@ backup_tag="${REPO_NAME}:pre-${build_stamp}"
 rollback_image=""
 
 host_cache_has_model() {
-  find "${APP_ROOT}/state/cache/huggingface" -type f | grep -q .
+  find "${RUNTIME_ROOT}/state/cache/huggingface" -type f | grep -q .
 }
 
 echo "=== deploy start $(date -u '+%Y-%m-%d %H:%M:%S UTC') commit=${commit_sha} ==="
@@ -53,7 +54,7 @@ docker build --pull -t "${build_tag}" -t "${REPO_NAME}:latest" .
 if ! host_cache_has_model; then
   echo "=== bootstrapping host model cache ==="
   if docker ps -a --format '{{.Names}}' | grep -qx "${CONTAINER_NAME}"; then
-    docker cp "${CONTAINER_NAME}:/root/.cache/huggingface/." "${APP_ROOT}/state/cache/huggingface/" >/dev/null 2>&1 || true
+    docker cp "${CONTAINER_NAME}:/root/.cache/huggingface/." "${RUNTIME_ROOT}/state/cache/huggingface/" >/dev/null 2>&1 || true
   fi
 fi
 
@@ -63,7 +64,7 @@ if ! host_cache_has_model; then
     -e HF_HOME=/state/cache/huggingface \
     -e SENTENCE_TRANSFORMERS_HOME=/state/cache/sentence_transformers \
     -e TRANSFORMERS_CACHE=/state/cache/huggingface/transformers \
-    -v "${APP_ROOT}/state:/state" \
+    -v "${RUNTIME_ROOT}/state:/state" \
     "${build_tag}" \
     python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${EMBEDDER_NAME}')"
 fi
@@ -81,8 +82,8 @@ docker run -d \
   -e HF_HOME=/state/cache/huggingface \
   -e SENTENCE_TRANSFORMERS_HOME=/state/cache/sentence_transformers \
   -e TRANSFORMERS_CACHE=/state/cache/huggingface/transformers \
-  -v "${APP_ROOT}/data:/data" \
-  -v "${APP_ROOT}/state:/state" \
+  -v "${RUNTIME_ROOT}/data:/data" \
+  -v "${RUNTIME_ROOT}/state:/state" \
   "${build_tag}" >/dev/null
 
 healthy="false"
@@ -114,8 +115,8 @@ if [ "${healthy}" != "true" ]; then
       -e HF_HOME=/state/cache/huggingface \
       -e SENTENCE_TRANSFORMERS_HOME=/state/cache/sentence_transformers \
       -e TRANSFORMERS_CACHE=/state/cache/huggingface/transformers \
-      -v "${APP_ROOT}/data:/data" \
-      -v "${APP_ROOT}/state:/state" \
+      -v "${RUNTIME_ROOT}/data:/data" \
+      -v "${RUNTIME_ROOT}/state:/state" \
       "${rollback_image}" >/dev/null
   fi
   exit 1
