@@ -23,7 +23,7 @@
     <script defer src="https://unpkg.com/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
 
-    <link rel="stylesheet" href="assets/style.css?v=20260306i">
+    <link rel="stylesheet" href="assets/style.css?v=20260306k">
 </head>
 
 <body>
@@ -41,7 +41,6 @@
                     <button class="nav-btn" data-view="gaokao">📝 真题</button>
                     <button class="nav-btn" data-view="insights">📊 数据</button>
                     <button class="nav-btn" data-view="graph">知识图谱</button>
-                    <button class="nav-btn" data-view="about">关于</button>
                 </nav>
             </div>
         </header>
@@ -91,10 +90,6 @@
                         <span class="trending-label">🔥 热门</span>
                         <div class="trending-tags" id="trending-popular-tags"></div>
                     </div>
-                    <div id="trending-recent" class="trending-group hidden">
-                        <span class="trending-label">🕐 最近</span>
-                        <div class="trending-tags" id="trending-recent-tags"></div>
-                    </div>
                 </div>
             </section>
 
@@ -113,7 +108,7 @@
                     <button id="ai-btn" class="ai-btn">
                         <span class="ai-sparkle">✨</span> AI 跨学科解读
                     </button>
-                    <button id="ai-copy-btn" class="ai-copy-btn hidden" type="button">📋 复制全部对话</button>
+                    <button id="ai-copy-btn" class="ai-copy-btn hidden" type="button" title="复制全部对话" aria-label="复制全部对话">⧉</button>
                 </div>
                 <div id="ai-starters" class="ai-starters"></div>
                 <div id="ai-result" class="ai-result hidden">
@@ -262,31 +257,18 @@
             <div id="graph-container" class="graph-container"></div>
         </main>
 
-        <!-- About View -->
-        <main id="view-about" class="view">
-            <div class="about-content">
-                <div class="about-card">
-                    <h3>🔓 开源与反馈</h3>
-                    <p><a href="https://github.com/ieduer/cross-subject-knowledge" target="_blank" rel="noopener noreferrer">🐙 GitHub — ieduer/cross-subject-knowledge</a></p>
-                    <p>
-                        <a class="about-feedback-btn"
-                            href="https://github.com/ieduer/cross-subject-knowledge/issues/new?title=%5BFeedback%5D%20sun.bdfz.net%20&body=%23%23%20%E9%97%AE%E9%A2%98%E6%88%96%E5%BB%BA%E8%AE%AE%0A%0A%23%23%20%E6%A3%80%E7%B4%A2%E8%AF%8D%0A%0A%23%23%20%E5%AF%B9%E5%BA%94%E9%A1%B5%E9%9D%A2%2F%E4%B9%A6%E7%B1%8D%0A%0A%23%23%20%E5%A4%8D%E7%8E%B0%E6%AD%A5%E9%AA%A4"
-                            target="_blank" rel="noopener noreferrer">🛠️ 反馈问题 / 提交建议</a>
-                    </p>
-                    <div class="about-signoff">
-                        <span>作者</span>
-                        <strong>孙玉磊 · 北大附中</strong>
-                        <a href="https://bdfz.net/posts/sun/" target="_blank" rel="noopener noreferrer">🏫 bdfz.net/posts/sun/</a>
-                    </div>
-                </div>
-            </div>
-        </main>
-
         <footer class="footer">
-            <p id="footer-version-line">AI 高中教材 · 开源项目 · MIT License · 前端版本加载中…</p>
+            <p id="footer-version-line">重构版本加载中…</p>
+            <div class="footer-meta">
+                <a class="footer-link" href="https://github.com/ieduer/cross-subject-knowledge" target="_blank" rel="noopener noreferrer">GitHub</a>
+                <a class="footer-link"
+                    href="https://github.com/ieduer/cross-subject-knowledge/issues/new?title=%5BFeedback%5D%20sun.bdfz.net%20&body=%23%23%20%E9%97%AE%E9%A2%98%E6%88%96%E5%BB%BA%E8%AE%AE%0A%0A%23%23%20%E6%A3%80%E7%B4%A2%E8%AF%8D%0A%0A%23%23%20%E5%AF%B9%E5%BA%94%E9%A1%B5%E9%9D%A2%2F%E4%B9%A6%E7%B1%8D%0A%0A%23%23%20%E5%A4%8D%E7%8E%B0%E6%AD%A5%E9%AA%A4"
+                    target="_blank" rel="noopener noreferrer">反馈建议</a>
+                <a class="footer-link" href="https://bdfz.net/posts/sun/" target="_blank" rel="noopener noreferrer">作者说</a>
+            </div>
         </footer>
     </div>
-    <script src="assets/app.js?v=20260306i"></script>
+    <script src="assets/app.js?v=20260306k"></script>
 </body>
 
 </html>

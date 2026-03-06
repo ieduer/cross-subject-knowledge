@@ -3,8 +3,10 @@
 const API = '';  // same origin
 // Canonical external AI gateway for this project: Worker custom domain -> service `apis` / production.
 const AI_API = 'https://ai.bdfz.net/';
+const AI_CHAT_MODEL = 'gemini-flash-latest';
+const AI_REQUEST_TIMEOUT_MS = 20000;
 const IMG_CDN = 'https://img.rdfzer.com';
-const DEFAULT_FRONTEND_VERSION = 'refactor-2026.03.06-r8';
+const DEFAULT_FRONTEND_VERSION = '2026.03.06-r11';
 const FRONTEND_VERSION_FILE = '/assets/version.json';
 const AI_MEMORY_LIMIT = 12;
 const DOWNLOADABLE_LIBRARY_BOOKS = 316;
@@ -57,6 +59,46 @@ function logClientAIChat({ query, userMessage, summary, provider, success, error
     }).catch(() => {});
 }
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = AI_REQUEST_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            throw new Error(`请求超时 (${Math.round(timeoutMs / 1000)}s)`);
+        }
+        throw error;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+async function readJsonLike(response) {
+    const raw = await response.text();
+    if (!raw) return { data: {}, raw: '' };
+    try {
+        return { data: JSON.parse(raw), raw };
+    } catch (_) {
+        return { data: null, raw };
+    }
+}
+
+function responseErrorMessage(response, data, raw, fallbackMessage) {
+    if (data && typeof data === 'object') {
+        if (typeof data.detail === 'string' && data.detail.trim()) return data.detail.trim();
+        if (typeof data.error === 'string' && data.error.trim()) return data.error.trim();
+        if (typeof data.message === 'string' && data.message.trim()) return data.message.trim();
+    }
+
+    const normalizedRaw = String(raw || '').replace(/\s+/g, ' ').trim();
+    if (!normalizedRaw) return `${fallbackMessage} (${response.status})`;
+    if (normalizedRaw.startsWith('<!DOCTYPE') || normalizedRaw.startsWith('<html')) {
+        return `${fallbackMessage} (${response.status})`;
+    }
+    return normalizedRaw.slice(0, 180);
+}
+
 function renderAIStarters() {
     if (!aiStarters) return;
     const subjectCount = Object.keys(currentData?.subject_counts || {}).length;
@@ -81,7 +123,7 @@ function renderAIStarters() {
 }
 
 async function fetchAIContext(userMessage, history) {
-    const res = await fetch(`${API}/api/chat/context`, {
+    const res = await fetchWithTimeout(`${API}/api/chat/context`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -90,10 +132,11 @@ async function fetchAIContext(userMessage, history) {
             history,
         }),
     });
-    if (!res.ok) {
-        throw new Error(`上下文构建失败 (${res.status})`);
+    const { data, raw } = await readJsonLike(res);
+    if (!res.ok || !data) {
+        throw new Error(responseErrorMessage(res, data, raw, '上下文构建失败'));
     }
-    return await res.json();
+    return data;
 }
 
 function buildClientAIPrompt(userMessage, contextPayload, history) {
@@ -280,7 +323,7 @@ async function sendAIMessage(userMessage) {
         let usedBrowserFallback = false;
 
         try {
-            const res = await fetch(`${API}/api/chat`, {
+            const res = await fetchWithTimeout(`${API}/api/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -289,9 +332,9 @@ async function sendAIMessage(userMessage) {
                     history,
                 }),
             });
-            const data = await res.json();
-            if (!res.ok) {
-                throw new Error(data.detail || `AI 对话失败 (${res.status})`);
+            const { data, raw } = await readJsonLike(res);
+            if (!res.ok || !data) {
+                throw new Error(responseErrorMessage(res, data, raw, 'AI 对话失败'));
             }
             answer = data.answer || '';
             contextPayload = data.context || {};
@@ -300,14 +343,19 @@ async function sendAIMessage(userMessage) {
             console.warn('Server-side chat failed, falling back to direct AI call.', serverChatError);
             const fullContext = await fetchAIContext(cleanMessage, history);
             const prompt = buildClientAIPrompt(cleanMessage, fullContext, history);
-            const aiRes = await fetch(AI_API, {
+            const aiRes = await fetchWithTimeout(AI_API, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt }),
+                body: JSON.stringify({
+                    prompt,
+                    model: AI_CHAT_MODEL,
+                    taskType: 'chat',
+                    thinkingLevel: 'low',
+                }),
             });
-            const aiData = await aiRes.json();
-            if (!aiRes.ok || !aiData.answer) {
-                throw new Error(aiData.error || serverChatError.message || `AI 服务错误 (${aiRes.status})`);
+            const { data: aiData, raw: aiRaw } = await readJsonLike(aiRes);
+            if (!aiRes.ok || !aiData?.answer) {
+                throw new Error(responseErrorMessage(aiRes, aiData, aiRaw, serverChatError.message || 'AI 服务错误'));
             }
             answer = aiData.answer;
             contextPayload = {
@@ -371,13 +419,13 @@ async function copyAIConversation() {
         await navigator.clipboard.writeText(text);
         if (aiCopyBtn) {
             const prev = aiCopyBtn.textContent;
-            aiCopyBtn.textContent = '✅ 已复制';
+            aiCopyBtn.textContent = '✓';
             setTimeout(() => { aiCopyBtn.textContent = prev; }, 1200);
         }
     } catch (_) {
         if (aiCopyBtn) {
             const prev = aiCopyBtn.textContent;
-            aiCopyBtn.textContent = '❌ 复制失败';
+            aiCopyBtn.textContent = '!';
             setTimeout(() => { aiCopyBtn.textContent = prev; }, 1200);
         }
     }
@@ -401,7 +449,7 @@ async function loadFrontendVersion() {
         // fallback to default version
     }
 
-    footer.textContent = `AI 高中教材 · 开源项目 · MIT License · 前端重构版本 ${version}${updatedAt ? ` · ${updatedAt}` : ''}`;
+    footer.textContent = `重构版本 ${version}${updatedAt ? ` · ${updatedAt}` : ''}`;
 }
 
 loadFrontendVersion();
@@ -531,15 +579,11 @@ async function loadTrending() {
         const data = await res.json();
         const section = document.getElementById('trending-section');
         const popularGroup = document.getElementById('trending-popular');
-        const recentGroup = document.getElementById('trending-recent');
         const popularTags = document.getElementById('trending-popular-tags');
-        const recentTags = document.getElementById('trending-recent-tags');
+        if (!section || !popularGroup || !popularTags) return;
 
-        let hasContent = false;
-
-        // Popular searches
+        popularTags.innerHTML = '';
         if (data.popular && data.popular.length > 0) {
-            popularTags.innerHTML = '';
             data.popular.slice(0, 10).forEach(item => {
                 const btn = document.createElement('button');
                 btn.className = 'trending-tag popular';
@@ -551,27 +595,11 @@ async function loadTrending() {
                 popularTags.appendChild(btn);
             });
             popularGroup.classList.remove('hidden');
-            hasContent = true;
+            section.classList.remove('hidden');
+        } else {
+            popularGroup.classList.add('hidden');
+            section.classList.add('hidden');
         }
-
-        // Recent searches
-        if (data.recent && data.recent.length > 0) {
-            recentTags.innerHTML = '';
-            data.recent.slice(0, 8).forEach(item => {
-                const btn = document.createElement('button');
-                btn.className = 'trending-tag recent';
-                btn.textContent = item.query;
-                btn.addEventListener('click', () => {
-                    searchInput.value = item.query;
-                    doSearch(item.query);
-                });
-                recentTags.appendChild(btn);
-            });
-            recentGroup.classList.remove('hidden');
-            hasContent = true;
-        }
-
-        if (hasContent) section.classList.remove('hidden');
     } catch (_) { /* silent */ }
 }
 
@@ -1812,14 +1840,19 @@ ${crossSubjectContext || '（未找到直接跨学科教材）'}
 2. 只根据给定证据回答，不要编造教材内容。
 3. 如果跨学科证据不足，必须明确写“跨学科证据不足”。`;
 
-        const aiRes = await fetch(AI_API, {
+        const aiRes = await fetchWithTimeout(AI_API, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt }),
+            body: JSON.stringify({
+                prompt,
+                model: AI_CHAT_MODEL,
+                taskType: 'chat',
+                thinkingLevel: 'low',
+            }),
         });
-        const aiData = await aiRes.json();
-        if (!aiRes.ok) {
-            throw new Error(aiData.error || `AI 服务错误 (${aiRes.status})`);
+        const { data: aiData, raw: aiRaw } = await readJsonLike(aiRes);
+        if (!aiRes.ok || !aiData) {
+            throw new Error(responseErrorMessage(aiRes, aiData, aiRaw, 'AI 服务错误'));
         }
 
         if (aiData.answer) {

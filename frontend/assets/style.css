@@ -399,6 +399,7 @@ body {
     display: flex;
     gap: 10px;
     justify-content: center;
+    align-items: center;
     flex-wrap: wrap;
 }
 
@@ -444,19 +445,26 @@ body {
     font-size: 15px;
     font-weight: 600;
     transition: var(--transition);
-    margin: 0 auto;
+    margin: 0;
     box-shadow: 0 4px 20px rgba(108, 92, 231, 0.3);
 }
 
 .ai-copy-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     border: 1px solid rgba(108, 92, 231, 0.35);
     background: rgba(108, 92, 231, 0.08);
     color: var(--accent-light);
-    padding: 10px 16px;
-    border-radius: var(--radius-sm);
-    font-size: 13px;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border-radius: 12px;
+    font-size: 16px;
+    line-height: 1;
     cursor: pointer;
     transition: var(--transition);
+    flex: 0 0 auto;
 }
 
 .ai-copy-btn:hover {
@@ -1293,6 +1301,25 @@ body {
     color: var(--text-muted);
     font-size: 13px;
     border-top: 1px solid var(--border);
+}
+
+.footer-meta {
+    margin-top: 10px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+
+.footer-link {
+    color: var(--text-dim);
+    text-decoration: none;
+    transition: var(--transition);
+}
+
+.footer-link:hover {
+    color: var(--text);
 }
 
 /* ── Advanced Search Toggle ──────────────────────────────── */
@@ -2401,7 +2428,10 @@ body {
 
     /* ── AI Panel ──────────────────────────────────────── */
     .ai-toolbar {
-        flex-direction: column;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: nowrap;
     }
 
     .ai-starters {
@@ -2423,17 +2453,22 @@ body {
     }
 
     .ai-btn {
-        width: 100%;
+        width: auto;
+        flex: 1 1 auto;
         justify-content: center;
         padding: 12px 20px;
         font-size: 15px;
         min-height: 48px;
+        min-width: 0;
     }
 
     .ai-copy-btn {
-        width: 100%;
-        min-height: 42px;
-        font-size: 13px;
+        width: 36px;
+        height: 36px;
+        min-height: 36px;
+        padding: 0;
+        font-size: 15px;
+        margin-left: 0;
     }
 
     .ai-result {
@@ -2739,6 +2774,10 @@ body {
         padding: 16px 12px;
         padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
         font-size: 12px;
+    }
+
+    .footer-meta {
+        gap: 8px 12px;
     }
 
     /* Results: extra bottom padding for nav */

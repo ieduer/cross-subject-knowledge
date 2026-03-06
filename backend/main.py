@@ -64,7 +64,8 @@ faiss_manifest = None
 # Canonical external AI gateway for this project: Worker custom domain -> service `apis` / production.
 AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "https://ai.bdfz.net/")
 AI_SERVICE_LABEL = os.getenv("AI_SERVICE_LABEL", "Gemini")
-AI_SERVICE_TIMEOUT = float(os.getenv("AI_SERVICE_TIMEOUT_SEC", "60"))
+AI_SERVICE_TIMEOUT = float(os.getenv("AI_SERVICE_TIMEOUT_SEC", "25"))
+AI_SERVICE_MODEL = os.getenv("AI_SERVICE_MODEL", "gemini-flash-latest").strip() or "gemini-flash-latest"
 AI_SERVICE_ORIGIN = os.getenv("AI_SERVICE_ORIGIN", "https://sun.bdfz.net").rstrip("/")
 AI_SERVICE_REFERER = os.getenv("AI_SERVICE_REFERER", f"{AI_SERVICE_ORIGIN}/")
 AI_SERVICE_USER_AGENT = os.getenv(
@@ -951,6 +952,7 @@ def _build_chat_prompt(query: str, user_message: str, context_payload: dict, his
 def _call_ai_service(prompt: str) -> dict:
     payload_obj = {
         "prompt": prompt,
+        "model": AI_SERVICE_MODEL,
         "taskType": AI_SERVICE_TASK_TYPE,
         "thinkingLevel": AI_SERVICE_THINKING_LEVEL,
     }

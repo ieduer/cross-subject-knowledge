@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.03.06-r10",
+  "frontend_refactor_version": "2026.03.06-r11",
   "updated_at": "2026-03-06",
   "history": [
+    {
+      "version": "2026.03.06-r11",
+      "date": "2026-03-06",
+      "summary": "AI chat now pins the stable worker model, handles gateway HTML failures safely, removes recent searches, and folds feedback links into the footer"
+    },
     {
       "version": "2026.03.06-r10",
       "date": "2026-03-06",
