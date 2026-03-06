@@ -124,6 +124,8 @@ CHAT_STOPWORDS = {
 CHAT_HISTORY_MAX_MESSAGES = max(2, int(os.getenv("CHAT_HISTORY_MAX_MESSAGES", "6")))
 CHAT_HISTORY_TRUNCATED_CHARS = max(200, int(os.getenv("CHAT_HISTORY_TRUNCATED_CHARS", "600")))
 CHAT_HISTORY_FULL_TAIL_MESSAGES = max(2, int(os.getenv("CHAT_HISTORY_FULL_TAIL_MESSAGES", "4")))
+MATCH_PHRASE_MAX_WINDOW = max(2, int(os.getenv("MATCH_PHRASE_MAX_WINDOW", "6")))
+CHAT_BOOK_QUOTA_PER_BOOK = max(1, int(os.getenv("CHAT_BOOK_QUOTA_PER_BOOK", "2")))
 
 
 def _compute_vector_source_fingerprint(text_limit: int) -> tuple[Optional[int], Optional[str]]:
@@ -320,7 +322,7 @@ def _segment_text_tokens(text: str) -> list[str]:
     return re.findall(r"[A-Za-z0-9+\-./]+|[\u0370-\u03ff]+|[\u4e00-\u9fff]+", normalized)
 
 
-def _build_token_phrases(tokens: list[str], max_window: int = 4) -> set[str]:
+def _build_token_phrases(tokens: list[str], max_window: int = MATCH_PHRASE_MAX_WINDOW) -> set[str]:
     phrases = set()
     token_count = len(tokens)
     for start in range(token_count):
@@ -346,9 +348,7 @@ def _concept_matches_text(concept: str, normalized_text: str, phrase_set: set[st
     if not concept:
         return False
     if _contains_chinese(concept):
-        if concept in phrase_set:
-            return True
-        return len(concept) >= 4 and concept in normalized_text
+        return concept in phrase_set
     return bool(_compile_non_cjk_term_pattern(concept).search(normalized_text))
 
 
@@ -921,6 +921,55 @@ def _fetch_ai_gaokao_rows_for_terms(con, terms: list[str], limit: int) -> list[d
     return rows[:limit]
 
 
+def _apply_chat_book_diversity(rows: list[dict], *, limit: int, quota_per_book: int = CHAT_BOOK_QUOTA_PER_BOOK) -> list[dict]:
+    if not rows:
+        return []
+
+    selected = []
+    selected_ids = set()
+    per_book_counts = Counter()
+    grouped_rows: dict[str, list[dict]] = {}
+    for row in rows:
+        book_key = row.get("book_key") or f"id:{row.get('id')}"
+        grouped_rows.setdefault(book_key, []).append(row)
+
+    # Pass 1: maximize book diversity first.
+    for book_rows in grouped_rows.values():
+        row = book_rows[0]
+        selected.append(row)
+        selected_ids.add(row.get("id"))
+        book_key = row.get("book_key") or f"id:{row.get('id')}"
+        per_book_counts[book_key] += 1
+        if len(selected) >= limit:
+            return selected[:limit]
+
+    # Pass 2: fill remaining slots while respecting the per-book quota.
+    for book_key, book_rows in grouped_rows.items():
+        for row in book_rows[1:]:
+            if row.get("id") in selected_ids:
+                continue
+            if per_book_counts[book_key] >= quota_per_book:
+                continue
+            selected.append(row)
+            selected_ids.add(row.get("id"))
+            per_book_counts[book_key] += 1
+            if len(selected) >= limit:
+                break
+        if len(selected) >= limit:
+            break
+
+    # Pass 3: if we still don't have enough, allow overflow rows back in.
+    if len(selected) < limit:
+        for row in rows:
+            if row.get("id") in selected_ids:
+                continue
+            selected.append(row)
+            selected_ids.add(row.get("id"))
+            if len(selected) >= limit:
+                break
+    return selected[:limit]
+
+
 def _fetch_chat_rows_for_terms(con, terms: list[str], *, source: str, limit: int):
     rows = []
     existing_ids = set()
@@ -940,7 +989,7 @@ def _fetch_chat_rows_for_terms(con, terms: list[str], *, source: str, limit: int
             existing_ids.add(row_id)
 
     rows.sort(key=lambda item: (item["rank"], item.get("_term_index", 0), item["id"]))
-    return rows[:limit]
+    return _apply_chat_book_diversity(rows, limit=limit)
 
 
 def _build_chat_context_payload(con, query: str, user_message: str, history: list[dict] | None = None) -> dict:
@@ -968,8 +1017,9 @@ def _build_chat_context_payload(con, query: str, user_message: str, history: lis
     groups = []
     evidence = []
     for subject, subject_rows in sorted(by_subject.items(), key=lambda item: len(item[1]), reverse=True)[:4]:
+        diverse_rows = _apply_chat_book_diversity(subject_rows, limit=max(2, len(subject_rows)))
         selected = []
-        for row in subject_rows[:2]:
+        for row in diverse_rows[:2]:
             logical_page = row["logical_page"] if row["logical_page"] is not None else row["section"]
             snippet = _compose_chunk_snippet(row.get("ai_summary"), row.get("text"), limit=180)
             citation = f"[{subject}·{row['title']}·p{logical_page}]"
