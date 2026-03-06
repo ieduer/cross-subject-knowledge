@@ -100,9 +100,16 @@
     ├── HTTPS → img.rdfzer.com (Cloudflare R2 CDN)
     │           └── 87,156 张教材原图（3.4GB，全球加速，免费出站）
     │
-    └── HTTPS → ai.bdfz.net (Cloudflare Worker)
-                └── Gemini API → AI 跨学科综合解读
+    └── HTTPS → ai.bdfz.net (Cloudflare Worker custom domain)
+                └── service: apis / production → Gemini API 最大 key 池
 ```
+
+### AI 网关约定
+
+- 本项目外部 AI 入口统一使用 `https://ai.bdfz.net/`
+- `ai.bdfz.net` 是 Cloudflare Worker custom domain，实际绑定到 service `apis` / `production`
+- 在 Cloudflare Dashboard 里看到的 `apis` 是服务名，不是这个项目应优先暴露给用户的 canonical 域名
+- 详细说明见 [docs/ai_gateway_rule.md](docs/ai_gateway_rule.md)
 
 ### Docker 内容
 
@@ -365,7 +372,7 @@ certbot --nginx -d your-domain.com
 | 知识图谱 | D3.js v7 | 力导向交互式图谱（缩放/拖拽/悬停） |
 | 公式渲染 | KaTeX | LaTeX 数学公式 |
 | 图片 CDN | Cloudflare R2 | `img.rdfzer.com` |
-| AI 解读 | Gemini (via Cloudflare Worker) | `ai.bdfz.net` |
+| AI 解读 | Gemini (via Cloudflare Worker service `apis` / `production`) | `ai.bdfz.net`（custom domain） |
 | 容器 | Docker | 单文件部署 |
 | 数据备份 | rclone → Google Drive / R2 | |
 

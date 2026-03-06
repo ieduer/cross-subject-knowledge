@@ -23,7 +23,7 @@
     <script defer src="https://unpkg.com/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
 
-    <link rel="stylesheet" href="assets/style.css?v=20260305c">
+    <link rel="stylesheet" href="assets/style.css?v=20260306f">
 </head>
 
 <body>
@@ -115,6 +115,7 @@
                     </button>
                     <button id="ai-copy-btn" class="ai-copy-btn hidden" type="button">📋 复制全部对话</button>
                 </div>
+                <div id="ai-starters" class="ai-starters"></div>
                 <div id="ai-result" class="ai-result hidden">
                     <div class="ai-result-header">
                         <span>✨ AI 跨学科对话</span>
@@ -140,7 +141,7 @@
         <main id="view-gaokao" class="view">
             <section class="gaokao-hero">
                 <h2>📝 高考真题库</h2>
-                <p class="gaokao-hero-sub">2010-2023 · 全国卷及地方卷 · 3,840 道真题（含 897 道图表多模态题） · 发现教材与真题的隐性关联</p>
+                <p id="gk-hero-sub" class="gaokao-hero-sub">真题库统计加载中…</p>
             </section>
 
             <!-- Gaokao Filters -->
@@ -274,11 +275,9 @@
                 </div>
                 <div class="about-card">
                     <h3>📊 数据规模</h3>
-                    <p><strong>316 本</strong>高中教材（人教版），使用 <a href="https://github.com/opendatalab/MinerU"
-                            target="_blank">MinerU</a>
-                        (55k⭐) GPU 加速 OCR，提取结构化 Markdown（含表格、公式、图片）。</p>
-                    <p>全文检索基于 SQLite FTS5，<strong>69,818 条</strong>结构化语料（含 3,840 道高考真题），覆盖 <strong>9 个学科</strong>。</p>
-                    <p>AI 跨学科解读由 <strong>Gemini</strong> 提供。</p>
+                    <p id="about-scale-text"><strong>教材规模加载中…</strong></p>
+                    <p id="about-corpus-text">结构化语料规模加载中…</p>
+                    <p id="about-ai-text">AI 与检索底座状态加载中…</p>
                 </div>
 
                 <div class="about-card">
@@ -304,7 +303,7 @@
             <p id="footer-version-line">AI 高中教材 · 开源项目 · MIT License · 前端版本加载中…</p>
         </footer>
     </div>
-    <script src="assets/app.js?v=20260305c"></script>
+    <script src="assets/app.js?v=20260306f"></script>
 </body>
 
 </html>

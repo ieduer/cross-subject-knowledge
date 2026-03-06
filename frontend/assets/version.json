@@ -1,7 +1,32 @@
 {
-  "frontend_refactor_version": "2026.03.05-r1",
-  "updated_at": "2026-03-05",
+  "frontend_refactor_version": "2026.03.06-r7",
+  "updated_at": "2026-03-06",
   "history": [
+    {
+      "version": "2026.03.06-r7",
+      "date": "2026-03-06",
+      "summary": "AI chat now uses precomputed gaokao analysis and textbook summaries; gaokao link panels prioritize precomputed refs before live retrieval"
+    },
+    {
+      "version": "2026.03.06-r6",
+      "date": "2026-03-06",
+      "summary": "AI chat now expands retrieval with synonym aliases and relation hints; graph edges expose AI relation labels in tooltips"
+    },
+    {
+      "version": "2026.03.06-r5",
+      "date": "2026-03-06",
+      "summary": "AI gateway clarified to use Worker custom domain ai.bdfz.net bound to service apis/production; docs and defaults aligned"
+    },
+    {
+      "version": "2026.03.06-r3",
+      "date": "2026-03-06",
+      "summary": "multi-turn chat term routing, browser-fallback AI telemetry, search counts aligned to visible results"
+    },
+    {
+      "version": "2026.03.06-r2",
+      "date": "2026-03-06",
+      "summary": "server-side grounded chat orchestration, evidence-first result badges, live stats-driven gaokao/about UI, richer gaokao AI analysis"
+    },
     {
       "version": "2026.03.05-r1",
       "date": "2026-03-05",

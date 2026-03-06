@@ -1,11 +1,14 @@
 /* ── Cross-Subject Knowledge Platform · Frontend ── */
 
 const API = '';  // same origin
+// Canonical external AI gateway for this project: Worker custom domain -> service `apis` / production.
 const AI_API = 'https://ai.bdfz.net/';
 const IMG_CDN = 'https://img.rdfzer.com';
-const DEFAULT_FRONTEND_VERSION = 'refactor-2026.03.05-r1';
+const DEFAULT_FRONTEND_VERSION = 'refactor-2026.03.06-r6';
 const FRONTEND_VERSION_FILE = '/assets/version.json';
 const AI_MEMORY_LIMIT = 12;
+let latestStats = null;
+let aiProviderLabel = 'Gemini';
 
 // ── AI Chat (Memory + Copy) ───────────────────────────────
 const aiPanel = document.getElementById('ai-panel');
@@ -15,6 +18,7 @@ const aiContent = document.getElementById('ai-content');
 const aiFollowupInput = document.getElementById('ai-followup-input');
 const aiSendBtn = document.getElementById('ai-send-btn');
 const aiCopyBtn = document.getElementById('ai-copy-btn');
+const aiStarters = document.getElementById('ai-starters');
 
 let aiConversation = [];
 let aiRequestPending = false;
@@ -31,25 +35,90 @@ if (aiFollowupInput) {
     });
 }
 
-function buildAIContext(groups) {
-    return groups.map(g => {
-        const snippets = (g.results || []).slice(0, 3).map(r =>
-            `[${g.subject}·${r.title}·p${r.logical_page ?? r.section}] ${String(r.text || '').slice(0, 280)}`
-        ).join('\n');
-        return `【${g.subject}】（${g.count}条）\n${snippets}`;
-    }).join('\n\n');
+function setSearchAIProviderLabel(label) {
+    aiProviderLabel = label || 'Gemini';
+    const badge = document.querySelector('#ai-result .ai-model');
+    if (badge) badge.textContent = aiProviderLabel;
 }
 
-function buildAIPrompt(userMessage, groups, history) {
-    const context = buildAIContext(groups);
-    const historyText = history.length > 0
-        ? history.map(msg => `${msg.role === 'user' ? '用户' : '助手'}: ${msg.content}`).join('\n')
-        : '（无）';
+function logClientAIChat({ query, userMessage, summary, provider, success, error }) {
+    fetch(`${API}/api/chat/log`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            query,
+            user_message: userMessage,
+            summary: summary || {},
+            provider: provider || aiProviderLabel,
+            success: Boolean(success),
+            error: error || '',
+        }),
+    }).catch(() => {});
+}
 
-    return `你是一位资深跨学科教育专家。用户当前搜索词是「${currentQuery}」。
+function renderAIStarters() {
+    if (!aiStarters) return;
+    const subjectCount = Object.keys(currentData?.subject_counts || {}).length;
+    if (!currentQuery || subjectCount < 2) {
+        aiStarters.innerHTML = '';
+        aiStarters.classList.add('hidden');
+        return;
+    }
+    const starters = [
+        `请先解释「${currentQuery}」在不同学科里的共同核心。`,
+        `「${currentQuery}」在高考里最常见的考法是什么？`,
+        `围绕「${currentQuery}」最容易混淆的概念有哪些？`,
+        `如果我要复习「${currentQuery}」，应该按什么顺序串起来学？`,
+    ];
+    aiStarters.innerHTML = starters.map(text => `
+        <button class="ai-starter-chip" type="button" data-prompt="${escAttr(text)}">${escHtml(text)}</button>
+    `).join('');
+    aiStarters.classList.remove('hidden');
+    aiStarters.querySelectorAll('.ai-starter-chip').forEach(btn => {
+        btn.addEventListener('click', () => sendAIMessage(btn.dataset.prompt));
+    });
+}
 
-教材上下文（多学科原文）：
-${context}
+async function fetchAIContext(userMessage, history) {
+    const res = await fetch(`${API}/api/chat/context`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            query: currentQuery,
+            user_message: userMessage,
+            history,
+        }),
+    });
+    if (!res.ok) {
+        throw new Error(`上下文构建失败 (${res.status})`);
+    }
+    return await res.json();
+}
+
+function buildClientAIPrompt(userMessage, contextPayload, history) {
+    const historyText = (contextPayload.history_text || '').trim()
+        || history.map(msg => `${msg.role === 'user' ? '用户' : '助手'}: ${msg.content}`).join('\n')
+        || '（无）';
+
+    return `你是一位资深跨学科教育专家。用户当前搜索词是「${contextPayload.query || currentQuery}」。
+
+本轮检索关注词：
+${(contextPayload.search_terms_used || [currentQuery]).join('、')}
+
+检索扩展词（含别名）：
+${(contextPayload.retrieval_terms_used || contextPayload.search_terms_used || [currentQuery]).join('、')}
+
+概念别名 / 同义表达：
+${contextPayload.alias_text || '（无）'}
+
+概念关系提示：
+${contextPayload.relation_text || '（无）'}
+
+教材证据（多学科原文）：
+${contextPayload.context_text || '（无）'}
+
+高考证据（如有）：
+${contextPayload.gaokao_text || '（无）'}
 
 历史对话：
 ${historyText}
@@ -57,11 +126,89 @@ ${historyText}
 用户本轮问题：
 ${userMessage}
 
-请按要求回答：
-1. 用高中生能理解的中文，先给结论再给理由，避免空泛。
-2. 回答中标注出处，格式：[学科·书名]。
-3. 如果用户追问，必须基于上文记忆连续回答，不重复整段前文。
-4. 若证据不足，明确说“证据不足”，并指出建议查看的学科/教材页。`;
+请按以下结构回答：
+【核心结论】先用 1-2 句讲清本质。
+【学科联动】分点说明不同学科如何描述同一概念，尽量标注出处，格式：[学科·书名·p页码]。
+【高考考法】如果给定证据里有真题，再说明常见考法 / 易错点；没有就写“高考证据不足”。
+【学习建议】给出面向高中生的复习顺序或追问方向。
+
+规则：
+1. 只根据给定证据回答，不要编造页码或教材内容。
+2. 如果证据不足，必须明确说“证据不足”。
+3. 若用户追问，保持连续回答，不重复整段前文。
+4. 可以参考“概念别名 / 关系提示”组织答案，但不能把它们当成教材原文引用。
+5. 语言简洁、具体，避免空泛套话。`;
+}
+
+function bindOpenPageButtons(root, selector = '.ai-source-chip') {
+    if (!root) return;
+    root.querySelectorAll(selector).forEach(btn => {
+        btn.addEventListener('click', () => {
+            const bookKey = btn.dataset.bookKey;
+            const page = Number(btn.dataset.page || 0);
+            const totalPages = Number(btn.dataset.totalPages || 0);
+            if (bookKey) {
+                openPageViewer(bookKey, page, totalPages);
+            }
+        });
+    });
+}
+
+function renderAIContextSummary(summary) {
+    if (!summary) return '';
+    const searchTerms = summary.search_terms_used || [];
+    const retrievalTerms = (summary.retrieval_terms_used || []).filter(term => !searchTerms.includes(term));
+    const tags = [
+        ...searchTerms.map(term =>
+            `<span class="ai-context-tag search">检索 ${escHtml(term)}</span>`
+        ),
+        ...retrievalTerms.slice(0, 4).map(term =>
+            `<span class="ai-context-tag retrieval">扩展 ${escHtml(term)}</span>`
+        ),
+        ...(summary.top_subjects || []).map(item =>
+            `<span class="ai-context-tag">${escHtml(item.subject)} ${item.count}</span>`
+        ),
+        summary.relation_hint_count > 0
+            ? `<span class="ai-context-tag relation">关系 ${summary.relation_hint_count}</span>`
+            : '',
+        summary.gaokao_hit_count > 0
+            ? `<span class="ai-context-tag exam">真题 ${summary.gaokao_hit_count}</span>`
+            : '',
+    ].filter(Boolean);
+
+    return `
+        <div class="ai-msg-context">
+            <div class="ai-context-line">${escHtml(summary.coverage_line || '')}</div>
+            ${tags.length ? `<div class="ai-context-tags">${tags.join('')}</div>` : ''}
+        </div>
+    `;
+}
+
+function renderAISources(sources) {
+    if (!sources || !sources.length) return '';
+    return `
+        <div class="ai-msg-sources">
+            ${sources.slice(0, 6).map(src => `
+                <button class="ai-source-chip" type="button"
+                    data-book-key="${escAttr(src.book_key || '')}"
+                    data-page="${src.section ?? 0}"
+                    data-total-pages="${src.total_pages ?? 0}">
+                    ${escHtml(src.citation || `${src.subject}·${src.title}`)}
+                </button>
+            `).join('')}
+        </div>
+    `;
+}
+
+function renderAIFollowups(prompts) {
+    if (!prompts || !prompts.length) return '';
+    return `
+        <div class="ai-msg-followups">
+            ${prompts.slice(0, 4).map(prompt => `
+                <button class="ai-followup-chip" type="button" data-prompt="${escAttr(prompt)}">${escHtml(prompt)}</button>
+            `).join('')}
+        </div>
+    `;
 }
 
 function renderAIConversation() {
@@ -70,12 +217,20 @@ function renderAIConversation() {
         aiContent.innerHTML = '';
         return;
     }
-    aiContent.innerHTML = aiConversation.map(msg => `
+    aiContent.innerHTML = aiConversation.map((msg, index) => `
         <div class="ai-msg ${msg.role === 'user' ? 'user' : 'assistant'}">
             <div class="ai-msg-role">${msg.role === 'user' ? '你' : 'AI'}</div>
+            ${msg.role === 'assistant' ? renderAIContextSummary(msg.contextSummary) : ''}
             <div class="ai-msg-text">${escHtml(msg.content)}</div>
+            ${msg.role === 'assistant' ? renderAISources(msg.sources) : ''}
+            ${msg.role === 'assistant' && index === aiConversation.length - 1 ? renderAIFollowups(msg.followups) : ''}
         </div>
-    `).join('') + `<span class="ai-source">📡 由 Gemini 生成 · 数据来源：${Object.keys(currentData?.subject_counts || {}).length} 个学科教材</span>`;
+    `).join('') + `<span class="ai-source">📡 由 ${escHtml(aiProviderLabel)} 生成 · 数据来源：${Object.keys(currentData?.subject_counts || {}).length} 个学科教材</span>`;
+
+    bindOpenPageButtons(aiContent, '.ai-source-chip');
+    aiContent.querySelectorAll('.ai-followup-chip').forEach(btn => {
+        btn.addEventListener('click', () => sendAIMessage(btn.dataset.prompt));
+    });
 }
 
 function setAIBusy(isBusy) {
@@ -96,6 +251,7 @@ function resetAIConversation() {
     if (aiResult) aiResult.classList.add('hidden');
     if (aiFollowupInput) aiFollowupInput.value = '';
     if (aiCopyBtn) aiCopyBtn.classList.add('hidden');
+    renderAIStarters();
 }
 
 async function sendAIMessage(userMessage) {
@@ -106,7 +262,6 @@ async function sendAIMessage(userMessage) {
     if (!cleanMessage) return;
 
     const history = aiConversation.slice(-8);
-    const prompt = buildAIPrompt(cleanMessage, groups, history);
 
     aiConversation.push({ role: 'user', content: cleanMessage });
     if (aiConversation.length > AI_MEMORY_LIMIT) {
@@ -119,18 +274,70 @@ async function sendAIMessage(userMessage) {
 
     setAIBusy(true);
     try {
-        const res = await fetch(AI_API, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt }),
-        });
-        const data = await res.json();
+        let answer = '';
+        let contextPayload = null;
+        let usedBrowserFallback = false;
 
-        if (data.answer) {
-            aiConversation.push({ role: 'assistant', content: data.answer });
-        } else {
-            aiConversation.push({ role: 'assistant', content: `AI 服务暂时不可用: ${data.error || 'unknown error'}` });
+        try {
+            const res = await fetch(`${API}/api/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    query: currentQuery,
+                    user_message: cleanMessage,
+                    history,
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.detail || `AI 对话失败 (${res.status})`);
+            }
+            answer = data.answer || '';
+            contextPayload = data.context || {};
+            setSearchAIProviderLabel(data.provider || aiProviderLabel);
+        } catch (serverChatError) {
+            console.warn('Server-side chat failed, falling back to direct AI call.', serverChatError);
+            const fullContext = await fetchAIContext(cleanMessage, history);
+            const prompt = buildClientAIPrompt(cleanMessage, fullContext, history);
+            const aiRes = await fetch(AI_API, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt }),
+            });
+            const aiData = await aiRes.json();
+            if (!aiRes.ok || !aiData.answer) {
+                throw new Error(aiData.error || serverChatError.message || `AI 服务错误 (${aiRes.status})`);
+            }
+            answer = aiData.answer;
+            contextPayload = {
+                summary: fullContext.summary || null,
+                suggested_questions: fullContext.suggested_questions || [],
+                evidence: fullContext.evidence || [],
+            };
+            usedBrowserFallback = true;
+            setSearchAIProviderLabel('Gemini · 浏览器直连');
         }
+
+        if (usedBrowserFallback) {
+            logClientAIChat({
+                query: currentQuery,
+                userMessage: cleanMessage,
+                summary: contextPayload?.summary || {},
+                provider: aiProviderLabel,
+                success: true,
+            });
+        }
+
+        aiConversation.push({
+            role: 'assistant',
+            content: answer,
+            contextSummary: contextPayload?.summary || null,
+            followups: (contextPayload?.suggested_questions || []).filter(prompt => prompt !== cleanMessage),
+            sources: (contextPayload?.evidence || []).map(src => ({
+                ...src,
+                total_pages: (window._bookPages && window._bookPages[src.book_key]?.pages) || 0,
+            })),
+        });
     } catch (e) {
         aiConversation.push({ role: 'assistant', content: `请求失败: ${e.message}` });
     } finally {
@@ -450,8 +657,13 @@ function renderResults(data, filterSubject = null) {
     const subjectCount = Object.keys(data.subject_counts || {}).length;
     if (subjectCount >= 2 && !filterSubject) {
         aiPanel.classList.remove('hidden');
+        renderAIStarters();
     } else {
         aiPanel.classList.add('hidden');
+        if (aiStarters) {
+            aiStarters.innerHTML = '';
+            aiStarters.classList.add('hidden');
+        }
     }
 
     // Subject tabs
@@ -512,7 +724,7 @@ function renderResults(data, filterSubject = null) {
                         ${r.image_count > 0 ? `<span class="img-badge">📷 ${r.image_count}</span>` : ''}
                         ${r.page_url ? `<span class="page-badge" title="第 ${r.page_num} 页 / 共 ${r.total_pages} 页">📄 p${r.logical_page ?? r.page_num}</span>` : ''}
                     </div>
-                    ${renderConfidenceAndPath(r, g.subject, subjectBreadth, data.query)}
+                    ${renderEvidenceTrace(r, g.subject, subjectBreadth, data.query)}
                     <div class="result-snippet">${sanitizeSnippet(r.snippet)}</div>
                     <div class="result-text">${renderText(r.text, r.book_key)}</div>
                     ${r.page_url ? `<div class="result-actions">
@@ -540,26 +752,36 @@ function getSubjectIcon(s) {
     return map[s] || '📚';
 }
 
-function renderConfidenceAndPath(result, subject, subjectBreadth, query) {
-    let level = 'low';
-    let label = '中';
-    let score = 0.72;
-
-    if (result.page_url && result.match_channel === 'exact') {
-        level = 'high';
-        label = '高';
-        score = 0.93;
-    } else if (result.match_channel === 'exact' || result.image_count > 0) {
-        level = 'mid';
-        label = '中高';
-        score = 0.84;
+function renderEvidenceTrace(result, subject, subjectBreadth, query) {
+    const evidenceChips = [];
+    if (result.match_channel === 'exact') {
+        evidenceChips.push('<span class="evidence-chip strong">原文精确命中</span>');
+    } else {
+        evidenceChips.push('<span class="evidence-chip semantic">FTS / 语义召回</span>');
     }
 
-    const scorePct = Math.round(score * 100);
+    if (result.page_url) {
+        evidenceChips.push(`<span class="evidence-chip page">可回原页 p${result.logical_page ?? result.page_num}</span>`);
+    } else {
+        evidenceChips.push('<span class="evidence-chip neutral">仅片段证据</span>');
+    }
+
+    if (result.source === 'gaokao') {
+        evidenceChips.push(
+            `<span class="evidence-chip exam">${escHtml([result.year, result.category].filter(Boolean).join(' · ') || '高考真题')}</span>`
+        );
+    } else {
+        evidenceChips.push('<span class="evidence-chip textbook">教材原文</span>');
+    }
+
+    if (result.image_count > 0) {
+        evidenceChips.push(`<span class="evidence-chip media">含 ${result.image_count} 张图</span>`);
+    }
+
     return `
         <div class="result-trace">
-            <span class="confidence-badge ${level}">可信度 ${label} · ${scorePct}%</span>
-            <span class="relation-path">路径：${escHtml(query)} → ${escHtml(subject)} → ${subjectBreadth} 科关联</span>
+            <div class="evidence-chips">${evidenceChips.join('')}</div>
+            <span class="relation-path">检索路径：${escHtml(query)} → ${escHtml(subject)} · 覆盖 ${subjectBreadth} 科</span>
         </div>
     `;
 }
@@ -924,7 +1146,9 @@ function renderGraphNew(data, container, mode) {
     const linkData = rawLinks.map(l => ({
         source: l.source,
         target: l.target,
-        weight: l.weight || 1
+        weight: l.weight || 1,
+        relation: l.relation || '',
+        description: l.description || ''
     })).filter(l => nodeMap[l.source] && nodeMap[l.target]);
 
     const allNodes = [...subjectNodes, ...conceptNodes];
@@ -995,6 +1219,37 @@ function renderGraphNew(data, container, mode) {
             return Math.max(1, Math.min(4, Math.log2((d.weight || 1) + 1)));
         })
         .attr('stroke-opacity', 0.3);
+
+    link.on('mouseenter', function (event, d) {
+        if (!d.relation && !d.description) return;
+        const sourceId = d.source?.id || d.source;
+        const targetId = d.target?.id || d.target;
+        const info = [
+            `<strong>${escHtml(sourceId)} ↔ ${escHtml(targetId)}</strong>`,
+            d.relation ? `<div class="graph-tooltip-meta">${escHtml(d.relation)}</div>` : '',
+            d.description ? `<div>${escHtml(d.description)}</div>` : ''
+        ].filter(Boolean).join('');
+        tooltip.html(info)
+            .style('display', 'block')
+            .style('left', (event.offsetX + 15) + 'px')
+            .style('top', (event.offsetY - 10) + 'px');
+        d3.select(this)
+            .attr('stroke-opacity', 0.85)
+            .attr('stroke-width', Math.max(2, Math.min(5, (d.weight || 1) + 1)));
+    }).on('mousemove', function (event, d) {
+        if (!d.relation && !d.description) return;
+        tooltip.style('left', (event.offsetX + 15) + 'px')
+            .style('top', (event.offsetY - 10) + 'px');
+    }).on('mouseleave', function (event, d) {
+        if (!d.relation && !d.description) return;
+        tooltip.style('display', 'none');
+        d3.select(this)
+            .attr('stroke-opacity', 0.3)
+            .attr('stroke-width', () => {
+                if (mode === 'cross') return 1;
+                return Math.max(1, Math.min(4, Math.log2((d.weight || 1) + 1)));
+            });
+    });
 
     // Draw nodes
     const node = zoomGroup.append('g')
@@ -1142,6 +1397,52 @@ function renderGraphNew(data, container, mode) {
 }
 
 // ── Init: Load stats ──────────────────────────────────────
+function applyLiveStatsToUI(data) {
+    latestStats = data;
+    setSearchAIProviderLabel(data.ai_model || aiProviderLabel);
+
+    const heroSub = document.getElementById('hero-sub');
+    if (heroSub) {
+        const nSubjects = data.subjects_count || (data.subjects || []).length;
+        const nTotal = (data.total_chunks || 0).toLocaleString();
+        const nGaokao = (data.gaokao_chunks || 0).toLocaleString();
+        heroSub.textContent = `覆盖高中 ${nSubjects} 科 · ${nTotal} 条结构化语料 · ${nGaokao} 道高考真题`;
+    }
+
+    const gaokaoHeroSub = document.getElementById('gk-hero-sub');
+    if (gaokaoHeroSub) {
+        const [startYear, endYear] = data.gaokao_year_range || [];
+        const yearRange = startYear && endYear ? `${startYear}-${endYear}` : '历年';
+        const nGaokao = (data.gaokao_chunks || 0).toLocaleString();
+        const nTextbook = (data.textbook_chunks || 0).toLocaleString();
+        const multimodal = data.gaokao_multimodal ? ` · ${data.gaokao_multimodal.toLocaleString()} 道含图题` : '';
+        gaokaoHeroSub.textContent = `${yearRange} · ${nGaokao} 道真题${multimodal} · 与 ${nTextbook} 条教材语料联动检索`;
+    }
+
+    const aboutScaleText = document.getElementById('about-scale-text');
+    if (aboutScaleText) {
+        const nBooks = (data.textbook_books || 0).toLocaleString();
+        aboutScaleText.innerHTML = `<strong>${nBooks}</strong> 本高中教材（人教版），使用 <a href="https://github.com/opendatalab/MinerU" target="_blank">MinerU</a> GPU 加速 OCR，提取结构化 Markdown（含表格、公式、图片）。`;
+    }
+
+    const aboutCorpusText = document.getElementById('about-corpus-text');
+    if (aboutCorpusText) {
+        const nTotal = (data.total_chunks || 0).toLocaleString();
+        const nTextbook = (data.textbook_chunks || 0).toLocaleString();
+        const nGaokao = (data.gaokao_chunks || 0).toLocaleString();
+        const nSubjects = data.subjects_count || (data.subjects || []).length;
+        aboutCorpusText.innerHTML = `全文检索基于 SQLite FTS5，<strong>${nTotal}</strong> 条结构化语料（教材 ${nTextbook} / 真题 ${nGaokao}），覆盖 <strong>${nSubjects}</strong> 个学科。`;
+    }
+
+    const aboutAiText = document.getElementById('about-ai-text');
+    if (aboutAiText) {
+        const faissPart = data.faiss_enabled
+            ? `FAISS 已启用（${(data.faiss_vectors || 0).toLocaleString()} 条教材向量）`
+            : 'FAISS 当前未启用';
+        aboutAiText.textContent = `AI 跨学科解读由 ${data.ai_model || aiProviderLabel} 提供；检索底座为 SQLite FTS5 + ${faissPart}。`;
+    }
+}
+
 (async function init() {
     try {
         const res = await fetch(`${API}/api/stats`);
@@ -1151,16 +1452,7 @@ function renderGraphNew(data, container, mode) {
             `<div class="stat-chip">${s.icon} ${s.name} <span class="count">${s.count.toLocaleString()}</span></div>`
         ).join('');
         el.classList.remove('hidden');
-
-        // Update hero subtitle with live stats
-        const heroSub = document.getElementById('hero-sub');
-        if (heroSub) {
-            const nSubjects = data.subjects.length;
-            const nTextbook = (data.textbook_chunks || 0).toLocaleString();
-            const nGaokao = (data.gaokao_chunks || 0).toLocaleString();
-            const nTotal = (data.total_chunks || 0).toLocaleString();
-            heroSub.textContent = `覆盖高中 ${nSubjects} 科 · ${nTotal} 条结构化语料 · ${nGaokao} 道高考真题`;
-        }
+        applyLiveStatsToUI(data);
     } catch (e) { /* silent */ }
 })();
 
@@ -1314,7 +1606,9 @@ async function findTextbookLinks(questionId) {
                 l.relevance_score >= 40 ? '#f39c12' : '#95a5a6';
             const typeLabel = l.link_type === 'implicit'
                 ? '<span class="link-type-tag implicit">🔮 隐性关联</span>'
-                : '<span class="link-type-tag explicit">📌 显性关联</span>';
+                : l.link_type === 'precomputed'
+                    ? '<span class="link-type-tag precomputed">⚡ 预计算</span>'
+                    : '<span class="link-type-tag explicit">📌 显性关联</span>';
             const conceptTags = (l.matched_concepts || []).map(c =>
                 `<span class="concept-tag">${escHtml(c)}</span>`
             ).join('');
@@ -1339,7 +1633,7 @@ async function findTextbookLinks(questionId) {
 
         // Render matched concepts overview
         const conceptOverview = (data.matched_concepts || []).map(c => {
-            const crossIcon = c.is_cross ? '🌐' : '📘';
+            const crossIcon = c.source === 'precomputed' ? '⚡' : (c.is_cross ? '🌐' : '📘');
             const subjs = (c.subjects || []).join('·');
             return `<span class="matched-concept ${c.is_cross ? 'cross' : 'same'}" title="${subjs}">${crossIcon} ${escHtml(c.concept)}</span>`;
         }).join('');
@@ -1347,13 +1641,22 @@ async function findTextbookLinks(questionId) {
         const expandedInfo = (data.expanded_terms || []).length > 0
             ? `<div class="gk-expanded-terms">🔮 隐性扩展：${data.expanded_terms.map(t => `<span class="expanded-term">${escHtml(t)}</span>`).join(' ')}</div>`
             : '';
+        const precomputed = data.precomputed_analysis || null;
+        const precomputedInfo = precomputed ? `
+            <div class="gk-precomputed-analysis">
+                ${precomputed.summary ? `<div class="gk-precomputed-summary">⚡ 预计算结论：${escHtml(precomputed.summary)}</div>` : ''}
+                ${(precomputed.knowledge_points || []).length > 0 ? `<div class="gk-precomputed-tags">知识点：${precomputed.knowledge_points.map(t => `<span class="term-tag">${escHtml(t)}</span>`).join(' ')}</div>` : ''}
+                ${(precomputed.textbook_refs || []).length > 0 ? `<div class="gk-precomputed-refs">教材锚点：${precomputed.textbook_refs.map(t => `<span class="term-tag">${escHtml(t)}</span>`).join(' ')}</div>` : ''}
+            </div>
+        ` : '';
 
         content.innerHTML = `
             <div class="gk-link-question">
                 <strong>${escHtml(data.question_title)}</strong>
                 ${conceptOverview ? `<div class="gk-matched-concepts">知识点匹配：${conceptOverview}</div>` : ''}
-                <span class="gk-link-terms">搜索关键词：${data.search_terms.map(t => `<span class="term-tag">${escHtml(t)}</span>`).join(' ')}</span>
+                <span class="gk-link-terms">搜索关键词：${(data.search_terms || []).map(t => `<span class="term-tag">${escHtml(t)}</span>`).join(' ') || '（无）'}</span>
                 ${expandedInfo}
+                ${precomputedInfo}
             </div>
             ${data.links && data.links.length > 0 ? `
                 <h4 class="gk-section-title">📚 同学科关联（${data.question_subject}）</h4>
@@ -1368,6 +1671,28 @@ async function findTextbookLinks(questionId) {
     } catch (e) {
         content.innerHTML = `<div class="loading">加载失败: ${e.message}</div>`;
     }
+}
+
+function buildGaokaoSourceContext(items, limit = 3) {
+    return (items || []).slice(0, limit).map(item =>
+        `[${item.subject}·${item.title}·§${item.section}] ${item.summary || (item.text || '').slice(0, 320)}`
+    ).join('\n\n');
+}
+
+function renderGaokaoAISources(items) {
+    if (!items || !items.length) return '';
+    return `
+        <div class="gk-ai-sources">
+            ${items.slice(0, 5).map(item => `
+                <button class="ai-source-chip gk-ai-source-chip" type="button"
+                    data-book-key="${escAttr(item.book_key || '')}"
+                    data-page="${item.section ?? 0}"
+                    data-total-pages="${(window._bookPages && window._bookPages[item.book_key]?.pages) || 0}">
+                    ${escHtml(`${item.subject}·${item.title}·§${item.section}`)}
+                </button>
+            `).join('')}
+        </div>
+    `;
 }
 
 async function requestGaokaoAI(questionId, btn) {
@@ -1385,32 +1710,54 @@ async function requestGaokaoAI(questionId, btn) {
     try {
         // First get the question and linked textbook content
         const linkRes = await fetch(`${API}/api/gaokao/link?question_id=${questionId}&limit=5`);
+        if (!linkRes.ok) {
+            throw new Error(`教材关联加载失败 (${linkRes.status})`);
+        }
         const linkData = await linkRes.json();
-
-        // Build context
-        const textbookContext = (linkData.links || []).map(l =>
-            `[【${l.subject}・${l.title}・§${l.section}】] ${(l.text || '').slice(0, 400)}`
-        ).join('\n\n');
 
         // Get question text from the card
         const card = document.querySelector(`.gaokao-card[data-id="${questionId}"]`);
         const questionText = card ? card.querySelector('.gk-question')?.textContent?.slice(0, 600) : '';
+        const matchedConcepts = (linkData.matched_concepts || []).map(item => item.concept).join('、') || '（未识别）';
+        const precomputedSummary = linkData.precomputed_analysis?.summary || '（无）';
+        const precomputedKnowledgePoints = (linkData.precomputed_analysis?.knowledge_points || []).join('、') || '（无）';
+        const precomputedRefs = (linkData.precomputed_analysis?.textbook_refs || []).join('；') || '（无）';
+        const sameSubjectContext = buildGaokaoSourceContext(linkData.links, 3);
+        const crossSubjectContext = buildGaokaoSourceContext(linkData.cross_links, 3);
+        const sourceItems = [...(linkData.links || []).slice(0, 3), ...(linkData.cross_links || []).slice(0, 2)];
 
         const prompt = `你是一位高考命题研究专家。请分析以下高考真题与教材内容之间的关系。
 
-【真题】
+【真题元数据】
+标题：${linkData.question_title || ''}
+学科：${linkData.question_subject || ''}
+年份：${linkData.question_year || '未知'}
+卷种：${linkData.question_category || '未知'}
+题型：${linkData.question_type === 'objective' ? '客观题' : linkData.question_type === 'subjective' ? '主观题' : '未知'}
+匹配概念：${matchedConcepts}
+预计算知识点：${precomputedKnowledgePoints}
+预计算结论：${precomputedSummary}
+预计算教材锚点：${precomputedRefs}
+
+【题干】
 ${questionText}
-年份: ${linkData.question_subject || ''}
 
-【相关教材内容】
-${textbookContext || '（未找到直接相关教材）'}
+【同学科教材证据】
+${sameSubjectContext || '（未找到直接同学科教材）'}
 
-请分析：
-1. 这道题直接考查了哪些教材知识点（显性关联）
-2. 解题还需要哪些容易忽视的知识（隐性关联）
-3. 相同知识点在不同学科教材中的表述差异
+【跨学科教材证据】
+${crossSubjectContext || '（未找到直接跨学科教材）'}
 
-要求：200字以内，语言简洁，面向高中生。`;
+请严格按以下小标题输出：
+显性关联：
+隐性关联：
+跨学科迁移：
+易错提醒：
+
+要求：
+1. 220 字以内，语言简洁，面向高中生。
+2. 只根据给定证据回答，不要编造教材内容。
+3. 如果跨学科证据不足，必须明确写“跨学科证据不足”。`;
 
         const aiRes = await fetch(AI_API, {
             method: 'POST',
@@ -1418,14 +1765,26 @@ ${textbookContext || '（未找到直接相关教材）'}
             body: JSON.stringify({ prompt }),
         });
         const aiData = await aiRes.json();
+        if (!aiRes.ok) {
+            throw new Error(aiData.error || `AI 服务错误 (${aiRes.status})`);
+        }
 
         if (aiData.answer) {
             resultEl.innerHTML = `
                 <div class="gk-ai-answer">
                     <div class="gk-ai-header">✨ AI 关联分析 <span class="ai-model">Gemini</span></div>
+                    <div class="gk-ai-meta">
+                        <span class="gk-ai-meta-chip">${escHtml(linkData.question_subject || '未知学科')}</span>
+                        <span class="gk-ai-meta-chip">${escHtml(String(linkData.question_year || '未知年份'))}</span>
+                        ${linkData.question_category ? `<span class="gk-ai-meta-chip">${escHtml(linkData.question_category)}</span>` : ''}
+                        <span class="gk-ai-meta-chip">同学科 ${linkData.links?.length || 0}</span>
+                        <span class="gk-ai-meta-chip">跨学科 ${linkData.cross_links?.length || 0}</span>
+                    </div>
                     <div class="gk-ai-text">${escHtml(aiData.answer)}</div>
+                    ${renderGaokaoAISources(sourceItems)}
                 </div>
             `;
+            bindOpenPageButtons(resultEl, '.gk-ai-source-chip');
             renderMath(resultEl);
         } else {
             resultEl.innerHTML = `<div class="loading">AI 服务暂时不可用</div>`;

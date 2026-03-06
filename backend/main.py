@@ -1,11 +1,12 @@
 """
 跨学科教材知识平台 · FastAPI 后端
 """
-import sqlite3, json, math, os, re, time, functools
+import sqlite3, json, math, os, re, time, functools, hashlib
+import urllib.request, urllib.error
 from collections import Counter
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Body
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -49,6 +50,7 @@ def _resolve_data_asset(filename: str) -> Path:
 DB_PATH = _resolve_data_asset("textbook_mineru_fts.db")
 FRONTEND = Path(__file__).parent.parent / "frontend"
 FAISS_INDEX_PATH = _resolve_data_asset("textbook_chunks.index")
+FAISS_MANIFEST_PATH = _resolve_data_asset("textbook_chunks.manifest.json")
 
 app = FastAPI(title="跨学科教材知识平台", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -57,36 +59,57 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 faiss_index = None
 embedder = None
 EMBEDDER_NAME = os.getenv("EMBEDDER", "BAAI/bge-m3")  # upgraded from bge-small-zh-v1.5
+faiss_status_reason = None
+faiss_manifest = None
+# Canonical external AI gateway for this project: Worker custom domain -> service `apis` / production.
+AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "https://ai.bdfz.net/")
+AI_SERVICE_LABEL = os.getenv("AI_SERVICE_LABEL", "Gemini")
+AI_SERVICE_TIMEOUT = float(os.getenv("AI_SERVICE_TIMEOUT_SEC", "60"))
+AI_SERVICE_ORIGIN = os.getenv("AI_SERVICE_ORIGIN", "https://sun.bdfz.net").rstrip("/")
+AI_SERVICE_REFERER = os.getenv("AI_SERVICE_REFERER", f"{AI_SERVICE_ORIGIN}/")
+AI_SERVICE_USER_AGENT = os.getenv(
+    "AI_SERVICE_USER_AGENT",
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/123.0.0.0 Safari/537.36"
+    ),
+)
+AI_SERVICE_PROJECT = os.getenv("AI_SERVICE_PROJECT", "").strip()
+AI_SERVICE_TASK_TYPE = os.getenv("AI_SERVICE_TASK_TYPE", "chat").strip() or "chat"
+AI_SERVICE_THINKING_LEVEL = os.getenv("AI_SERVICE_THINKING_LEVEL", "low").strip() or "low"
+AI_INTERNAL_TOKEN = os.getenv("AI_INTERNAL_TOKEN", "").strip()
+CHAT_STOPWORDS = {
+    "请", "先", "再", "继续", "解释", "一下", "分析", "总结", "说明", "告诉", "给我",
+    "这个", "这个概念", "这个问题", "它", "那", "哪些", "哪个", "什么", "为什么",
+    "怎么", "如何", "最", "常见", "共同", "核心", "关系", "区别", "联系", "如果",
+    "我要", "复习", "应该", "顺序", "串起来", "学习", "建议", "围绕", "容易", "混淆",
+    "还有", "以及", "一下子", "可以", "请问", "高考", "学科", "里的",
+}
 
-if FAISS_AVAILABLE and FAISS_INDEX_PATH.exists():
+
+def _compute_vector_source_fingerprint(text_limit: int) -> tuple[Optional[int], Optional[str]]:
     try:
-        print(f"Loading FAISS index from {FAISS_INDEX_PATH}...", flush=True)
-        raw_index = faiss.read_index(str(FAISS_INDEX_PATH))
-        d = raw_index.d  # vector dimension
-        n = raw_index.ntotal
-        # Auto-convert to HNSW for faster search
-        if n > 0 and n < 500_000 and not isinstance(raw_index, faiss.IndexHNSWFlat):
-            try:
-                print(f"Converting index ({type(raw_index).__name__}, {n} vectors, {d}D) to HNSW...", flush=True)
-                # Unwrap IndexIDMap to access underlying flat index
-                inner = raw_index.index if hasattr(raw_index, 'index') else raw_index
-                vectors = faiss.rev_swig_ptr(inner.get_xb(), n * d).reshape(n, d).copy()
-                hnsw_index = faiss.IndexHNSWFlat(d, 32)
-                hnsw_index.hnsw.efSearch = 64
-                hnsw_index.hnsw.efConstruction = 200
-                hnsw_index.add(vectors)
-                faiss_index = hnsw_index
-                print(f"HNSW index built: {faiss_index.ntotal} vectors, efSearch=64", flush=True)
-            except Exception as conv_err:
-                print(f"HNSW conversion failed ({conv_err}), using original index", flush=True)
-                faiss_index = raw_index
-        else:
-            faiss_index = raw_index
-        embedder = SentenceTransformer(EMBEDDER_NAME)
-        print(f"FAISS index loaded with {faiss_index.ntotal} vectors. Model: {EMBEDDER_NAME}", flush=True)
-    except Exception as e:
-        print(f"Failed to load FAISS/model: {e}", flush=True)
-        import traceback; traceback.print_exc()
+        con = sqlite3.connect(DB_PATH)
+        rows = con.execute(
+            """
+            SELECT id, substr(text, 1, ?)
+            FROM chunks
+            WHERE source != 'gaokao' AND text IS NOT NULL AND text != ''
+            ORDER BY id
+            """,
+            (text_limit,),
+        ).fetchall()
+        con.close()
+    except Exception:
+        return None, None
+
+    h = hashlib.sha256()
+    for chunk_id, text in rows:
+        payload = json.dumps([int(chunk_id), text or ""], ensure_ascii=False, separators=(",", ":"))
+        h.update(payload.encode("utf-8"))
+        h.update(b"\n")
+    return len(rows), h.hexdigest()
 
 
 def _expected_vector_rows() -> Optional[int]:
@@ -101,15 +124,82 @@ def _expected_vector_rows() -> Optional[int]:
         return None
 
 
-if faiss_index is not None:
-    expected_rows = _expected_vector_rows()
-    if expected_rows is not None and faiss_index.ntotal != expected_rows:
-        print(
-            f"FAISS disabled: index vectors={faiss_index.ntotal}, expected_rows={expected_rows}. "
-            "Rebuild textbook_chunks.index to re-enable dense retrieval.",
-            flush=True,
-        )
-        faiss_index = None
+def _load_faiss_manifest() -> Optional[dict]:
+    if not FAISS_MANIFEST_PATH.exists():
+        return None
+    try:
+        return json.loads(FAISS_MANIFEST_PATH.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"Failed to read FAISS manifest: {e}", flush=True)
+        return None
+
+
+def _validate_faiss_manifest(index_obj, expected_rows: Optional[int], manifest: Optional[dict]) -> list[str]:
+    issues = []
+    if manifest is None:
+        issues.append("missing_manifest")
+        return issues
+
+    manifest_model = (manifest.get("model") or {}).get("name")
+    if manifest_model != EMBEDDER_NAME:
+        issues.append(f"manifest_model={manifest_model!r} runtime_model={EMBEDDER_NAME!r}")
+
+    manifest_dim = (manifest.get("index") or {}).get("dimension")
+    if manifest_dim != index_obj.d:
+        issues.append(f"manifest_dim={manifest_dim} index_dim={index_obj.d}")
+
+    manifest_rows = (manifest.get("index") or {}).get("vector_rows")
+    if manifest_rows != index_obj.ntotal:
+        issues.append(f"manifest_rows={manifest_rows} index_rows={index_obj.ntotal}")
+
+    if expected_rows is not None and index_obj.ntotal != expected_rows:
+        issues.append(f"index_rows={index_obj.ntotal} expected_rows={expected_rows}")
+
+    vector_source = manifest.get("vector_source") or {}
+    manifest_source_rows = vector_source.get("row_count")
+    if expected_rows is not None and manifest_source_rows != expected_rows:
+        issues.append(f"manifest_source_rows={manifest_source_rows} expected_rows={expected_rows}")
+
+    manifest_text_limit = int((manifest.get("model") or {}).get("text_limit_chars") or 512)
+    current_rows, current_fingerprint = _compute_vector_source_fingerprint(manifest_text_limit)
+    if current_rows is None or current_fingerprint is None:
+        issues.append("vector_source_fingerprint_unavailable")
+    else:
+        if expected_rows is not None and current_rows != expected_rows:
+            issues.append(f"current_source_rows={current_rows} expected_rows={expected_rows}")
+        manifest_fingerprint = vector_source.get("fingerprint_sha256")
+        if manifest_fingerprint != current_fingerprint:
+            issues.append("vector_source_fingerprint_mismatch")
+
+    return issues
+
+if FAISS_AVAILABLE and FAISS_INDEX_PATH.exists():
+    try:
+        print(f"Loading FAISS index from {FAISS_INDEX_PATH}...", flush=True)
+        raw_index = faiss.read_index(str(FAISS_INDEX_PATH))
+        expected_rows = _expected_vector_rows()
+        faiss_manifest = _load_faiss_manifest()
+        validation_issues = _validate_faiss_manifest(raw_index, expected_rows, faiss_manifest)
+        if validation_issues:
+            faiss_status_reason = "; ".join(validation_issues)
+            print(
+                "FAISS disabled by validation gate: "
+                f"{faiss_status_reason}. Rebuild textbook_chunks.index with a matching manifest.",
+                flush=True,
+            )
+        else:
+            # Keep the offline-built index as-is. Runtime auto-conversion can break explicit ID mapping.
+            faiss_index = raw_index
+            embedder = SentenceTransformer(EMBEDDER_NAME)
+            print(f"FAISS index loaded with {faiss_index.ntotal} vectors. Model: {EMBEDDER_NAME}", flush=True)
+    except Exception as e:
+        faiss_status_reason = str(e)
+        print(f"Failed to load FAISS/model: {e}", flush=True)
+        import traceback; traceback.print_exc()
+elif not FAISS_AVAILABLE:
+    faiss_status_reason = "faiss_dependencies_unavailable"
+elif not FAISS_INDEX_PATH.exists():
+    faiss_status_reason = f"missing_index:{FAISS_INDEX_PATH}"
 
 # ── Jieba custom dictionary ──────────────────────────────────────────
 try:
@@ -153,6 +243,760 @@ def get_db():
     return con
 
 
+def _clean_query_text(query: str) -> str:
+    return re.sub(r"[^\w\u4e00-\u9fff\s]", "", (query or "")).strip()
+
+
+def _chat_excerpt(text: str, limit: int = 280) -> str:
+    cleaned = re.sub(r"!\[.*?\]\(.*?\)", " ", text or "")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned[:limit]
+
+
+def _load_json_object(raw: str | None) -> dict:
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _load_json_list(raw: str | None) -> list:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _normalize_text_line(text: str | None) -> str:
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+def _load_ai_summary(con, chunk_id: int) -> str:
+    try:
+        row = con.execute(
+            "SELECT summary FROM ai_summaries WHERE chunk_id = ?",
+            (chunk_id,),
+        ).fetchone()
+    except Exception:
+        return ""
+    return _normalize_text_line(row["summary"]) if row and row["summary"] else ""
+
+
+def _load_ai_gaokao_record(con, chunk_id: int) -> dict:
+    try:
+        row = con.execute(
+            """
+            SELECT subject, knowledge_points, textbook_refs, summary
+            FROM ai_gaokao_links
+            WHERE chunk_id = ?
+            """,
+            (chunk_id,),
+        ).fetchone()
+    except Exception:
+        return {}
+    if not row:
+        return {}
+    return {
+        "subject": row["subject"],
+        "knowledge_points": [item for item in _load_json_list(row["knowledge_points"]) if isinstance(item, str) and item.strip()],
+        "textbook_refs": [item for item in _load_json_list(row["textbook_refs"]) if isinstance(item, str) and item.strip()],
+        "summary": _normalize_text_line(row["summary"]),
+    }
+
+
+def _parse_textbook_ref(ref: str) -> Optional[dict]:
+    match = re.match(r"^(?P<subject>[^·]+)·(?P<title>.+)·p(?P<page>-?\d+)$", (ref or "").strip())
+    if not match:
+        return None
+    try:
+        page = int(match.group("page"))
+    except Exception:
+        return None
+    return {
+        "subject": match.group("subject").strip(),
+        "title": match.group("title").strip(),
+        "page": page,
+    }
+
+
+def _compose_chunk_snippet(summary: str | None, text: str | None, *, limit: int = 220) -> str:
+    clean_summary = _normalize_text_line(summary)
+    if clean_summary:
+        return clean_summary
+    return _chat_excerpt(text or "", limit=limit)
+
+
+def _resolve_textbook_refs(con, refs: list[str], *, question_subject: str | None, limit: int = 6) -> list[dict]:
+    resolved = []
+    seen_ids = set()
+    for idx, ref in enumerate(refs):
+        parsed = _parse_textbook_ref(ref)
+        if not parsed:
+            continue
+        try:
+            row = con.execute(
+                """
+                SELECT c.id, c.subject, c.title, c.book_key, c.section, c.logical_page, c.text,
+                       s.summary AS ai_summary
+                FROM chunks c
+                LEFT JOIN ai_summaries s ON s.chunk_id = c.id
+                WHERE c.source = 'mineru'
+                  AND c.subject = ?
+                  AND c.title = ?
+                  AND (c.logical_page = ? OR c.section = ?)
+                ORDER BY CASE
+                    WHEN c.logical_page = ? THEN 0
+                    WHEN c.section = ? THEN 1
+                    ELSE 2
+                END, c.id
+                LIMIT 1
+                """,
+                (
+                    parsed["subject"],
+                    parsed["title"],
+                    parsed["page"],
+                    parsed["page"],
+                    parsed["page"],
+                    parsed["page"],
+                ),
+            ).fetchone()
+        except Exception:
+            row = None
+        if not row or row["id"] in seen_ids:
+            continue
+        seen_ids.add(row["id"])
+        snippet = _compose_chunk_snippet(row["ai_summary"], row["text"], limit=180)
+        logical_page = row["logical_page"] if row["logical_page"] is not None else row["section"]
+        resolved.append(
+            {
+                "id": row["id"],
+                "subject": row["subject"],
+                "title": row["title"],
+                "book_key": row["book_key"],
+                "section": row["section"],
+                "logical_page": logical_page,
+                "snippet": snippet,
+                "summary": _normalize_text_line(row["ai_summary"]),
+                "text": row["text"] or "",
+                "link_type": "precomputed",
+                "relevance_score": max(80, 96 - idx * 3),
+                "matched_concepts": [],
+                "precomputed_ref": ref,
+                **SUBJECT_META.get(row["subject"], {"icon": "📚", "color": "#95a5a6"}),
+            }
+        )
+        if len(resolved) >= limit:
+            break
+
+    if question_subject:
+        resolved.sort(
+            key=lambda item: (
+                0 if item["subject"] == question_subject else 1,
+                -item["relevance_score"],
+            )
+        )
+    return resolved[:limit]
+
+
+def _load_ai_synonym_record(con, term: str) -> dict:
+    if not term:
+        return {}
+    try:
+        row = con.execute(
+            "SELECT synonyms FROM ai_synonyms WHERE term = ?",
+            (term,),
+        ).fetchone()
+    except Exception:
+        return {}
+    return _load_json_object(row["synonyms"]) if row and row["synonyms"] else {}
+
+
+def _collect_synonym_aliases(record: dict, *, limit: int = 6) -> list[str]:
+    aliases = []
+    seen = set()
+    for key in ("synonyms", "near_synonyms", "english", "abbreviations", "aliases"):
+        values = record.get(key)
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if not isinstance(value, str):
+                continue
+            normalized = re.sub(r"\s+", " ", value).strip()
+            if not normalized:
+                continue
+            dedupe_key = normalized.casefold()
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            aliases.append(normalized)
+            if len(aliases) >= limit:
+                return aliases
+    return aliases
+
+
+def _expand_chat_search_terms(con, search_terms: list[str], limit: int = 10) -> tuple[list[str], list[dict]]:
+    expanded = []
+    seen = set()
+    alias_hints = []
+
+    def add_term(value: str):
+        clean = _clean_query_text(value)
+        if not clean:
+            return
+        normalized = re.sub(r"\s+", " ", clean).strip()
+        if not normalized:
+            return
+        dedupe_key = normalized.casefold()
+        if dedupe_key in seen:
+            return
+        seen.add(dedupe_key)
+        expanded.append(normalized)
+
+    for term in search_terms:
+        add_term(term)
+
+    for term in search_terms[:4]:
+        record = _load_ai_synonym_record(con, term)
+        aliases = [a for a in _collect_synonym_aliases(record, limit=4) if a.casefold() != term.casefold()]
+        if aliases:
+            alias_hints.append({"term": term, "aliases": aliases[:4]})
+        for alias in aliases:
+            add_term(alias)
+            if len(expanded) >= limit:
+                return expanded[:limit], alias_hints
+    return expanded[:limit], alias_hints
+
+
+def get_ai_relation(con, a: str, b: str) -> Optional[dict]:
+    """Look up an AI-generated relation label for a concept pair."""
+    try:
+        row = con.execute(
+            """
+            SELECT relation_type, description
+            FROM ai_relations
+            WHERE (concept_a = ? AND concept_b = ?)
+               OR (concept_a = ? AND concept_b = ?)
+            """,
+            (a, b, b, a),
+        ).fetchone()
+    except Exception:
+        return None
+    if not row:
+        return None
+    return {
+        "type": row["relation_type"],
+        "description": row["description"],
+    }
+
+
+def _fetch_ai_relation_hints(con, terms: list[str], limit: int = 6) -> list[dict]:
+    if not terms:
+        return []
+    hints = []
+    seen = set()
+
+    def add_hint(anchor: str, related: str, relation_type: str, description: str):
+        if not anchor or not related:
+            return
+        pair_key = tuple(sorted((anchor.casefold(), related.casefold())))
+        if pair_key in seen:
+            return
+        seen.add(pair_key)
+        hints.append(
+            {
+                "anchor": anchor,
+                "related": related,
+                "relation": relation_type,
+                "description": description,
+            }
+        )
+
+    # First, prioritize direct relations between the current search terms.
+    for idx, anchor in enumerate(terms):
+        for related in terms[idx + 1 :]:
+            ai_rel = get_ai_relation(con, anchor, related)
+            if not ai_rel:
+                continue
+            add_hint(anchor, related, ai_rel["type"], ai_rel["description"])
+            if len(hints) >= limit:
+                return hints
+
+    placeholders = ",".join("?" for _ in terms)
+    try:
+        rows = con.execute(
+            f"""
+            SELECT concept_a, concept_b, relation_type, description, ts
+            FROM ai_relations
+            WHERE concept_a IN ({placeholders}) OR concept_b IN ({placeholders})
+            ORDER BY ts DESC
+            LIMIT ?
+            """,
+            tuple(terms) + tuple(terms) + (max(limit * 4, 12),),
+        ).fetchall()
+    except Exception:
+        return hints
+
+    matched_terms = {term.casefold(): term for term in terms}
+    for row in rows:
+        a = str(row["concept_a"] or "").strip()
+        b = str(row["concept_b"] or "").strip()
+        a_key = a.casefold()
+        b_key = b.casefold()
+        if a_key in matched_terms:
+            anchor = matched_terms[a_key]
+            related = b
+        elif b_key in matched_terms:
+            anchor = matched_terms[b_key]
+            related = a
+        else:
+            continue
+        add_hint(anchor, related, row["relation_type"], row["description"])
+        if len(hints) >= limit:
+            break
+    return hints
+
+
+def _derive_chat_search_terms(query: str, user_message: str) -> list[str]:
+    terms = []
+    seen = set()
+
+    def add_term(value: str):
+        clean = _clean_query_text(value)
+        if not clean:
+            return
+        normalized = re.sub(r"\s+", " ", clean).strip()
+        if not normalized:
+            return
+        key = normalized.casefold()
+        if key in seen:
+            return
+        seen.add(key)
+        terms.append(normalized)
+
+    query_clean = _clean_query_text(query)
+    if query_clean:
+        add_term(query_clean)
+
+    for quoted in re.findall(r"[「“\"]([^」”\"]{2,24})[」”\"]", user_message or ""):
+        add_term(quoted)
+
+    message_clean = _clean_query_text(user_message)
+    if message_clean and message_clean.casefold() != query_clean.casefold():
+        candidate_terms = []
+        if "jieba" in globals():
+            try:
+                candidate_terms = [
+                    token.strip()
+                    for token in jieba.cut(message_clean)
+                    if token and token.strip()
+                ]
+            except Exception:
+                candidate_terms = []
+        if not candidate_terms:
+            candidate_terms = re.findall(r"[A-Za-z0-9\-]{2,24}|[\u4e00-\u9fff]{2,12}", message_clean)
+
+        filtered = []
+        for token in candidate_terms:
+            token = token.strip()
+            if not token or token in CHAT_STOPWORDS:
+                continue
+            if len(token) < 2:
+                continue
+            if len(token) > 24:
+                continue
+            filtered.append(token)
+
+        for token in filtered[:6]:
+            add_term(token)
+
+        if len(terms) < 2:
+            add_term(message_clean[:24])
+
+    return terms[:5]
+
+
+def _fetch_chat_rows(con, clean_q: str, *, source: str, limit: int):
+    rows = []
+    existing_ids = set()
+
+    like_rows = con.execute(
+        f"""
+        SELECT c.id, c.subject, c.title, c.book_key, c.section, c.logical_page,
+               c.text, c.source, c.year, c.category, -100.0 AS rank,
+               s.summary AS ai_summary,
+               ag.summary AS ai_gaokao_summary,
+               ag.knowledge_points AS ai_gaokao_knowledge_points,
+               ag.textbook_refs AS ai_gaokao_textbook_refs
+        FROM chunks c
+        LEFT JOIN ai_summaries s ON s.chunk_id = c.id
+        LEFT JOIN ai_gaokao_links ag ON ag.chunk_id = c.id
+        WHERE c.source = ? AND c.text LIKE ?
+        LIMIT ?
+        """,
+        (source, f"%{clean_q}%", limit),
+    ).fetchall()
+    for r in like_rows:
+        rows.append(dict(r))
+        existing_ids.add(r["id"])
+
+    try:
+        fts_rows = con.execute(
+            """
+            SELECT c.id, c.subject, c.title, c.book_key, c.section, c.logical_page,
+                   c.text, c.source, c.year, c.category, f.rank AS rank,
+                   s.summary AS ai_summary,
+                   ag.summary AS ai_gaokao_summary,
+                   ag.knowledge_points AS ai_gaokao_knowledge_points,
+                   ag.textbook_refs AS ai_gaokao_textbook_refs
+            FROM chunks c
+            JOIN chunks_fts f ON c.id = f.rowid
+            LEFT JOIN ai_summaries s ON s.chunk_id = c.id
+            LEFT JOIN ai_gaokao_links ag ON ag.chunk_id = c.id
+            WHERE c.source = ? AND chunks_fts MATCH ?
+            ORDER BY rank
+            LIMIT ?
+            """,
+            (source, clean_q, limit),
+        ).fetchall()
+    except Exception:
+        fts_rows = []
+
+    for r in fts_rows:
+        if r["id"] in existing_ids:
+            continue
+        rows.append(dict(r))
+        existing_ids.add(r["id"])
+
+    rows.sort(key=lambda item: item["rank"])
+    return rows[:limit]
+
+
+def _fetch_ai_gaokao_rows_for_terms(con, terms: list[str], limit: int) -> list[dict]:
+    rows = []
+    existing_ids = set()
+    if not terms:
+        return rows
+
+    per_term_limit = max(2, math.ceil(limit / max(1, min(len(terms), 4))))
+    for idx, term in enumerate(terms[:6]):
+        if not term:
+            continue
+        like_term = f"%{term}%"
+        try:
+            term_rows = con.execute(
+                """
+                SELECT c.id, c.subject, c.title, c.book_key, c.section, c.logical_page,
+                       c.text, c.source, c.year, c.category, -90.0 AS rank,
+                       '' AS ai_summary,
+                       ag.summary AS ai_gaokao_summary,
+                       ag.knowledge_points AS ai_gaokao_knowledge_points,
+                       ag.textbook_refs AS ai_gaokao_textbook_refs
+                FROM ai_gaokao_links ag
+                JOIN chunks c ON c.id = ag.chunk_id
+                WHERE c.source = 'gaokao'
+                  AND (ag.summary LIKE ? OR ag.knowledge_points LIKE ? OR ag.textbook_refs LIKE ?)
+                ORDER BY c.year DESC, c.id DESC
+                LIMIT ?
+                """,
+                (like_term, like_term, like_term, per_term_limit),
+            ).fetchall()
+        except Exception:
+            term_rows = []
+        for row in term_rows:
+            if row["id"] in existing_ids:
+                continue
+            merged = dict(row)
+            merged["matched_term"] = term
+            merged["_term_index"] = idx
+            rows.append(merged)
+            existing_ids.add(row["id"])
+            if len(rows) >= limit:
+                break
+        if len(rows) >= limit:
+            break
+
+    rows.sort(key=lambda item: (item.get("_term_index", 0), -(item.get("year") or 0), item["id"]))
+    return rows[:limit]
+
+
+def _fetch_chat_rows_for_terms(con, terms: list[str], *, source: str, limit: int):
+    rows = []
+    existing_ids = set()
+    if not terms:
+        return rows
+
+    per_term_limit = max(4, math.ceil(limit / max(1, min(len(terms), 3))))
+    for idx, term in enumerate(terms):
+        for row in _fetch_chat_rows(con, term, source=source, limit=per_term_limit):
+            row_id = row["id"]
+            if row_id in existing_ids:
+                continue
+            merged = dict(row)
+            merged["matched_term"] = term
+            merged["_term_index"] = idx
+            rows.append(merged)
+            existing_ids.add(row_id)
+            if len(rows) >= limit:
+                break
+        if len(rows) >= limit:
+            break
+
+    rows.sort(key=lambda item: (item.get("_term_index", 0), item["rank"]))
+    return rows[:limit]
+
+
+def _build_chat_context_payload(con, query: str, user_message: str, history: list[dict] | None = None) -> dict:
+    clean_q = _clean_query_text(query)
+    if not clean_q:
+        raise HTTPException(400, "Invalid query")
+
+    search_terms = _derive_chat_search_terms(query, user_message)
+    retrieval_terms, alias_hints = _expand_chat_search_terms(con, search_terms)
+    relation_hints = _fetch_ai_relation_hints(con, search_terms, limit=6)
+
+    textbook_rows = _fetch_chat_rows_for_terms(con, retrieval_terms, source="mineru", limit=24)
+    gaokao_rows = _fetch_chat_rows_for_terms(con, retrieval_terms, source="gaokao", limit=6)
+    for row in _fetch_ai_gaokao_rows_for_terms(con, retrieval_terms, limit=6):
+        if any(existing["id"] == row["id"] for existing in gaokao_rows):
+            continue
+        gaokao_rows.append(row)
+        if len(gaokao_rows) >= 6:
+            break
+
+    by_subject = {}
+    for row in textbook_rows:
+        by_subject.setdefault(row["subject"], []).append(row)
+
+    groups = []
+    evidence = []
+    for subject, subject_rows in sorted(by_subject.items(), key=lambda item: len(item[1]), reverse=True)[:5]:
+        selected = []
+        for row in subject_rows[:2]:
+            logical_page = row["logical_page"] if row["logical_page"] is not None else row["section"]
+            snippet = _compose_chunk_snippet(row.get("ai_summary"), row.get("text"), limit=220)
+            citation = f"[{subject}·{row['title']}·p{logical_page}]"
+            item = {
+                "id": row["id"],
+                "subject": subject,
+                "title": row["title"],
+                "book_key": row["book_key"],
+                "section": row["section"],
+                "logical_page": logical_page,
+                "snippet": snippet,
+                "citation": citation,
+                "matched_term": row.get("matched_term"),
+            }
+            selected.append(item)
+            evidence.append(item)
+        groups.append({"subject": subject, "count": len(subject_rows), "items": selected})
+
+    gaokao_examples = []
+    for row in gaokao_rows[:3]:
+        knowledge_points = [item for item in _load_json_list(row.get("ai_gaokao_knowledge_points")) if isinstance(item, str)]
+        textbook_refs = [item for item in _load_json_list(row.get("ai_gaokao_textbook_refs")) if isinstance(item, str)]
+        ai_summary = _normalize_text_line(row.get("ai_gaokao_summary"))
+        gaokao_examples.append(
+            {
+                "id": row["id"],
+                "subject": row["subject"],
+                "year": row["year"],
+                "category": row["category"],
+                "title": row["title"],
+                "snippet": ai_summary or _chat_excerpt(row["text"], limit=220),
+                "summary": ai_summary,
+                "knowledge_points": knowledge_points[:5],
+                "textbook_refs": textbook_refs[:3],
+            }
+        )
+
+    context_lines = []
+    for group in groups:
+        lines = [f"【{group['subject']}】（{group['count']}条命中）"]
+        for item in group["items"]:
+            lines.append(f"{item['citation']} {item['snippet']}")
+        context_lines.append("\n".join(lines))
+
+    gaokao_lines = [
+        " ".join(
+            part
+            for part in [
+                f"[{item['subject']}·{item['year'] or '未知年份'}·{item['category'] or '真题'}]",
+                item["summary"] or item["snippet"],
+                f"知识点：{'、'.join(item['knowledge_points'][:3])}" if item.get("knowledge_points") else "",
+                f"教材锚点：{'；'.join(item['textbook_refs'][:2])}" if item.get("textbook_refs") else "",
+            ]
+            if part
+        )
+        for item in gaokao_examples
+    ]
+    alias_lines = [
+        f"{item['term']}：{'、'.join(item['aliases'])}"
+        for item in alias_hints
+        if item.get("aliases")
+    ]
+    relation_lines = [
+        f"{item['anchor']} ↔ {item['related']}：{item['relation']}；{item['description']}"
+        for item in relation_hints
+    ]
+
+    history_lines = []
+    for msg in (history or [])[-6:]:
+        role = "用户" if msg.get("role") == "user" else "助手"
+        content = (msg.get("content") or "").strip()
+        if content:
+            history_lines.append(f"{role}: {content[:300]}")
+
+    summary = {
+        "subject_count": len(groups),
+        "textbook_hit_count": len(textbook_rows),
+        "gaokao_hit_count": len(gaokao_examples),
+        "evidence_count": len(evidence),
+        "coverage_line": (
+            f"覆盖 {len(groups)} 个学科 · 教材命中 {len(textbook_rows)} 条 · "
+            f"真题例子 {len(gaokao_examples)} 条"
+        ),
+        "search_terms_used": search_terms,
+        "retrieval_terms_used": retrieval_terms,
+        "alias_hint_count": len(alias_hints),
+        "relation_hint_count": len(relation_hints),
+        "top_subjects": [
+            {"subject": group["subject"], "count": group["count"]}
+            for group in groups[:4]
+        ],
+    }
+
+    return {
+        "query": query,
+        "user_message": user_message,
+        "subject_count": len(groups),
+        "evidence": evidence,
+        "groups": groups,
+        "gaokao_examples": gaokao_examples,
+        "context_text": "\n\n".join(context_lines),
+        "gaokao_text": "\n".join(gaokao_lines),
+        "history_text": "\n".join(history_lines) if history_lines else "（无）",
+        "search_terms_used": search_terms,
+        "retrieval_terms_used": retrieval_terms,
+        "alias_hints": alias_hints,
+        "alias_text": "\n".join(alias_lines),
+        "relation_hints": relation_hints,
+        "relation_text": "\n".join(relation_lines),
+        "summary": summary,
+        "suggested_questions": [
+            f"请先解释「{query}」在不同学科里的共同核心。",
+            f"「{query}」在高考里最常见的考法是什么？",
+            f"围绕「{query}」最容易混淆的概念有哪些？",
+            f"如果我要复习「{query}」，应该按什么顺序串起来学？",
+        ],
+    }
+
+
+def _build_chat_prompt(query: str, user_message: str, context_payload: dict, history: list[dict] | None = None) -> str:
+    history_text = (context_payload.get("history_text") or "").strip()
+    if history and not history_text:
+        history_text = "\n".join(
+            f"{'用户' if msg.get('role') == 'user' else '助手'}: {(msg.get('content') or '').strip()[:300]}"
+            for msg in history[-6:]
+            if (msg.get("content") or "").strip()
+        )
+    if not history_text:
+        history_text = "（无）"
+
+    return f"""你是一位资深跨学科教育专家。用户当前搜索词是「{context_payload.get('query') or query}」。
+
+本轮检索关注词：
+{ "、".join(context_payload.get("search_terms_used") or [query]) }
+
+检索扩展词（含别名）：
+{ "、".join(context_payload.get("retrieval_terms_used") or context_payload.get("search_terms_used") or [query]) }
+
+概念别名 / 同义表达：
+{context_payload.get('alias_text') or '（无）'}
+
+概念关系提示：
+{context_payload.get('relation_text') or '（无）'}
+
+教材证据（多学科原文）：
+{context_payload.get('context_text') or '（无）'}
+
+高考证据（如有）：
+{context_payload.get('gaokao_text') or '（无）'}
+
+历史对话：
+{history_text}
+
+用户本轮问题：
+{user_message}
+
+请按以下结构回答：
+【核心结论】先用 1-2 句讲清本质。
+【学科联动】分点说明不同学科如何描述同一概念，尽量标注出处，格式：[学科·书名·p页码]。
+【高考考法】如果给定证据里有真题，再说明常见考法 / 易错点；没有就写“高考证据不足”。
+【学习建议】给出面向高中生的复习顺序或追问方向。
+
+规则：
+1. 只根据给定证据回答，不要编造页码或教材内容。
+2. 如果证据不足，必须明确说“证据不足”。
+3. 若用户追问，保持连续回答，不重复整段前文。
+4. 可以参考“概念别名 / 关系提示”组织答案，但不能把它们当成教材原文引用。
+5. 语言简洁、具体，避免空泛套话。"""
+
+
+def _call_ai_service(prompt: str) -> dict:
+    payload_obj = {
+        "prompt": prompt,
+        "taskType": AI_SERVICE_TASK_TYPE,
+        "thinkingLevel": AI_SERVICE_THINKING_LEVEL,
+    }
+    payload = json.dumps(payload_obj, ensure_ascii=False).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Origin": AI_SERVICE_ORIGIN,
+        "Referer": AI_SERVICE_REFERER,
+        "User-Agent": AI_SERVICE_USER_AGENT,
+        "X-Task-Type": AI_SERVICE_TASK_TYPE,
+        "X-Thinking-Level": AI_SERVICE_THINKING_LEVEL,
+    }
+    if AI_SERVICE_PROJECT:
+        headers["X-Project-Name"] = AI_SERVICE_PROJECT
+    if AI_INTERNAL_TOKEN:
+        headers["X-Internal-Token"] = AI_INTERNAL_TOKEN
+
+    request = urllib.request.Request(
+        AI_SERVICE_URL,
+        data=payload,
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=AI_SERVICE_TIMEOUT) as response:
+            raw = response.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="ignore")[:400]
+        raise HTTPException(502, f"AI service http error: {e.code} {detail}") from e
+    except urllib.error.URLError as e:
+        raise HTTPException(502, f"AI service unavailable: {e.reason}") from e
+    except TimeoutError as e:
+        raise HTTPException(504, "AI service timeout") from e
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise HTTPException(502, "AI service returned invalid JSON") from e
+
+    answer = str(data.get("answer") or "").strip()
+    if not answer:
+        raise HTTPException(502, f"AI service returned no answer: {data.get('error') or 'unknown error'}")
+    return data
+
+
 # ── Search logs table ─────────────────────────────────────────────────
 def init_search_logs():
     """Create search_logs table if not exists."""
@@ -194,6 +1038,89 @@ def log_search(query: str, subject=None, book_key=None, source=None, result_coun
         con.close()
     except Exception:
         pass  # never block search for logging failures
+
+
+def init_ai_chat_logs():
+    """Create ai_chat_logs table if not exists."""
+    con = get_db()
+    try:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS ai_chat_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                query TEXT NOT NULL,
+                user_message TEXT NOT NULL,
+                subject_count INTEGER DEFAULT 0,
+                evidence_count INTEGER DEFAULT 0,
+                gaokao_hit_count INTEGER DEFAULT 0,
+                provider TEXT,
+                success INTEGER DEFAULT 0,
+                error TEXT,
+                ts REAL NOT NULL
+            )
+        """)
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ai_chat_logs_ts ON ai_chat_logs(ts DESC)")
+        con.commit()
+    finally:
+        con.close()
+
+
+init_ai_chat_logs()
+
+
+def _write_ai_chat_log(
+    query: str,
+    user_message: str,
+    summary: dict,
+    *,
+    provider: str,
+    success: bool,
+    error: str | None = None,
+):
+    try:
+        con = get_db()
+        con.execute(
+            """
+            INSERT INTO ai_chat_logs (
+                query, user_message, subject_count, evidence_count, gaokao_hit_count,
+                provider, success, error, ts
+            ) VALUES (?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                query.strip(),
+                user_message.strip(),
+                int(summary.get("subject_count") or 0),
+                int(summary.get("evidence_count") or 0),
+                int(summary.get("gaokao_hit_count") or 0),
+                provider,
+                1 if success else 0,
+                error,
+                time.time(),
+            ),
+        )
+        con.commit()
+        con.close()
+    except Exception:
+        pass
+
+
+def log_ai_chat(
+    query: str,
+    user_message: str,
+    context_payload: dict,
+    *,
+    provider: str | None = None,
+    success: bool,
+    error: str | None = None,
+):
+    summary = context_payload.get("summary") or {}
+    _write_ai_chat_log(
+        query,
+        user_message,
+        summary,
+        provider=provider or AI_SERVICE_LABEL,
+        success=success,
+        error=error,
+    )
 
 
 @app.get("/api/search")
@@ -327,29 +1254,11 @@ def search(
             by_subject[s]["results"].append(result_item)
             by_subject[s]["count"] += 1
 
-        # Get total counts per subject (include all active filters)
-        count_params = [f"%{clean_q}%"]
-        count_where = ""
-        if subject:
-            count_where += " AND c.subject = ?"
-            count_params.append(subject)
-        if book_key:
-            count_where += " AND c.book_key = ?"
-            count_params.append(book_key)
-        if source == 'textbook':
-            count_where += " AND c.source = 'mineru'"
-        elif source == 'gaokao':
-            count_where += " AND c.source = 'gaokao'"
-        count_rows = con.execute(f"""
-            SELECT c.subject, COUNT(*) as cnt
-            FROM chunks c
-            WHERE c.text LIKE ? {count_where}
-            GROUP BY c.subject
-            ORDER BY cnt DESC
-        """, count_params).fetchall()
-
-        subject_counts = {r["subject"]: r["cnt"] for r in count_rows}
-        total = sum(subject_counts.values())
+        subject_counts_counter = Counter(r["subject"] for r in rows)
+        subject_counts = dict(
+            sorted(subject_counts_counter.items(), key=lambda item: item[1], reverse=True)
+        )
+        total = len(rows)
 
         # Cross-subject hint
         cross_subjects = [s for s in subject_counts if subject_counts[s] > 0]
@@ -421,6 +1330,12 @@ def stats():
         total = con.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
         textbook_count = con.execute("SELECT COUNT(*) FROM chunks WHERE source='mineru' OR source IS NULL").fetchone()[0]
         gaokao_count = con.execute("SELECT COUNT(*) FROM chunks WHERE source='gaokao'").fetchone()[0]
+        textbook_books = con.execute(
+            "SELECT COUNT(DISTINCT book_key) FROM chunks WHERE source='mineru' OR source IS NULL"
+        ).fetchone()[0]
+        gaokao_multimodal = con.execute(
+            "SELECT COUNT(*) FROM chunks WHERE source='gaokao' AND text LIKE '%https://img.rdfzer.com/gaokao/%'"
+        ).fetchone()[0]
         dist = con.execute(
             "SELECT subject, COUNT(*) as cnt FROM chunks GROUP BY subject ORDER BY cnt DESC"
         ).fetchall()
@@ -437,6 +1352,12 @@ def stats():
             "total_chunks": total,
             "textbook_chunks": textbook_count,
             "gaokao_chunks": gaokao_count,
+            "textbook_books": textbook_books,
+            "gaokao_multimodal": gaokao_multimodal,
+            "subjects_count": len(dist),
+            "ai_model": AI_SERVICE_LABEL,
+            "faiss_enabled": faiss_index is not None,
+            "faiss_vectors": faiss_index.ntotal if faiss_index else 0,
             "gaokao_year_range": [gaokao_years["min_y"], gaokao_years["max_y"]] if gaokao_years and gaokao_years["min_y"] else None,
             "gaokao_by_subject": [
                 {"name": r["subject"], "count": r["cnt"],
@@ -671,6 +1592,80 @@ def related(
         return candidates
     finally:
         con.close()
+
+
+@app.post("/api/chat/context")
+def chat_context(payload: dict = Body(...)):
+    """Build grounded context for AI chat before calling an external model service."""
+    query = str(payload.get("query", "")).strip()
+    user_message = str(payload.get("user_message", "")).strip()
+    history = payload.get("history") or []
+
+    con = get_db()
+    try:
+        return _build_chat_context_payload(con, query, user_message, history=history)
+    finally:
+        con.close()
+
+
+@app.post("/api/chat/log")
+def chat_log(payload: dict = Body(...)):
+    """Client-side fallback telemetry for AI chat."""
+    query = str(payload.get("query", "")).strip()
+    user_message = str(payload.get("user_message", "")).strip()
+    if not query or not user_message:
+        raise HTTPException(400, "query and user_message are required")
+
+    summary = payload.get("summary") or {}
+    provider = str(payload.get("provider", "")).strip() or AI_SERVICE_LABEL
+    success = bool(payload.get("success", True))
+    error = str(payload.get("error", "")).strip() or None
+
+    _write_ai_chat_log(
+        query,
+        user_message,
+        summary,
+        provider=provider,
+        success=success,
+        error=error,
+    )
+    return {"ok": True}
+
+
+@app.post("/api/chat")
+def chat(payload: dict = Body(...)):
+    """Server-side grounded AI chat orchestration."""
+    query = str(payload.get("query", "")).strip()
+    user_message = str(payload.get("user_message", "")).strip()
+    history = payload.get("history") or []
+    if not query or not user_message:
+        raise HTTPException(400, "query and user_message are required")
+
+    con = get_db()
+    try:
+        context_payload = _build_chat_context_payload(con, query, user_message, history=history)
+    finally:
+        con.close()
+
+    prompt = _build_chat_prompt(query, user_message, context_payload, history=history)
+    try:
+        ai_data = _call_ai_service(prompt)
+        log_ai_chat(query, user_message, context_payload, success=True)
+    except HTTPException as e:
+        log_ai_chat(query, user_message, context_payload, success=False, error=str(e.detail))
+        raise
+
+    return {
+        "answer": ai_data.get("answer"),
+        "provider": AI_SERVICE_LABEL,
+        "context": {
+            "summary": context_payload.get("summary"),
+            "evidence": context_payload.get("evidence"),
+            "alias_hints": context_payload.get("alias_hints"),
+            "relation_hints": context_payload.get("relation_hints"),
+            "suggested_questions": context_payload.get("suggested_questions"),
+        },
+    }
 
 
 # ── Gaokao APIs ───────────────────────────────────────────────────────
@@ -964,63 +1959,109 @@ def gaokao_link(
 
         text = q_row["text"] or ""
         q_subject = q_row["subject"]
+        ai_gaokao = _load_ai_gaokao_record(con, question_id)
+        precomputed_terms = ai_gaokao.get("knowledge_points") or []
+        precomputed_refs = ai_gaokao.get("textbook_refs") or []
+        precomputed_summary = ai_gaokao.get("summary") or ""
+        precomputed_links = _resolve_textbook_refs(
+            con,
+            precomputed_refs,
+            question_subject=q_subject,
+            limit=limit,
+        )
+        has_chinese = bool(re.search(r'[\u4e00-\u9fff]', text))
 
-        if not re.search(r'[\u4e00-\u9fff]', text):
-            return {"question_id": question_id, "links": [], "cross_links": [],
-                    "matched_concepts": [], "search_terms": []}
+        if not has_chinese and not precomputed_terms and not precomputed_links:
+            return {
+                "question_id": question_id,
+                "question_title": q_row["title"],
+                "question_subject": q_subject,
+                "question_year": q_row["year"] if "year" in q_row.keys() else None,
+                "question_category": q_row["category"] if "category" in q_row.keys() else None,
+                "question_type": q_row["question_type"] if "question_type" in q_row.keys() else None,
+                "search_terms": [],
+                "matched_concepts": [],
+                "expanded_terms": [],
+                "precomputed_analysis": None,
+                "links": [],
+                "cross_links": [],
+            }
 
         # ── Layer 1: Concept graph matching ────────────────────────────
-        matched_concepts = _match_concepts(text, q_subject, con)
+        matched_concepts = _match_concepts(text, q_subject, con) if has_chinese else []
         concept_names = [c["concept"] for c in matched_concepts]
 
         # ── Layer 2: IDF-weighted term extraction ─────────────────────
-        weighted_terms = _extract_weighted_terms(text, con)
+        weighted_terms = _extract_weighted_terms(text, con) if has_chinese else []
         top_terms = [t for t, _ in weighted_terms[:15]]
 
-        if not top_terms and not concept_names:
-            return {"question_id": question_id, "links": [], "cross_links": [],
-                    "matched_concepts": [], "search_terms": []}
+        if not top_terms and not concept_names and not precomputed_terms and not precomputed_links:
+            return {
+                "question_id": question_id,
+                "question_title": q_row["title"],
+                "question_subject": q_subject,
+                "question_year": q_row["year"] if "year" in q_row.keys() else None,
+                "question_category": q_row["category"] if "category" in q_row.keys() else None,
+                "question_type": q_row["question_type"] if "question_type" in q_row.keys() else None,
+                "search_terms": [],
+                "matched_concepts": [],
+                "expanded_terms": [],
+                "precomputed_analysis": (
+                    {
+                        "summary": precomputed_summary,
+                        "knowledge_points": precomputed_terms[:6],
+                        "textbook_refs": precomputed_refs[:6],
+                        "resolved_ref_count": len(precomputed_links),
+                    }
+                    if precomputed_summary or precomputed_terms or precomputed_refs
+                    else None
+                ),
+                "links": precomputed_links[:limit],
+                "cross_links": [],
+            }
 
         # ── Layer 3: Cross-subject expansion ──────────────────────────
-        expanded_terms = _expand_cross_subject(matched_concepts, con)
+        expanded_terms = _expand_cross_subject(matched_concepts, con) if matched_concepts else []
 
         # ── Combined FTS search ───────────────────────────────────────
         # Primary: top IDF terms + matched concepts
-        search_terms = list(dict.fromkeys(top_terms[:8] + concept_names[:5]))
+        search_terms = list(dict.fromkeys(precomputed_terms[:6] + top_terms[:8] + concept_names[:5]))
         if not search_terms:
-            search_terms = top_terms[:10]
+            search_terms = precomputed_terms[:6] or top_terms[:10]
 
-        search_q = ' OR '.join(search_terms[:12])
+        search_q = ' OR '.join(search_terms[:12]) if search_terms else None
 
         # Secondary: expanded cross-subject terms
         expanded_q = ' OR '.join(expanded_terms[:8]) if expanded_terms else None
 
-        seen_ids = set()
+        seen_ids = {item["id"] for item in precomputed_links}
         all_results = []
 
         # Primary search
-        try:
-            rows = con.execute("""
-                SELECT c.id, c.subject, c.title, c.book_key, c.section,
-                       snippet(chunks_fts, 0, '<mark>', '</mark>', '…', 40) as snippet,
-                       c.text
-                FROM chunks c
-                JOIN chunks_fts f ON c.id = f.rowid
-                WHERE chunks_fts MATCH ? AND c.source != 'gaokao'
-                ORDER BY rank
-                LIMIT ?
-            """, [search_q, limit * 3]).fetchall()
-            for r in rows:
-                if r["id"] not in seen_ids:
-                    seen_ids.add(r["id"])
-                    all_results.append((r, "explicit"))
-        except Exception:
-            pass
+        if search_q:
+            try:
+                rows = con.execute("""
+                    SELECT c.id, c.subject, c.title, c.book_key, c.section, c.logical_page,
+                           snippet(chunks_fts, 0, '<mark>', '</mark>', '…', 40) as snippet,
+                           c.text, s.summary AS ai_summary
+                    FROM chunks c
+                    JOIN chunks_fts f ON c.id = f.rowid
+                    LEFT JOIN ai_summaries s ON s.chunk_id = c.id
+                    WHERE chunks_fts MATCH ? AND c.source != 'gaokao'
+                    ORDER BY rank
+                    LIMIT ?
+                """, [search_q, limit * 3]).fetchall()
+                for r in rows:
+                    if r["id"] not in seen_ids:
+                        seen_ids.add(r["id"])
+                        all_results.append((r, "explicit"))
+            except Exception:
+                pass
 
         # ── Dense Vector Retrieval (FAISS) ────────────────────────────
-        if faiss_index and embedder:
+        if has_chinese and faiss_index and embedder:
             try:
-                # Encode text to 512D vector
+                # Encode the query text with the runtime embedding model.
                 query_vec = embedder.encode([text[:512]], normalize_embeddings=True).astype('float32')
                 D, I = faiss_index.search(query_vec, limit * 2)
                 
@@ -1032,10 +2073,11 @@ def gaokao_link(
                 if faiss_ids:
                     placeholders = ','.join('?' * len(faiss_ids))
                     faiss_rows = con.execute(f"""
-                        SELECT c.id, c.subject, c.title, c.book_key, c.section,
+                        SELECT c.id, c.subject, c.title, c.book_key, c.section, c.logical_page,
                                substr(c.text, 1, 100) as snippet,
-                               c.text
+                               c.text, s.summary AS ai_summary
                         FROM chunks c
+                        LEFT JOIN ai_summaries s ON s.chunk_id = c.id
                         WHERE c.id IN ({placeholders})
                     """, faiss_ids).fetchall()
                     
@@ -1049,22 +2091,38 @@ def gaokao_link(
         # Score, classify, and filter results
         same_subject = []
         cross_subject = []
+        for item in precomputed_links:
+            item["matched_concepts"] = [
+                term for term in precomputed_terms[:5]
+                if term and term in ((item.get("text") or "") + " " + (item.get("summary") or ""))
+            ] or precomputed_terms[:3]
+            if item["subject"] == q_subject:
+                same_subject.append(item)
+            else:
+                cross_subject.append(item)
+
+        scoring_terms = list(dict.fromkeys(precomputed_terms[:6] + top_terms[:10]))
+        scoring_concepts = list(dict.fromkeys(precomputed_terms[:6] + concept_names[:8]))
         for r, link_type in all_results:
             r_text = r["text"] or ""
             # Find which concepts matched in this result
-            r_matched = [c for c in concept_names if c in r_text]
-            score = _score_result(r_text, top_terms, concept_names,
+            r_matched = [c for c in scoring_concepts if c in r_text]
+            score = _score_result(r_text, scoring_terms, scoring_concepts,
                                   r["subject"] == q_subject)
             # Skip results below minimum quality threshold
             if score < 15:
                 continue
+            ai_summary = r["ai_summary"] if "ai_summary" in r.keys() else ""
+            snippet = _compose_chunk_snippet(ai_summary, r["text"], limit=180)
             item = {
                 "id": r["id"],
                 "subject": r["subject"],
                 "title": r["title"],
                 "book_key": r["book_key"],
                 "section": r["section"],
-                "snippet": r["snippet"],
+                "logical_page": r["logical_page"] if "logical_page" in r.keys() else r["section"],
+                "snippet": snippet or r["snippet"],
+                "summary": _normalize_text_line(ai_summary),
                 "text": r_text[:1500],
                 "link_type": link_type,
                 "relevance_score": score,
@@ -1080,17 +2138,55 @@ def gaokao_link(
         same_subject.sort(key=lambda x: x["relevance_score"], reverse=True)
         cross_subject.sort(key=lambda x: x["relevance_score"], reverse=True)
 
+        matched_output = []
+        seen_concepts = set()
+        for c in matched_concepts[:10]:
+            key = c["concept"].casefold()
+            if key in seen_concepts:
+                continue
+            seen_concepts.add(key)
+            matched_output.append(
+                {
+                    "concept": c["concept"],
+                    "is_cross": c["is_cross"],
+                    "subjects": list(c["subjects"].keys()),
+                    "source": "graph",
+                }
+            )
+        for term in precomputed_terms[:8]:
+            key = term.casefold()
+            if key in seen_concepts:
+                continue
+            seen_concepts.add(key)
+            matched_output.append(
+                {
+                    "concept": term,
+                    "is_cross": False,
+                    "subjects": [q_subject] if q_subject else [],
+                    "source": "precomputed",
+                }
+            )
+
         return {
             "question_id": question_id,
             "question_title": q_row["title"],
             "question_subject": q_subject,
-            "search_terms": top_terms[:10],
-            "matched_concepts": [
-                {"concept": c["concept"], "is_cross": c["is_cross"],
-                 "subjects": list(c["subjects"].keys())}
-                for c in matched_concepts[:10]
-            ],
+            "question_year": q_row["year"] if "year" in q_row.keys() else None,
+            "question_category": q_row["category"] if "category" in q_row.keys() else None,
+            "question_type": q_row["question_type"] if "question_type" in q_row.keys() else None,
+            "search_terms": search_terms[:10],
+            "matched_concepts": matched_output[:10],
             "expanded_terms": expanded_terms[:8],
+            "precomputed_analysis": (
+                {
+                    "summary": precomputed_summary,
+                    "knowledge_points": precomputed_terms[:6],
+                    "textbook_refs": precomputed_refs[:6],
+                    "resolved_ref_count": len(precomputed_links),
+                }
+                if precomputed_summary or precomputed_terms or precomputed_refs
+                else None
+            ),
             "links": same_subject[:limit],
             "cross_links": cross_subject[:limit],
         }
@@ -1466,11 +2562,16 @@ def graph_search(q: str = Query(..., min_length=1)):
                 node_data["link_source"] = r["source"]
             nodes.append(node_data)
             # Unique link per concept (not per shared subject)
-            links.append({
+            link_data = {
                 "source": q_clean, "target": r["term"],
                 "subjects": r["shared_subjects"],
                 "strength": r["overlap"],
-            })
+            }
+            ai_rel = get_ai_relation(con, q_clean, r["term"])
+            if ai_rel:
+                link_data["relation"] = ai_rel["type"]
+                link_data["description"] = ai_rel["description"]
+            links.append(link_data)
 
         # Add subject nodes
         for s in sorted(center_subjects):
@@ -1554,10 +2655,15 @@ def graph_overview(
                 # Link cluster members to each other
                 for i, m1 in enumerate(members):
                     for m2 in members[i+1:]:
-                        links.append({
+                        link_data = {
                             "source": m1["concept"], "target": m2["concept"],
                             "cluster": cl_name, "weight": 3,
-                        })
+                        }
+                        ai_rel = get_ai_relation(con, m1["concept"], m2["concept"])
+                        if ai_rel:
+                            link_data["relation"] = ai_rel["type"]
+                            link_data["description"] = ai_rel["description"]
+                        links.append(link_data)
 
             # ── Layer 2: top cross-subject concepts (≥3 subjects, supplement) ─
             extra_needed = max(0, limit - len(cluster_node_ids))
@@ -1624,6 +2730,14 @@ def health():
         "ok": faiss_index is not None,
         "vectors": faiss_index.ntotal if faiss_index else 0,
         "type": type(faiss_index).__name__ if faiss_index else None,
+        "reason": faiss_status_reason,
+        "manifest": {
+            "present": faiss_manifest is not None,
+            "schema_version": (faiss_manifest or {}).get("schema_version"),
+            "model": (faiss_manifest or {}).get("model", {}).get("name"),
+            "vector_rows": (faiss_manifest or {}).get("index", {}).get("vector_rows"),
+            "dimension": (faiss_manifest or {}).get("index", {}).get("dimension"),
+        },
     }
     # Model check
     status["model"] = {
