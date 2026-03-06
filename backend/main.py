@@ -86,6 +86,8 @@ CHAT_STOPWORDS = {
     "怎么", "如何", "最", "常见", "共同", "核心", "关系", "区别", "联系", "如果",
     "我要", "复习", "应该", "顺序", "串起来", "学习", "建议", "围绕", "容易", "混淆",
     "还有", "以及", "一下子", "可以", "请问", "高考", "学科", "里的",
+    "综合", "综合解读", "解读", "突出", "跨学科", "联动", "整合", "对比", "比较",
+    "展开", "展开讲讲", "梳理", "串联", "理解",
 }
 
 
@@ -759,15 +761,15 @@ def _build_chat_context_payload(con, query: str, user_message: str, history: lis
 
     search_terms = _derive_chat_search_terms(query, user_message)
     retrieval_terms, alias_hints = _expand_chat_search_terms(con, search_terms)
-    relation_hints = _fetch_ai_relation_hints(con, search_terms, limit=6)
+    relation_hints = _fetch_ai_relation_hints(con, search_terms, limit=4)
 
-    textbook_rows = _fetch_chat_rows_for_terms(con, retrieval_terms, source="mineru", limit=24)
-    gaokao_rows = _fetch_chat_rows_for_terms(con, retrieval_terms, source="gaokao", limit=6)
-    for row in _fetch_ai_gaokao_rows_for_terms(con, retrieval_terms, limit=6):
+    textbook_rows = _fetch_chat_rows_for_terms(con, retrieval_terms, source="mineru", limit=16)
+    gaokao_rows = _fetch_chat_rows_for_terms(con, retrieval_terms, source="gaokao", limit=4)
+    for row in _fetch_ai_gaokao_rows_for_terms(con, retrieval_terms, limit=4):
         if any(existing["id"] == row["id"] for existing in gaokao_rows):
             continue
         gaokao_rows.append(row)
-        if len(gaokao_rows) >= 6:
+        if len(gaokao_rows) >= 4:
             break
 
     by_subject = {}
@@ -776,11 +778,11 @@ def _build_chat_context_payload(con, query: str, user_message: str, history: lis
 
     groups = []
     evidence = []
-    for subject, subject_rows in sorted(by_subject.items(), key=lambda item: len(item[1]), reverse=True)[:5]:
+    for subject, subject_rows in sorted(by_subject.items(), key=lambda item: len(item[1]), reverse=True)[:4]:
         selected = []
         for row in subject_rows[:2]:
             logical_page = row["logical_page"] if row["logical_page"] is not None else row["section"]
-            snippet = _compose_chunk_snippet(row.get("ai_summary"), row.get("text"), limit=220)
+            snippet = _compose_chunk_snippet(row.get("ai_summary"), row.get("text"), limit=180)
             citation = f"[{subject}·{row['title']}·p{logical_page}]"
             item = {
                 "id": row["id"],
@@ -798,7 +800,7 @@ def _build_chat_context_payload(con, query: str, user_message: str, history: lis
         groups.append({"subject": subject, "count": len(subject_rows), "items": selected})
 
     gaokao_examples = []
-    for row in gaokao_rows[:3]:
+    for row in gaokao_rows[:2]:
         knowledge_points = [item for item in _load_json_list(row.get("ai_gaokao_knowledge_points")) if isinstance(item, str)]
         textbook_refs = [item for item in _load_json_list(row.get("ai_gaokao_textbook_refs")) if isinstance(item, str)]
         ai_summary = _normalize_text_line(row.get("ai_gaokao_summary"))
@@ -946,7 +948,8 @@ def _build_chat_prompt(query: str, user_message: str, context_payload: dict, his
 2. 如果证据不足，必须明确说“证据不足”。
 3. 若用户追问，保持连续回答，不重复整段前文。
 4. 可以参考“概念别名 / 关系提示”组织答案，但不能把它们当成教材原文引用。
-5. 语言简洁、具体，避免空泛套话。"""
+5. 语言简洁、具体，避免空泛套话。
+6. 总长度尽量控制在 280 字以内。"""
 
 
 def _call_ai_service(prompt: str) -> dict:
