@@ -1,12 +1,13 @@
 """
 跨学科教材知识平台 · FastAPI 后端
 """
-import sqlite3, json, math, os, re, time, functools, hashlib
-import urllib.request, urllib.error
+import asyncio, sqlite3, json, math, os, re, time, functools, hashlib, threading, unicodedata
 from collections import Counter
 from pathlib import Path
 from typing import Optional
+import httpx
 from fastapi import FastAPI, Query, HTTPException, Body
+from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -51,9 +52,36 @@ DB_PATH = _resolve_data_asset("textbook_mineru_fts.db")
 FRONTEND = Path(__file__).parent.parent / "frontend"
 FAISS_INDEX_PATH = _resolve_data_asset("textbook_chunks.index")
 FAISS_MANIFEST_PATH = _resolve_data_asset("textbook_chunks.manifest.json")
+SQLITE_BUSY_TIMEOUT_MS = max(1000, int(os.getenv("SQLITE_BUSY_TIMEOUT_MS", "5000")))
+SQLITE_CONNECT_TIMEOUT_SEC = max(1.0, SQLITE_BUSY_TIMEOUT_MS / 1000.0)
+FAISS_SCORE_THRESHOLD = max(0.0, min(1.0, float(os.getenv("FAISS_SCORE_THRESHOLD", "0.62"))))
+
+def _parse_csv_env(name: str, default: str) -> list[str]:
+    raw = os.getenv(name, default)
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+CORS_ALLOW_ORIGINS = _parse_csv_env(
+    "CORS_ALLOW_ORIGINS",
+    "https://sun.bdfz.net,https://jks.bdfz.net,https://ai.bdfz.net",
+)
+CORS_ALLOW_METHODS = _parse_csv_env("CORS_ALLOW_METHODS", "GET,POST,OPTIONS")
+CORS_ALLOW_HEADERS = _parse_csv_env("CORS_ALLOW_HEADERS", "*") or ["*"]
+CORS_ALLOW_ORIGIN_REGEX = os.getenv(
+    "CORS_ALLOW_ORIGIN_REGEX",
+    r"https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+).strip() or None
 
 app = FastAPI(title="跨学科教材知识平台", version="0.1.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ALLOW_ORIGINS,
+    allow_origin_regex=CORS_ALLOW_ORIGIN_REGEX,
+    allow_methods=CORS_ALLOW_METHODS,
+    allow_headers=CORS_ALLOW_HEADERS,
+)
 
 # ── Global AI Models ──────────────────────────────────────────────────
 faiss_index = None
@@ -82,6 +110,8 @@ AI_SERVICE_PROJECT = os.getenv("AI_SERVICE_PROJECT", "").strip()
 AI_SERVICE_TASK_TYPE = os.getenv("AI_SERVICE_TASK_TYPE", "chat").strip() or "chat"
 AI_SERVICE_THINKING_LEVEL = os.getenv("AI_SERVICE_THINKING_LEVEL", "low").strip() or "low"
 AI_INTERNAL_TOKEN = os.getenv("AI_INTERNAL_TOKEN", "").strip()
+_write_lock = threading.Lock()
+_jieba_concept_token = None
 CHAT_STOPWORDS = {
     "请", "先", "再", "继续", "解释", "一下", "分析", "总结", "说明", "告诉", "给我",
     "这个", "这个概念", "这个问题", "它", "那", "哪些", "哪个", "什么", "为什么",
@@ -198,6 +228,8 @@ if FAISS_AVAILABLE and FAISS_INDEX_PATH.exists():
             embedder = SentenceTransformer(EMBEDDER_NAME)
             print(f"FAISS index loaded with {faiss_index.ntotal} vectors. Model: {EMBEDDER_NAME}", flush=True)
     except Exception as e:
+        faiss_index = None
+        embedder = None
         faiss_status_reason = str(e)
         print(f"Failed to load FAISS/model: {e}", flush=True)
         import traceback; traceback.print_exc()
@@ -243,13 +275,161 @@ SUBJECT_META = {
 
 
 def get_db():
-    con = sqlite3.connect(DB_PATH, check_same_thread=False)
+    con = sqlite3.connect(
+        DB_PATH,
+        check_same_thread=False,
+        timeout=SQLITE_CONNECT_TIMEOUT_SEC,
+    )
     con.row_factory = sqlite3.Row
+    con.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
     return con
 
 
 def _clean_query_text(query: str) -> str:
     return re.sub(r"[^\w\u4e00-\u9fff\s]", "", (query or "")).strip()
+
+
+def _db_cache_token() -> tuple[str, int, int]:
+    try:
+        stat = DB_PATH.stat()
+        return (str(DB_PATH), stat.st_mtime_ns, stat.st_size)
+    except FileNotFoundError:
+        return (str(DB_PATH), -1, -1)
+
+
+def _normalize_match_text(text: str | None) -> str:
+    return unicodedata.normalize("NFKC", text or "")
+
+
+def _contains_chinese(text: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in text or "")
+
+
+def _segment_text_tokens(text: str) -> list[str]:
+    normalized = _normalize_match_text(text)
+    if not normalized:
+        return []
+    if "jieba" in globals():
+        try:
+            return [token.strip() for token in jieba.cut(normalized) if token and token.strip()]
+        except Exception:
+            pass
+    return re.findall(r"[A-Za-z0-9+\-./]+|[\u0370-\u03ff]+|[\u4e00-\u9fff]+", normalized)
+
+
+def _build_token_phrases(tokens: list[str], max_window: int = 4) -> set[str]:
+    phrases = set()
+    token_count = len(tokens)
+    for start in range(token_count):
+        merged = ""
+        for end in range(start, min(token_count, start + max_window)):
+            merged += tokens[end]
+            if merged:
+                phrases.add(merged)
+    return phrases
+
+
+@functools.lru_cache(maxsize=2048)
+def _compile_non_cjk_term_pattern(term: str):
+    return re.compile(rf"(?<![0-9A-Za-z]){re.escape(term)}(?![0-9A-Za-z])", re.IGNORECASE)
+
+
+def _concept_matches_text(concept: str, normalized_text: str, phrase_set: set[str]) -> bool:
+    if not concept:
+        return False
+    if _contains_chinese(concept):
+        if concept in phrase_set:
+            return True
+        return len(concept) >= 4 and concept in normalized_text
+    return bool(_compile_non_cjk_term_pattern(concept).search(normalized_text))
+
+
+def _present_terms_in_text(terms: list[str], text: str) -> list[str]:
+    normalized_text = _normalize_match_text(text)
+    phrase_set = _build_token_phrases(_segment_text_tokens(normalized_text))
+    present = []
+    for term in terms:
+        if _concept_matches_text(term, normalized_text, phrase_set):
+            present.append(term)
+    return present
+
+
+def _candidate_window_limit(limit: int, offset: int = 0, *, multiplier: int = 2, minimum: int = 24, cap: int = 1000) -> int:
+    return min(cap, max(minimum, (offset + limit) * multiplier))
+
+
+def _ranked_row_sort_key(item: dict, sort: str = "relevance") -> tuple:
+    if sort == "images":
+        return (-((item.get("text") or "").count("![")), item.get("rank", 0), item.get("id", 0))
+    return (item.get("rank", 0), item.get("id", 0))
+
+
+def _merge_ranked_rows(*row_groups, sort: str = "relevance") -> list[dict]:
+    merged = []
+    existing_ids = set()
+    for group in row_groups:
+        for row in group:
+            data = row if isinstance(row, dict) else dict(row)
+            row_id = data.get("id")
+            if row_id in existing_ids:
+                continue
+            existing_ids.add(row_id)
+            merged.append(data)
+    merged.sort(key=lambda item: _ranked_row_sort_key(item, sort))
+    return merged
+
+
+@functools.lru_cache(maxsize=1)
+def _get_concept_catalog(db_token: tuple[str, int, int]) -> tuple[tuple[str, dict, bool], ...]:
+    if db_token[1] < 0:
+        return tuple()
+
+    con = get_db()
+    try:
+        has_map = con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='concept_map'"
+        ).fetchone()
+        if not has_map:
+            return tuple()
+        rows = con.execute(
+            """
+            SELECT concept, subject, SUM(count) AS total_count
+            FROM concept_map
+            WHERE length(concept) >= 2
+               OR concept IN ('DNA', 'RNA', 'ATP', 'ADP', 'PCR')
+            GROUP BY concept, subject
+            """
+        ).fetchall()
+    finally:
+        con.close()
+
+    by_concept: dict[str, dict[str, int]] = {}
+    for row in rows:
+        concept = row["concept"]
+        subjects = by_concept.setdefault(concept, {})
+        subjects[row["subject"]] = int(row["total_count"] or 0)
+
+    catalog = []
+    for concept, subjects in by_concept.items():
+        has_chinese = _contains_chinese(concept)
+        if not has_chinese and concept.upper() not in ("DNA", "RNA", "ATP", "ADP", "PCR"):
+            continue
+        catalog.append((concept, subjects, has_chinese))
+    catalog.sort(key=lambda item: len(item[0]), reverse=True)
+    return tuple(catalog)
+
+
+def _ensure_jieba_concepts_loaded(catalog: tuple[tuple[str, dict, bool], ...], db_token: tuple[str, int, int]) -> None:
+    global _jieba_concept_token
+    if "jieba" not in globals() or _jieba_concept_token == db_token:
+        return
+    try:
+        for concept, _, has_chinese in catalog:
+            if has_chinese:
+                jieba.add_word(concept, freq=max(10000, len(concept) * 2000))
+        _jieba_concept_token = db_token
+    except Exception as e:
+        print(f"Jieba concept dict load failed: {e}", flush=True)
 
 
 def _chat_excerpt(text: str, limit: int = 280) -> str:
@@ -624,8 +804,7 @@ def _derive_chat_search_terms(query: str, user_message: str) -> list[str]:
 
 
 def _fetch_chat_rows(con, clean_q: str, *, source: str, limit: int):
-    rows = []
-    existing_ids = set()
+    candidate_limit = _candidate_window_limit(limit, multiplier=2, minimum=max(8, limit * 2), cap=160)
 
     like_rows = con.execute(
         f"""
@@ -641,11 +820,8 @@ def _fetch_chat_rows(con, clean_q: str, *, source: str, limit: int):
         WHERE c.source = ? AND c.text LIKE ?
         LIMIT ?
         """,
-        (source, f"%{clean_q}%", limit),
+        (source, f"%{clean_q}%", candidate_limit),
     ).fetchall()
-    for r in like_rows:
-        rows.append(dict(r))
-        existing_ids.add(r["id"])
 
     try:
         fts_rows = con.execute(
@@ -664,19 +840,12 @@ def _fetch_chat_rows(con, clean_q: str, *, source: str, limit: int):
             ORDER BY rank
             LIMIT ?
             """,
-            (source, clean_q, limit),
+            (source, clean_q, candidate_limit),
         ).fetchall()
     except Exception:
         fts_rows = []
 
-    for r in fts_rows:
-        if r["id"] in existing_ids:
-            continue
-        rows.append(dict(r))
-        existing_ids.add(r["id"])
-
-    rows.sort(key=lambda item: item["rank"])
-    return rows[:limit]
+    return _merge_ranked_rows(like_rows, fts_rows)[:limit]
 
 
 def _fetch_ai_gaokao_rows_for_terms(con, terms: list[str], limit: int) -> list[dict]:
@@ -718,10 +887,6 @@ def _fetch_ai_gaokao_rows_for_terms(con, terms: list[str], limit: int) -> list[d
             merged["_term_index"] = idx
             rows.append(merged)
             existing_ids.add(row["id"])
-            if len(rows) >= limit:
-                break
-        if len(rows) >= limit:
-            break
 
     rows.sort(key=lambda item: (item.get("_term_index", 0), -(item.get("year") or 0), item["id"]))
     return rows[:limit]
@@ -744,12 +909,8 @@ def _fetch_chat_rows_for_terms(con, terms: list[str], *, source: str, limit: int
             merged["_term_index"] = idx
             rows.append(merged)
             existing_ids.add(row_id)
-            if len(rows) >= limit:
-                break
-        if len(rows) >= limit:
-            break
 
-    rows.sort(key=lambda item: (item.get("_term_index", 0), item["rank"]))
+    rows.sort(key=lambda item: (item["rank"], item.get("_term_index", 0), item["id"]))
     return rows[:limit]
 
 
@@ -899,6 +1060,14 @@ def _build_chat_context_payload(con, query: str, user_message: str, history: lis
     }
 
 
+def _build_chat_context_for_request(query: str, user_message: str, history: list[dict] | None = None) -> dict:
+    con = get_db()
+    try:
+        return _build_chat_context_payload(con, query, user_message, history=history)
+    finally:
+        con.close()
+
+
 def _build_chat_prompt(query: str, user_message: str, context_payload: dict, history: list[dict] | None = None) -> str:
     history_text = (context_payload.get("history_text") or "").strip()
     if history and not history_text:
@@ -951,16 +1120,14 @@ def _build_chat_prompt(query: str, user_message: str, context_payload: dict, his
 6. 总长度尽量控制在 280 字以内。"""
 
 
-def _call_ai_service(prompt: str) -> dict:
+async def _call_ai_service(prompt: str) -> dict:
     payload_obj = {
         "prompt": prompt,
         "model": AI_SERVICE_MODEL,
         "taskType": AI_SERVICE_TASK_TYPE,
         "thinkingLevel": AI_SERVICE_THINKING_LEVEL,
     }
-    payload = json.dumps(payload_obj, ensure_ascii=False).encode("utf-8")
     headers = {
-        "Content-Type": "application/json",
         "Accept": "application/json",
         "Origin": AI_SERVICE_ORIGIN,
         "Referer": AI_SERVICE_REFERER,
@@ -977,44 +1144,39 @@ def _call_ai_service(prompt: str) -> dict:
     last_network_error: Optional[str] = None
     timeout_hit = False
 
-    for attempt in range(AI_SERVICE_RETRIES + 1):
-        request = urllib.request.Request(
-            AI_SERVICE_URL,
-            data=payload,
-            headers=headers,
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=AI_SERVICE_TIMEOUT) as response:
-                raw = response.read().decode("utf-8")
-            break
-        except urllib.error.HTTPError as e:
-            detail = e.read().decode("utf-8", errors="ignore")[:400]
-            last_http_error = (e.code, detail)
-            if e.code >= 500 and attempt < AI_SERVICE_RETRIES:
-                time.sleep(AI_SERVICE_RETRY_DELAY)
-                continue
-            raise HTTPException(502, f"AI service http error: {e.code} {detail}") from e
-        except urllib.error.URLError as e:
-            last_network_error = str(e.reason)
-            if attempt < AI_SERVICE_RETRIES:
-                time.sleep(AI_SERVICE_RETRY_DELAY)
-                continue
-            raise HTTPException(502, f"AI service unavailable: {e.reason}") from e
-        except TimeoutError as e:
-            timeout_hit = True
-            if attempt < AI_SERVICE_RETRIES:
-                time.sleep(AI_SERVICE_RETRY_DELAY)
-                continue
-            raise HTTPException(504, "AI service timeout") from e
-    else:
-        if last_http_error:
-            raise HTTPException(502, f"AI service http error: {last_http_error[0]} {last_http_error[1]}")
-        if last_network_error:
-            raise HTTPException(502, f"AI service unavailable: {last_network_error}")
-        if timeout_hit:
-            raise HTTPException(504, "AI service timeout")
-        raise HTTPException(502, "AI service unavailable")
+    async with httpx.AsyncClient(timeout=httpx.Timeout(AI_SERVICE_TIMEOUT)) as client:
+        for attempt in range(AI_SERVICE_RETRIES + 1):
+            try:
+                response = await client.post(AI_SERVICE_URL, json=payload_obj, headers=headers)
+                raw = response.text
+                if response.status_code >= 400:
+                    detail = raw[:400]
+                    last_http_error = (response.status_code, detail)
+                    if response.status_code >= 500 and attempt < AI_SERVICE_RETRIES:
+                        await asyncio.sleep(AI_SERVICE_RETRY_DELAY)
+                        continue
+                    raise HTTPException(502, f"AI service http error: {response.status_code} {detail}")
+                break
+            except httpx.TimeoutException as e:
+                timeout_hit = True
+                if attempt < AI_SERVICE_RETRIES:
+                    await asyncio.sleep(AI_SERVICE_RETRY_DELAY)
+                    continue
+                raise HTTPException(504, "AI service timeout") from e
+            except httpx.RequestError as e:
+                last_network_error = str(e)
+                if attempt < AI_SERVICE_RETRIES:
+                    await asyncio.sleep(AI_SERVICE_RETRY_DELAY)
+                    continue
+                raise HTTPException(502, f"AI service unavailable: {e}") from e
+        else:
+            if last_http_error:
+                raise HTTPException(502, f"AI service http error: {last_http_error[0]} {last_http_error[1]}")
+            if last_network_error:
+                raise HTTPException(502, f"AI service unavailable: {last_network_error}")
+            if timeout_hit:
+                raise HTTPException(504, "AI service timeout")
+            raise HTTPException(502, "AI service unavailable")
 
     try:
         data = json.loads(raw)
@@ -1030,25 +1192,26 @@ def _call_ai_service(prompt: str) -> dict:
 # ── Search logs table ─────────────────────────────────────────────────
 def init_search_logs():
     """Create search_logs table if not exists."""
-    con = get_db()
-    try:
-        con.execute("""
-            CREATE TABLE IF NOT EXISTS search_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                query TEXT NOT NULL,
-                query_normalized TEXT NOT NULL,
-                subject TEXT,
-                book_key TEXT,
-                source TEXT,
-                result_count INTEGER DEFAULT 0,
-                ts REAL NOT NULL
-            )
-        """)
-        con.execute("CREATE INDEX IF NOT EXISTS idx_logs_ts ON search_logs(ts DESC)")
-        con.execute("CREATE INDEX IF NOT EXISTS idx_logs_qn ON search_logs(query_normalized)")
-        con.commit()
-    finally:
-        con.close()
+    with _write_lock:
+        con = get_db()
+        try:
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS search_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    query TEXT NOT NULL,
+                    query_normalized TEXT NOT NULL,
+                    subject TEXT,
+                    book_key TEXT,
+                    source TEXT,
+                    result_count INTEGER DEFAULT 0,
+                    ts REAL NOT NULL
+                )
+            """)
+            con.execute("CREATE INDEX IF NOT EXISTS idx_logs_ts ON search_logs(ts DESC)")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_logs_qn ON search_logs(query_normalized)")
+            con.commit()
+        finally:
+            con.close()
 
 init_search_logs()
 
@@ -1059,39 +1222,43 @@ def log_search(query: str, subject=None, book_key=None, source=None, result_coun
     if len(normalized) < 1:
         return
     try:
-        con = get_db()
-        con.execute(
-            "INSERT INTO search_logs (query, query_normalized, subject, book_key, source, result_count, ts) VALUES (?,?,?,?,?,?,?)",
-            (query.strip(), normalized, subject, book_key, source, result_count, time.time())
-        )
-        con.commit()
-        con.close()
+        with _write_lock:
+            con = get_db()
+            try:
+                con.execute(
+                    "INSERT INTO search_logs (query, query_normalized, subject, book_key, source, result_count, ts) VALUES (?,?,?,?,?,?,?)",
+                    (query.strip(), normalized, subject, book_key, source, result_count, time.time())
+                )
+                con.commit()
+            finally:
+                con.close()
     except Exception:
         pass  # never block search for logging failures
 
 
 def init_ai_chat_logs():
     """Create ai_chat_logs table if not exists."""
-    con = get_db()
-    try:
-        con.execute("""
-            CREATE TABLE IF NOT EXISTS ai_chat_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                query TEXT NOT NULL,
-                user_message TEXT NOT NULL,
-                subject_count INTEGER DEFAULT 0,
-                evidence_count INTEGER DEFAULT 0,
-                gaokao_hit_count INTEGER DEFAULT 0,
-                provider TEXT,
-                success INTEGER DEFAULT 0,
-                error TEXT,
-                ts REAL NOT NULL
-            )
-        """)
-        con.execute("CREATE INDEX IF NOT EXISTS idx_ai_chat_logs_ts ON ai_chat_logs(ts DESC)")
-        con.commit()
-    finally:
-        con.close()
+    with _write_lock:
+        con = get_db()
+        try:
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS ai_chat_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    query TEXT NOT NULL,
+                    user_message TEXT NOT NULL,
+                    subject_count INTEGER DEFAULT 0,
+                    evidence_count INTEGER DEFAULT 0,
+                    gaokao_hit_count INTEGER DEFAULT 0,
+                    provider TEXT,
+                    success INTEGER DEFAULT 0,
+                    error TEXT,
+                    ts REAL NOT NULL
+                )
+            """)
+            con.execute("CREATE INDEX IF NOT EXISTS idx_ai_chat_logs_ts ON ai_chat_logs(ts DESC)")
+            con.commit()
+        finally:
+            con.close()
 
 
 init_ai_chat_logs()
@@ -1107,28 +1274,31 @@ def _write_ai_chat_log(
     error: str | None = None,
 ):
     try:
-        con = get_db()
-        con.execute(
-            """
-            INSERT INTO ai_chat_logs (
-                query, user_message, subject_count, evidence_count, gaokao_hit_count,
-                provider, success, error, ts
-            ) VALUES (?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                query.strip(),
-                user_message.strip(),
-                int(summary.get("subject_count") or 0),
-                int(summary.get("evidence_count") or 0),
-                int(summary.get("gaokao_hit_count") or 0),
-                provider,
-                1 if success else 0,
-                error,
-                time.time(),
-            ),
-        )
-        con.commit()
-        con.close()
+        with _write_lock:
+            con = get_db()
+            try:
+                con.execute(
+                    """
+                    INSERT INTO ai_chat_logs (
+                        query, user_message, subject_count, evidence_count, gaokao_hit_count,
+                        provider, success, error, ts
+                    ) VALUES (?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        query.strip(),
+                        user_message.strip(),
+                        int(summary.get("subject_count") or 0),
+                        int(summary.get("evidence_count") or 0),
+                        int(summary.get("gaokao_hit_count") or 0),
+                        provider,
+                        1 if success else 0,
+                        error,
+                        time.time(),
+                    ),
+                )
+                con.commit()
+            finally:
+                con.close()
     except Exception:
         pass
 
@@ -1186,12 +1356,11 @@ def search(
         elif source == 'gaokao':
             where_extra += " AND c.source = 'gaokao'"
 
-        rows = []
-        existing_ids = set()
+        candidate_limit = _candidate_window_limit(limit, offset, multiplier=2, minimum=max(24, limit * 2), cap=600)
 
         # 1. Exact Substring Match (LIKE)
         # Guarantees we NEVER miss a direct textual match due to FTS5 tokenization issues
-        like_params = [clean_q, f"%{clean_q}%"] + filter_params + [limit, offset]
+        like_params = [clean_q, f"%{clean_q}%"] + filter_params + [candidate_limit]
         like_rows = con.execute(f"""
             SELECT c.id, c.subject, c.title, c.book_key, c.section, c.logical_page,
                    SUBSTR(c.text, MAX(1, INSTR(c.text, ?)-30), 120) as snippet,
@@ -1199,53 +1368,53 @@ def search(
                    -100.0 as rank
             FROM chunks c
             WHERE c.text LIKE ? {where_extra}
-            LIMIT ? OFFSET ?
+            LIMIT ?
         """, like_params).fetchall()
-        
-        for r in like_rows:
-            d = dict(r)
-            # Add basic highlighting for the LIKE snippet
-            d['snippet'] = d['snippet'].replace(clean_q, f"<mark>{clean_q}</mark>")
+        like_ranked = []
+        for row in like_rows:
+            d = dict(row)
+            d["snippet"] = d["snippet"].replace(clean_q, f"<mark>{clean_q}</mark>")
             d["match_channel"] = "exact"
-            rows.append(d)
-            existing_ids.add(d['id'])
+            like_ranked.append(d)
 
         # 2. Fuzzy/Keyword Match (FTS5)
         # Handles multiple keywords, spaces, etc.
-        fts_params = [clean_q] + filter_params + [limit, offset]
+        fts_params = [clean_q] + filter_params + [candidate_limit]
         
         # Order clause
         order_clause = "ORDER BY rank"
         if sort == "images":
             order_clause = "ORDER BY (LENGTH(c.text) - LENGTH(REPLACE(c.text, '![', ''))) DESC, rank"
 
-        fts_rows = con.execute(f"""
-            SELECT c.id, c.subject, c.title, c.book_key, c.section, c.logical_page,
-                   snippet(chunks_fts, 0, '<mark>', '</mark>', '…', 40) as snippet,
-                   c.text, c.source, c.year, c.category,
-                   f.rank as rank
-            FROM chunks c
-            JOIN chunks_fts f ON c.id = f.rowid
-            WHERE chunks_fts MATCH ? {where_extra}
-            {order_clause}
-            LIMIT ? OFFSET ?
-        """, fts_params).fetchall()
+        try:
+            fts_rows = con.execute(f"""
+                SELECT c.id, c.subject, c.title, c.book_key, c.section, c.logical_page,
+                       snippet(chunks_fts, 0, '<mark>', '</mark>', '…', 40) as snippet,
+                       c.text, c.source, c.year, c.category,
+                       f.rank as rank
+                FROM chunks c
+                JOIN chunks_fts f ON c.id = f.rowid
+                WHERE chunks_fts MATCH ? {where_extra}
+                {order_clause}
+                LIMIT ?
+            """, fts_params).fetchall()
+        except Exception:
+            fts_rows = []
 
-        for r in fts_rows:
-            if r['id'] not in existing_ids:
-                d = dict(r)
-                d["match_channel"] = "fts"
-                rows.append(d)
-                existing_ids.add(r['id'])
+        fts_ranked = []
+        for row in fts_rows:
+            d = dict(row)
+            d["match_channel"] = "fts"
+            fts_ranked.append(d)
 
-        # 3. Sort by rank (exact matches get -100.0 so they appear first) and trim to limit
-        if sort != "images":
-            rows.sort(key=lambda x: x['rank'])
-        rows = rows[:limit]
+        # 3. Merge, then apply filters and pagination globally.
+        all_rows = _merge_ranked_rows(like_ranked, fts_ranked, sort=sort)
 
         # Optional: filter to only results with images
         if has_images:
-            rows = [r for r in rows if '![' in (r['text'] or '')]
+            all_rows = [r for r in all_rows if '![' in (r['text'] or '')]
+        total = len(all_rows)
+        rows = all_rows[offset: offset + limit]
 
         # Group by subject
         by_subject = {}
@@ -1284,11 +1453,10 @@ def search(
             by_subject[s]["results"].append(result_item)
             by_subject[s]["count"] += 1
 
-        subject_counts_counter = Counter(r["subject"] for r in rows)
+        subject_counts_counter = Counter(r["subject"] for r in all_rows)
         subject_counts = dict(
             sorted(subject_counts_counter.items(), key=lambda item: item[1], reverse=True)
         )
-        total = len(rows)
 
         # Cross-subject hint
         cross_subjects = [s for s in subject_counts if subject_counts[s] > 0]
@@ -1448,6 +1616,8 @@ def keywords(limit: int = Query(120, ge=1, le=500)):
 @app.get("/api/cross-links")
 def cross_links():
     """Dynamic cross-subject concept links from pre-computed concept_map."""
+    if 'cross_links' in _cache:
+        return _cache['cross_links']
     con = get_db()
     try:
         # Check if concept_map table exists
@@ -1545,12 +1715,14 @@ def cross_links():
             {"id": s, "type": "subject", **SUBJECT_META.get(s, {"icon": "📚", "color": "#95a5a6"})}
             for s in SUBJECT_META
         ]
-        return {
+        result = {
             "concept_nodes": nodes,
             "subject_nodes": subject_nodes,
             "links": links,
             "clusters": clusters,
         }
+        _cache['cross_links'] = result
+        return result
     finally:
         con.close()
 
@@ -1671,7 +1843,7 @@ def chat_log(payload: dict = Body(...)):
 
 
 @app.post("/api/chat")
-def chat(payload: dict = Body(...)):
+async def chat(payload: dict = Body(...)):
     """Server-side grounded AI chat orchestration."""
     query = str(payload.get("query", "")).strip()
     user_message = str(payload.get("user_message", "")).strip()
@@ -1679,18 +1851,13 @@ def chat(payload: dict = Body(...)):
     if not query or not user_message:
         raise HTTPException(400, "query and user_message are required")
 
-    con = get_db()
-    try:
-        context_payload = _build_chat_context_payload(con, query, user_message, history=history)
-    finally:
-        con.close()
-
+    context_payload = await run_in_threadpool(_build_chat_context_for_request, query, user_message, history)
     prompt = _build_chat_prompt(query, user_message, context_payload, history=history)
     try:
-        ai_data = _call_ai_service(prompt)
-        log_ai_chat(query, user_message, context_payload, success=True)
+        ai_data = await _call_ai_service(prompt)
+        await run_in_threadpool(log_ai_chat, query, user_message, context_payload, success=True)
     except HTTPException as e:
-        log_ai_chat(query, user_message, context_payload, success=False, error=str(e.detail))
+        await run_in_threadpool(log_ai_chat, query, user_message, context_payload, success=False, error=str(e.detail))
         raise
 
     return {
@@ -1881,41 +2048,28 @@ def _extract_weighted_terms(text: str, con) -> list[tuple[str, float]]:
 
 
 def _match_concepts(text: str, subject: str, con) -> list[dict]:
-    """Match text against concept_map using exact whole-word matching."""
-    has_map = con.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='concept_map'"
-    ).fetchone()
-    if not has_map:
+    """Match text against concept_map using cached exact-token phrases with long-term fallback."""
+    db_token = _db_cache_token()
+    catalog = _get_concept_catalog(db_token)
+    if not catalog:
         return []
 
-    # Get all concepts from DB — only meaningful ones
-    all_concepts = con.execute(
-        "SELECT DISTINCT concept FROM concept_map WHERE length(concept) >= 2"
-    ).fetchall()
+    _ensure_jieba_concepts_loaded(catalog, db_token)
+    normalized_text = _normalize_match_text(text)
+    phrase_set = _build_token_phrases(_segment_text_tokens(normalized_text))
 
     matched = []
-    for row in all_concepts:
-        concept = row["concept"]
-        # Skip pure-English noise that isn't a known scientific acronym
-        has_chinese = any('\u4e00' <= c <= '\u9fff' for c in concept)
-        if not has_chinese and concept.upper() not in ('DNA', 'RNA', 'ATP', 'ADP', 'PCR'):
+    for concept, subjects, has_chinese in catalog:
+        if has_chinese and any(len(item["concept"]) > len(concept) and concept in item["concept"] for item in matched):
             continue
-        # Require the exact concept string to appear in the text
-        if concept in text:
-            # Get which subjects this concept spans
-            subj_rows = con.execute(
-                "SELECT subject, count FROM concept_map WHERE concept = ?",
-                [concept]
-            ).fetchall()
-            subjects = {r["subject"]: r["count"] for r in subj_rows}
-            matched.append({
-                "concept": concept,
-                "subjects": subjects,
-                "is_cross": len(subjects) >= 2,
-                "is_same_subject": subject in subjects,
-            })
-    # Sort by specificity: longer concepts are more specific, prioritize them
-    matched.sort(key=lambda x: len(x["concept"]), reverse=True)
+        if not _concept_matches_text(concept, normalized_text, phrase_set):
+            continue
+        matched.append({
+            "concept": concept,
+            "subjects": dict(subjects),
+            "is_cross": len(subjects) >= 2,
+            "is_same_subject": subject in subjects,
+        })
     return matched
 
 
@@ -1950,12 +2104,13 @@ def _score_result(result_text: str, query_terms: list[str],
                   matched_concepts: list[str], is_same_subject: bool) -> int:
     """Compute relevance score 0-100 with IDF-weighted term importance."""
     score = 0
-    rt_lower = result_text.lower()
+    normalized_text = _normalize_match_text(result_text)
+    phrase_set = _build_token_phrases(_segment_text_tokens(normalized_text))
     
     # Term overlap — weight longer/rarer terms higher (max 35 points)
     term_hits = 0
     for t in query_terms[:15]:
-        if t in rt_lower:
+        if _concept_matches_text(t, normalized_text, phrase_set):
             # Longer terms are more specific and worth more
             weight = min(3, len(t) - 1)  # 2-char=1, 3-char=2, 4+=3
             term_hits += weight
@@ -1964,7 +2119,7 @@ def _score_result(result_text: str, query_terms: list[str],
     # Concept matches — high-value signal (max 40 points)
     concept_hits = 0
     for c in matched_concepts:
-        if c in rt_lower:
+        if _concept_matches_text(c, normalized_text, phrase_set):
             # Longer concept names = more specific = higher score
             concept_hits += min(15, len(c) * 2)
     score += min(40, concept_hits)
@@ -2105,7 +2260,7 @@ def gaokao_link(
                 
                 faiss_ids = []
                 for score, match_id in zip(D[0], I[0]):
-                    if match_id != -1 and match_id not in seen_ids and score > 0.55:
+                    if match_id != -1 and match_id not in seen_ids and score > FAISS_SCORE_THRESHOLD:
                         faiss_ids.append(int(match_id))
                 
                 if faiss_ids:
@@ -2130,10 +2285,10 @@ def gaokao_link(
         same_subject = []
         cross_subject = []
         for item in precomputed_links:
-            item["matched_concepts"] = [
-                term for term in precomputed_terms[:5]
-                if term and term in ((item.get("text") or "") + " " + (item.get("summary") or ""))
-            ] or precomputed_terms[:3]
+            item["matched_concepts"] = _present_terms_in_text(
+                precomputed_terms[:5],
+                f"{item.get('text') or ''} {item.get('summary') or ''}",
+            ) or precomputed_terms[:3]
             if item["subject"] == q_subject:
                 same_subject.append(item)
             else:
@@ -2144,7 +2299,7 @@ def gaokao_link(
         for r, link_type in all_results:
             r_text = r["text"] or ""
             # Find which concepts matched in this result
-            r_matched = [c for c in scoring_concepts if c in r_text]
+            r_matched = _present_terms_in_text(scoring_concepts, r_text)
             score = _score_result(r_text, scoring_terms, scoring_concepts,
                                   r["subject"] == q_subject)
             # Skip results below minimum quality threshold
@@ -2279,7 +2434,7 @@ def textbook_links(
         results = []
         for r in rows:
             r_text = r["text"] or ""
-            r_matched = [c for c in concept_names if c in r_text]
+            r_matched = _present_terms_in_text(concept_names, r_text)
             score = _score_result(r_text, top_terms, concept_names, False)
             results.append({
                 "id": r["id"],
@@ -2305,7 +2460,7 @@ def textbook_links(
                 
                 faiss_ids = []
                 for score, match_id in zip(D[0], I[0]):
-                    if match_id != -1 and match_id not in seen_ids and score > 0.6:
+                    if match_id != -1 and match_id not in seen_ids and score > FAISS_SCORE_THRESHOLD:
                         faiss_ids.append(int(match_id))
                 
                 if faiss_ids:
