@@ -1393,6 +1393,55 @@ def log_ai_chat(
     )
 
 
+def _compute_search_subject_counts(
+    con: sqlite3.Connection,
+    clean_q: str,
+    where_extra: str,
+    filter_params: list,
+    *,
+    has_images: bool,
+) -> dict[str, int]:
+    count_where_extra = where_extra
+    if has_images:
+        count_where_extra += " AND c.text LIKE '%![%'"
+
+    like_params = [f"%{clean_q}%"] + list(filter_params)
+    fts_params = [clean_q] + list(filter_params)
+
+    try:
+        rows = con.execute(
+            f"""
+                SELECT subject, COUNT(*) AS cnt
+                FROM (
+                    SELECT c.id, c.subject
+                    FROM chunks c
+                    WHERE c.text LIKE ? {count_where_extra}
+                    UNION
+                    SELECT c.id, c.subject
+                    FROM chunks c
+                    JOIN chunks_fts f ON c.id = f.rowid
+                    WHERE chunks_fts MATCH ? {count_where_extra}
+                )
+                GROUP BY subject
+                ORDER BY cnt DESC, subject
+            """,
+            like_params + fts_params,
+        ).fetchall()
+    except Exception:
+        rows = con.execute(
+            f"""
+                SELECT c.subject AS subject, COUNT(*) AS cnt
+                FROM chunks c
+                WHERE c.text LIKE ? {count_where_extra}
+                GROUP BY c.subject
+                ORDER BY cnt DESC, c.subject
+            """,
+            like_params,
+        ).fetchall()
+
+    return {row["subject"]: row["cnt"] for row in rows}
+
+
 @app.get("/api/search")
 def search(
     q: str = Query(..., min_length=1, max_length=200),
@@ -1523,9 +1572,12 @@ def search(
             by_subject[s]["results"].append(result_item)
             by_subject[s]["count"] += 1
 
-        subject_counts_counter = Counter(r["subject"] for r in all_rows)
-        subject_counts = dict(
-            sorted(subject_counts_counter.items(), key=lambda item: item[1], reverse=True)
+        subject_counts = _compute_search_subject_counts(
+            con,
+            clean_q,
+            where_extra,
+            filter_params,
+            has_images=has_images,
         )
 
         # Cross-subject hint
