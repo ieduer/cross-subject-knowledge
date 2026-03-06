@@ -134,8 +134,8 @@
 └── textbook_chunks.manifest.json
 
 /state/cache/                   # 宿主机挂载的运行时缓存
-├── huggingface/                # Transformers / HF 模型缓存
-└── sentence_transformers/
+└── huggingface/
+    └── hub/                    # HF / Transformers / sentence-transformers 共享模型快照
 ```
 
 > 📷 **图片不在 Docker 中** — 87K 张原图托管在 Cloudflare R2（`img.rdfzer.com`），前端通过 CDN URL 直接加载。
@@ -291,7 +291,7 @@ RUNTIME_ROOT=/root/cross-subject-knowledge ./scripts/deploy_vps.sh
 *   **源代码 (GitHub)**：前端页面、后端 API、Dockerfile、各种配置。**绝对不含**庞大的数据库和图片。
 *   **图片资源 (R2 CDN)**：所有的教材原图、单页截图等，托管在 Cloudflare R2 (`img.rdfzer.com`)，全球加速分发，不消耗部署服务器 (VPS) 的带宽。
 *   **检索数据库 (VPS 本地)**：`textbook_mineru_fts.db`、`textbook_chunks.index` 和 manifest，存放于 VPS 本地 `data/index/`，通过 Docker 挂载提供服务。
-*   **模型缓存 (VPS 本地)**：Hugging Face / sentence-transformers 缓存保存在 VPS 本地 `state/cache/`，不再烘进镜像。
+*   **模型缓存 (VPS 本地)**：Hugging Face、Transformers、sentence-transformers 统一共享 VPS 本地 `state/cache/huggingface/hub/`，不再烘进镜像，也避免重复存两份模型权重。
 
 ### 2. 自动化部署 (GitHub Actions)
 项目利用 GitHub Actions 实现了完全自动化的持续部署：
@@ -338,8 +338,9 @@ docker run -d --name textbook-knowledge \
   -e DATA_ROOT=/data \
   -e STATE_ROOT=/state \
   -e HF_HOME=/state/cache/huggingface \
-  -e SENTENCE_TRANSFORMERS_HOME=/state/cache/sentence_transformers \
-  -e TRANSFORMERS_CACHE=/state/cache/huggingface/transformers \
+  -e HF_HUB_CACHE=/state/cache/huggingface/hub \
+  -e SENTENCE_TRANSFORMERS_HOME=/state/cache/huggingface/hub \
+  -e TRANSFORMERS_CACHE=/state/cache/huggingface/hub \
   -v "$(pwd)/data:/data" \
   -v "$(pwd)/state:/state" \
   textbook-knowledge

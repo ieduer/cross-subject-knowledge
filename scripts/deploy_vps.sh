@@ -6,14 +6,20 @@ RUNTIME_ROOT="${RUNTIME_ROOT:-/root/cross-subject-knowledge}"
 CONTAINER_NAME="textbook-knowledge"
 REPO_NAME="textbook-knowledge"
 EMBEDDER_NAME="${EMBEDDER_NAME:-BAAI/bge-m3}"
+HOST_HF_CACHE_ROOT="${RUNTIME_ROOT}/state/cache/huggingface"
+HOST_HF_HUB_CACHE="${HOST_HF_CACHE_ROOT}/hub"
+HOST_LEGACY_ST_CACHE="${RUNTIME_ROOT}/state/cache/sentence_transformers"
+CONTAINER_HF_CACHE_ROOT="/state/cache/huggingface"
+CONTAINER_HF_HUB_CACHE="/state/cache/huggingface/hub"
+EMBEDDER_CACHE_KEY="models--${EMBEDDER_NAME//\//--}"
 
 cd "$SOURCE_ROOT"
 
 mkdir -p \
   "${RUNTIME_ROOT}/data/index" \
   "${RUNTIME_ROOT}/state/logs" \
-  "${RUNTIME_ROOT}/state/cache/huggingface" \
-  "${RUNTIME_ROOT}/state/cache/sentence_transformers" \
+  "${HOST_HF_HUB_CACHE}" \
+  "${HOST_LEGACY_ST_CACHE}" \
   "${RUNTIME_ROOT}/state/tmp" \
   "${RUNTIME_ROOT}/state/batch"
 
@@ -34,7 +40,25 @@ backup_tag="${REPO_NAME}:pre-${build_stamp}"
 rollback_image=""
 
 host_cache_has_model() {
-  find "${RUNTIME_ROOT}/state/cache/huggingface" -type f | grep -q .
+  find "${HOST_HF_HUB_CACHE}/${EMBEDDER_CACHE_KEY}" -type f | grep -q .
+}
+
+migrate_legacy_st_cache() {
+  if [ -d "${HOST_LEGACY_ST_CACHE}/${EMBEDDER_CACHE_KEY}" ] && [ ! -e "${HOST_HF_HUB_CACHE}/${EMBEDDER_CACHE_KEY}" ]; then
+    echo "=== migrating legacy sentence-transformers cache into shared HF hub cache ==="
+    mv "${HOST_LEGACY_ST_CACHE}/${EMBEDDER_CACHE_KEY}" "${HOST_HF_HUB_CACHE}/"
+  fi
+}
+
+prune_legacy_st_cache() {
+  if [ -d "${HOST_LEGACY_ST_CACHE}/${EMBEDDER_CACHE_KEY}" ] && host_cache_has_model; then
+    echo "=== pruning duplicate legacy sentence-transformers cache ==="
+    rm -rf "${HOST_LEGACY_ST_CACHE:?}/${EMBEDDER_CACHE_KEY}"
+  fi
+
+  if [ -d "${HOST_LEGACY_ST_CACHE}/.locks" ]; then
+    find "${HOST_LEGACY_ST_CACHE}/.locks" -type f -delete || true
+  fi
 }
 
 echo "=== deploy start $(date -u '+%Y-%m-%d %H:%M:%S UTC') commit=${commit_sha} ==="
@@ -51,19 +75,22 @@ fi
 export DOCKER_BUILDKIT=1
 docker build --pull -t "${build_tag}" -t "${REPO_NAME}:latest" .
 
+migrate_legacy_st_cache
+
 if ! host_cache_has_model; then
   echo "=== bootstrapping host model cache ==="
   if docker ps -a --format '{{.Names}}' | grep -qx "${CONTAINER_NAME}"; then
-    docker cp "${CONTAINER_NAME}:/root/.cache/huggingface/." "${RUNTIME_ROOT}/state/cache/huggingface/" >/dev/null 2>&1 || true
+    docker cp "${CONTAINER_NAME}:/root/.cache/huggingface/." "${HOST_HF_CACHE_ROOT}/" >/dev/null 2>&1 || true
   fi
 fi
 
 if ! host_cache_has_model; then
   echo "=== warming model cache with ${EMBEDDER_NAME} ==="
   docker run --rm \
-    -e HF_HOME=/state/cache/huggingface \
-    -e SENTENCE_TRANSFORMERS_HOME=/state/cache/sentence_transformers \
-    -e TRANSFORMERS_CACHE=/state/cache/huggingface/transformers \
+    -e HF_HOME="${CONTAINER_HF_CACHE_ROOT}" \
+    -e HF_HUB_CACHE="${CONTAINER_HF_HUB_CACHE}" \
+    -e SENTENCE_TRANSFORMERS_HOME="${CONTAINER_HF_HUB_CACHE}" \
+    -e TRANSFORMERS_CACHE="${CONTAINER_HF_HUB_CACHE}" \
     -v "${RUNTIME_ROOT}/state:/state" \
     "${build_tag}" \
     python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${EMBEDDER_NAME}')"
@@ -79,9 +106,10 @@ docker run -d \
   -e PROJECT_ROOT=/app \
   -e DATA_ROOT=/data \
   -e STATE_ROOT=/state \
-  -e HF_HOME=/state/cache/huggingface \
-  -e SENTENCE_TRANSFORMERS_HOME=/state/cache/sentence_transformers \
-  -e TRANSFORMERS_CACHE=/state/cache/huggingface/transformers \
+  -e HF_HOME="${CONTAINER_HF_CACHE_ROOT}" \
+  -e HF_HUB_CACHE="${CONTAINER_HF_HUB_CACHE}" \
+  -e SENTENCE_TRANSFORMERS_HOME="${CONTAINER_HF_HUB_CACHE}" \
+  -e TRANSFORMERS_CACHE="${CONTAINER_HF_HUB_CACHE}" \
   -v "${RUNTIME_ROOT}/data:/data" \
   -v "${RUNTIME_ROOT}/state:/state" \
   "${build_tag}" >/dev/null
@@ -112,9 +140,10 @@ if [ "${healthy}" != "true" ]; then
       -e PROJECT_ROOT=/app \
       -e DATA_ROOT=/data \
       -e STATE_ROOT=/state \
-      -e HF_HOME=/state/cache/huggingface \
-      -e SENTENCE_TRANSFORMERS_HOME=/state/cache/sentence_transformers \
-      -e TRANSFORMERS_CACHE=/state/cache/huggingface/transformers \
+      -e HF_HOME="${CONTAINER_HF_CACHE_ROOT}" \
+      -e HF_HUB_CACHE="${CONTAINER_HF_HUB_CACHE}" \
+      -e SENTENCE_TRANSFORMERS_HOME="${CONTAINER_HF_HUB_CACHE}" \
+      -e TRANSFORMERS_CACHE="${CONTAINER_HF_HUB_CACHE}" \
       -v "${RUNTIME_ROOT}/data:/data" \
       -v "${RUNTIME_ROOT}/state:/state" \
       "${rollback_image}" >/dev/null
@@ -125,6 +154,8 @@ fi
 echo "=== health ==="
 cat /tmp/textbook_health.json
 echo
+
+prune_legacy_st_cache
 
 docker image prune -f >/dev/null 2>&1 || true
 

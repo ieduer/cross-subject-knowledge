@@ -10,8 +10,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     STATE_ROOT=/state \
     PORT=8080 \
     HF_HOME=/state/cache/huggingface \
-    SENTENCE_TRANSFORMERS_HOME=/state/cache/sentence_transformers \
-    TRANSFORMERS_CACHE=/state/cache/huggingface/transformers
+    HF_HUB_CACHE=/state/cache/huggingface/hub \
+    SENTENCE_TRANSFORMERS_HOME=/state/cache/huggingface/hub \
+    TRANSFORMERS_CACHE=/state/cache/huggingface/hub
 
 COPY requirements.runtime.txt ./
 
@@ -28,8 +29,7 @@ COPY frontend/ frontend/
 RUN mkdir -p \
     /data/index \
     /state/logs \
-    /state/cache/huggingface \
-    /state/cache/sentence_transformers \
+    /state/cache/huggingface/hub \
     /state/tmp \
     /state/batch
 

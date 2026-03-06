@@ -17,8 +17,7 @@ Production runtime depends on host-mounted directories instead of baking data in
 - `/root/cross-subject-knowledge/data/index/textbook_mineru_fts.db`
 - `/root/cross-subject-knowledge/data/index/textbook_chunks.index`
 - `/root/cross-subject-knowledge/data/index/textbook_chunks.manifest.json`
-- `/root/cross-subject-knowledge/state/cache/huggingface`
-- `/root/cross-subject-knowledge/state/cache/sentence_transformers`
+- `/root/cross-subject-knowledge/state/cache/huggingface/hub`
 - `/root/cross-subject-knowledge/state/logs`
 - `/root/cross-subject-knowledge/state/batch`
 
@@ -32,7 +31,7 @@ As of 2026-03-06:
 - FAISS vectors: `16524`
 - Embedder: `BAAI/bge-m3`
 - Production image size: about `2.07 GB`
-- Host-side model cache: about `8.6 GB`
+- Host-side model cache: shared HF hub snapshot for `BAAI/bge-m3`; pre-dedupe size was about `8.6 GB`
 - Steady-state container memory: about `1.2 GiB`
 
 ## Resource guidance
