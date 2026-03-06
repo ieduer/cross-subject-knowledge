@@ -136,6 +136,14 @@ if [ -n "${old_pre_tags}" ]; then
   done <<< "${old_pre_tags}"
 fi
 
+old_build_tags="$(docker images --format '{{.Repository}}:{{.Tag}}' | grep '^textbook-knowledge:build-' | grep -v "^${build_tag}$" || true)"
+if [ -n "${old_build_tags}" ]; then
+  while IFS= read -r image_ref; do
+    [ -n "${image_ref}" ] || continue
+    docker rmi "${image_ref}" >/dev/null 2>&1 || true
+  done <<< "${old_build_tags}"
+fi
+
 echo "=== disk after deploy ==="
 df -h /
 docker system df

@@ -58,7 +58,7 @@ Current production deploy is:
 4. Host model cache is reused or warmed before cutover
 5. Old container is replaced only after image build succeeds
 6. `/api/health` must pass or the script rolls back to the previous image
-7. Dangling images are pruned; only recent rollback tags are retained
+7. Dangling images are pruned; only recent rollback tags are retained and old `build-*` tags are removed
 
 ## Operational watchpoints
 
