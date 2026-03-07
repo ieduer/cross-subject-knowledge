@@ -5,6 +5,7 @@ import asyncio, sqlite3, json, math, os, re, time, functools, hashlib, threading
 from collections import Counter
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 import httpx
 from fastapi import FastAPI, Query, HTTPException, Body
 from fastapi.concurrency import run_in_threadpool
@@ -49,6 +50,10 @@ def _resolve_data_asset(filename: str) -> Path:
 
 
 DB_PATH = _resolve_data_asset("textbook_mineru_fts.db")
+DICT_DB_PATH = _resolve_data_asset("dictionary_index.db")
+DICT_HEADWORD_INDEX_PATH = _resolve_data_asset("dict_headword_pages.json")
+DICT_QC_PATH = _resolve_data_asset("dict_headword_qc.json")
+TEXTBOOK_CLASSICS_MANIFEST_PATH = DATA_ROOT / "index" / "textbook_classics_manifest.json"
 FRONTEND = Path(__file__).parent.parent / "frontend"
 FAISS_INDEX_PATH = _resolve_data_asset("textbook_chunks.index")
 FAISS_MANIFEST_PATH = _resolve_data_asset("textbook_chunks.manifest.json")
@@ -126,6 +131,84 @@ CHAT_HISTORY_TRUNCATED_CHARS = max(200, int(os.getenv("CHAT_HISTORY_TRUNCATED_CH
 CHAT_HISTORY_FULL_TAIL_MESSAGES = max(2, int(os.getenv("CHAT_HISTORY_FULL_TAIL_MESSAGES", "4")))
 MATCH_PHRASE_MAX_WINDOW = max(2, int(os.getenv("MATCH_PHRASE_MAX_WINDOW", "6")))
 CHAT_BOOK_QUOTA_PER_BOOK = max(1, int(os.getenv("CHAT_BOOK_QUOTA_PER_BOOK", "2")))
+DICT_TEXTBOOK_RESPONSE_TEXT_LIMIT = max(240, int(os.getenv("DICT_TEXTBOOK_RESPONSE_TEXT_LIMIT", "900")))
+DICT_GAOKAO_RESPONSE_TEXT_LIMIT = max(240, int(os.getenv("DICT_GAOKAO_RESPONSE_TEXT_LIMIT", "900")))
+DICT_SOURCE_META = {
+    "changyong": {
+        "label": "常用字",
+        "sort_order": 1,
+        "page_prefix": "dict_changyong",
+        "page_count": 659,
+    },
+    "xuci": {
+        "label": "虚词",
+        "sort_order": 2,
+        "page_prefix": "dict_xuci",
+        "page_count": 921,
+    },
+    "ciyuan": {
+        "label": "辞源",
+        "sort_order": 3,
+        "page_prefix": "dict_ciyuan",
+        "page_count": 3940,
+    },
+}
+_dict_enabled_sources = [
+    source
+    for source in _parse_csv_env("DICT_ENABLED_SOURCES", "xuci,changyong")
+    if source in DICT_SOURCE_META
+]
+DICT_ENABLED_SOURCES = tuple(_dict_enabled_sources or DICT_SOURCE_META.keys())
+DICT_ENABLED_SOURCE_SET = set(DICT_ENABLED_SOURCES)
+CLASSICAL_TEXTBOOK_EXCLUDE_HINTS = (
+    "目录",
+    "单元学习任务",
+    "学习提示",
+    "词语积累与词语解释",
+    "整本书阅读",
+    "写作",
+    "口语交际",
+    "普通高中教科书",
+    "教育部组织编写",
+)
+CLASSICAL_GAOKAO_HINTS = (
+    "文言",
+    "文言文",
+    "古文",
+    "古诗",
+    "古诗文",
+    "古诗词",
+    "诗歌鉴赏",
+    "古代诗歌阅读",
+    "古代诗文阅读",
+)
+CLASSICAL_MARKERS_STRONG = (
+    "曰",
+    "矣",
+    "焉",
+    "哉",
+    "兮",
+    "寡人",
+    "若夫",
+    "者也",
+    "何以",
+    "是故",
+    "君子",
+    "小人",
+    "吾",
+    "汝",
+    "尔",
+)
+CLASSICAL_MARKERS_LIGHT = (
+    "乃",
+    "则",
+    "岂",
+    "孰",
+    "奚",
+    "未尝",
+    "故",
+    "夫",
+)
 
 
 def _compute_vector_source_fingerprint(text_limit: int) -> tuple[Optional[int], Optional[str]]:
@@ -213,6 +296,59 @@ def _validate_faiss_manifest(index_obj, expected_rows: Optional[int], manifest: 
 
     return issues
 
+
+def _has_local_sentence_transformer_snapshot(model_name: str) -> bool:
+    direct_path = Path(model_name).expanduser()
+    if direct_path.exists():
+        return True
+
+    snapshots_dir = (
+        Path.home()
+        / ".cache"
+        / "huggingface"
+        / "hub"
+        / f"models--{model_name.replace('/', '--')}"
+        / "snapshots"
+    )
+    if not snapshots_dir.exists():
+        return False
+
+    candidates = sorted(
+        (path for path in snapshots_dir.iterdir() if path.is_dir()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    return bool(candidates)
+
+
+def _load_sentence_transformer(model_name: str):
+    kwargs = {}
+    use_local_files_only = _has_local_sentence_transformer_snapshot(model_name)
+    if use_local_files_only:
+        kwargs["local_files_only"] = True
+
+    restore_ssl_keylog = None
+    restore_hf_offline = None
+    ssl_keylogfile = (os.getenv("SSLKEYLOGFILE") or "").strip()
+    if ssl_keylogfile:
+        ssl_path = Path(ssl_keylogfile).expanduser()
+        if not ssl_path.exists() or not os.access(ssl_path, os.W_OK):
+            restore_ssl_keylog = ssl_keylogfile
+            os.environ.pop("SSLKEYLOGFILE", None)
+    if use_local_files_only and os.getenv("HF_HUB_OFFLINE") != "1":
+        restore_hf_offline = os.getenv("HF_HUB_OFFLINE")
+        os.environ["HF_HUB_OFFLINE"] = "1"
+
+    try:
+        return SentenceTransformer(model_name, **kwargs)
+    finally:
+        if restore_ssl_keylog is not None:
+            os.environ["SSLKEYLOGFILE"] = restore_ssl_keylog
+        if restore_hf_offline is not None:
+            os.environ["HF_HUB_OFFLINE"] = restore_hf_offline
+        elif use_local_files_only:
+            os.environ.pop("HF_HUB_OFFLINE", None)
+
 if FAISS_AVAILABLE and FAISS_INDEX_PATH.exists():
     try:
         print(f"Loading FAISS index from {FAISS_INDEX_PATH}...", flush=True)
@@ -230,7 +366,7 @@ if FAISS_AVAILABLE and FAISS_INDEX_PATH.exists():
         else:
             # Keep the offline-built index as-is. Runtime auto-conversion can break explicit ID mapping.
             faiss_index = raw_index
-            embedder = SentenceTransformer(EMBEDDER_NAME)
+            embedder = _load_sentence_transformer(EMBEDDER_NAME)
             print(f"FAISS index loaded with {faiss_index.ntotal} vectors. Model: {EMBEDDER_NAME}", flush=True)
     except Exception as e:
         faiss_index = None
@@ -292,6 +428,30 @@ def get_db():
 
 def _clean_query_text(query: str) -> str:
     return re.sub(r"[^\w\u4e00-\u9fff\s]", "", (query or "")).strip()
+
+
+def _compact_query_text(query: str) -> str:
+    return re.sub(r"\s+", "", _clean_query_text(query))
+
+
+def _query_characters(query: str) -> list[str]:
+    return [ch for ch in _compact_query_text(query) if "\u4e00" <= ch <= "\u9fff"]
+
+
+def _unique_query_characters(query: str) -> list[str]:
+    seen = set()
+    chars = []
+    for ch in _query_characters(query):
+        if ch in seen:
+            continue
+        seen.add(ch)
+        chars.append(ch)
+    return chars
+
+
+def _is_single_hanzi_query(query: str) -> bool:
+    compact = _compact_query_text(query)
+    return len(compact) == 1 and bool(_query_characters(compact))
 
 
 def _db_cache_token() -> tuple[str, int, int]:
@@ -1442,6 +1602,727 @@ def _compute_search_subject_counts(
     return {row["subject"]: row["cnt"] for row in rows}
 
 
+def _path_cache_token(path: Path) -> tuple[str, int, int]:
+    try:
+        stat = path.stat()
+        return (str(path), stat.st_mtime_ns, stat.st_size)
+    except FileNotFoundError:
+        return (str(path), -1, -1)
+
+
+@functools.lru_cache(maxsize=8)
+def _load_json_file_cached(path_str: str, mtime_ns: int, size: int):
+    if mtime_ns < 0 or size < 0:
+        return {}
+    try:
+        return json.loads(Path(path_str).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _load_textbook_classics_manifest() -> dict:
+    token = _path_cache_token(TEXTBOOK_CLASSICS_MANIFEST_PATH)
+    data = _load_json_file_cached(*token)
+    return data if isinstance(data, dict) else {}
+
+
+def _load_dict_headword_index() -> dict:
+    token = _path_cache_token(DICT_HEADWORD_INDEX_PATH)
+    data = _load_json_file_cached(*token)
+    return data if isinstance(data, dict) else {}
+
+
+def _load_dict_qc_payload() -> dict:
+    token = _path_cache_token(DICT_QC_PATH)
+    data = _load_json_file_cached(*token)
+    return data if isinstance(data, dict) else {}
+
+
+def _get_dict_db() -> Optional[sqlite3.Connection]:
+    if not DICT_DB_PATH.exists() or DICT_DB_PATH.stat().st_size <= 0:
+        return None
+    con = sqlite3.connect(
+        DICT_DB_PATH,
+        check_same_thread=False,
+        timeout=SQLITE_CONNECT_TIMEOUT_SEC,
+    )
+    con.row_factory = sqlite3.Row
+    con.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+    return con
+
+
+def _dict_page_url(dict_source: str, page: int | None) -> Optional[str]:
+    meta = DICT_SOURCE_META.get(dict_source)
+    if not meta or page is None:
+        return None
+    try:
+        page_num = int(page)
+    except Exception:
+        return None
+    if page_num <= 0:
+        return None
+    return f"{IMG_CDN}/pages/{meta['page_prefix']}/p{page_num}.webp"
+
+
+def _dict_page_urls(
+    dict_source: str,
+    page_start: int | None,
+    page_end: int | None,
+    *,
+    max_pages: int = 12,
+) -> list[str]:
+    try:
+        start = int(page_start or 0)
+    except Exception:
+        start = 0
+    try:
+        end = int(page_end or start)
+    except Exception:
+        end = start
+    if start <= 0:
+        return []
+    if end < start:
+        end = start
+    return [
+        _dict_page_url(dict_source, page)
+        for page in range(start, min(end, start + max_pages - 1) + 1)
+        if _dict_page_url(dict_source, page)
+    ]
+
+
+def _normalize_page_number_list(
+    raw_pages,
+    *,
+    page_start: int | None = None,
+    page_end: int | None = None,
+) -> list[int]:
+    pages = []
+    if isinstance(raw_pages, list):
+        for item in raw_pages:
+            try:
+                page_num = int(item)
+            except Exception:
+                continue
+            if page_num > 0:
+                pages.append(page_num)
+    if not pages:
+        try:
+            start = int(page_start or 0)
+        except Exception:
+            start = 0
+        try:
+            end = int(page_end or start)
+        except Exception:
+            end = start
+        if start > 0:
+            end = max(start, end)
+            pages = list(range(start, end + 1))
+    return sorted(set(pages))
+
+
+def _normalize_page_url_list(dict_source: str, raw_urls, page_numbers: list[int]) -> list[str]:
+    urls = []
+    if isinstance(raw_urls, list):
+        urls = [item.strip() for item in raw_urls if isinstance(item, str) and item.strip()]
+    if urls:
+        return urls
+    return [
+        _dict_page_url(dict_source, page_num)
+        for page_num in page_numbers
+        if _dict_page_url(dict_source, page_num)
+    ]
+
+
+def _build_dict_page_entry_payload(raw_entry: dict, *, fallback_headword: str | None = None) -> Optional[dict]:
+    if not isinstance(raw_entry, dict):
+        return None
+    dict_source = str(raw_entry.get("dict_source") or raw_entry.get("source") or "").strip()
+    if dict_source not in DICT_SOURCE_META or dict_source not in DICT_ENABLED_SOURCE_SET:
+        return None
+    headword = str(
+        raw_entry.get("display_headword")
+        or raw_entry.get("headword")
+        or fallback_headword
+        or ""
+    ).strip()
+    if not headword:
+        return None
+    headword_trad = str(raw_entry.get("headword_trad") or "").strip() or None
+    page_numbers = _normalize_page_number_list(
+        raw_entry.get("page_numbers") or raw_entry.get("pages"),
+        page_start=raw_entry.get("page_start"),
+        page_end=raw_entry.get("page_end"),
+    )
+    if not page_numbers:
+        return None
+    page_urls = _normalize_page_url_list(dict_source, raw_entry.get("page_urls"), page_numbers)
+    meta = DICT_SOURCE_META.get(dict_source, {})
+    entry_text = _normalize_text_line(raw_entry.get("entry_text"))
+    return {
+        "id": raw_entry.get("id") or f"{dict_source}:{headword}:{page_numbers[0]}",
+        "headword": headword,
+        "headword_trad": headword_trad,
+        "dict_source": dict_source,
+        "dict_label": meta.get("label", dict_source),
+        "entry_text": entry_text,
+        "page_start": page_numbers[0],
+        "page_end": page_numbers[-1],
+        "page_url": page_urls[0] if page_urls else _dict_page_url(dict_source, page_numbers[0]),
+        "page_urls": page_urls,
+        "page_numbers": page_numbers,
+        "page_count": len(page_numbers),
+        "sort_order": int(raw_entry.get("sort_order") or meta.get("sort_order", 99)),
+        "verified": bool(raw_entry.get("verified", True)),
+        "display_mode": "page_images",
+        "match_mode": str(raw_entry.get("match_mode") or "headword"),
+    }
+
+
+def _load_headword_page_candidates(clean_q: str, limit: int) -> list[dict]:
+    payload = _load_dict_headword_index()
+    if not payload:
+        return []
+    entries = payload.get("entries", payload)
+    if not isinstance(entries, dict):
+        return []
+
+    candidates = []
+    direct_values = entries.get(clean_q)
+    if isinstance(direct_values, dict):
+        direct_values = [direct_values]
+    if isinstance(direct_values, list):
+        for item in direct_values:
+            payload_item = _build_dict_page_entry_payload(item, fallback_headword=clean_q)
+            if payload_item:
+                payload_item["match_mode"] = "exact_headword"
+                candidates.append(payload_item)
+
+    if len(candidates) >= limit:
+        return sorted(candidates, key=lambda item: (item["sort_order"], item["page_start"]))[:limit]
+
+    seen = {(item["dict_source"], item["headword"], item["page_start"], item["page_end"]) for item in candidates}
+    for headword_key, raw_items in entries.items():
+        if headword_key == clean_q or clean_q not in str(headword_key):
+            continue
+        if isinstance(raw_items, dict):
+            raw_items = [raw_items]
+        if not isinstance(raw_items, list):
+            continue
+        for item in raw_items:
+            payload_item = _build_dict_page_entry_payload(item, fallback_headword=str(headword_key))
+            if not payload_item:
+                continue
+            candidate_key = (
+                payload_item["dict_source"],
+                payload_item["headword"],
+                payload_item["page_start"],
+                payload_item["page_end"],
+            )
+            if candidate_key in seen:
+                continue
+            payload_item["match_mode"] = "fuzzy_headword"
+            candidates.append(payload_item)
+            seen.add(candidate_key)
+            if len(candidates) >= limit:
+                return sorted(candidates, key=lambda row: (row["sort_order"], row["page_start"]))[:limit]
+
+    return sorted(candidates, key=lambda row: (row["sort_order"], row["page_start"]))[:limit]
+
+
+def _build_dict_db_entries(clean_q: str, limit: int) -> list[dict]:
+    con = _get_dict_db()
+    if con is None:
+        return []
+
+    try:
+        candidate_limit = max(limit * 4, 24)
+        source_placeholders = ", ".join("?" for _ in DICT_ENABLED_SOURCES)
+        rows = con.execute(
+            f"""
+            SELECT id, headword, headword_trad, dict_source, entry_text,
+                   page_start, page_end, sort_order, page_urls_json
+            FROM dict_entries
+            WHERE dict_source IN ({source_placeholders})
+              AND (headword = ? OR headword_trad = ?)
+            ORDER BY sort_order ASC, id ASC
+            LIMIT ?
+            """,
+            (*DICT_ENABLED_SOURCES, clean_q, clean_q, candidate_limit),
+        ).fetchall()
+        if len(rows) < limit:
+            like_rows = con.execute(
+                f"""
+                SELECT id, headword, headword_trad, dict_source, entry_text,
+                       page_start, page_end, sort_order, page_urls_json
+                FROM dict_entries
+                WHERE dict_source IN ({source_placeholders})
+                  AND (headword LIKE ? OR COALESCE(headword_trad, '') LIKE ? OR entry_text LIKE ?)
+                ORDER BY
+                    CASE
+                        WHEN headword = ? OR headword_trad = ? THEN 0
+                        WHEN headword LIKE ? OR COALESCE(headword_trad, '') LIKE ? THEN 1
+                        ELSE 2
+                    END,
+                    sort_order ASC,
+                    id ASC
+                LIMIT ?
+                """,
+                (
+                    *DICT_ENABLED_SOURCES,
+                    f"%{clean_q}%",
+                    f"%{clean_q}%",
+                    f"%{clean_q}%",
+                    clean_q,
+                    clean_q,
+                    f"{clean_q}%",
+                    f"{clean_q}%",
+                    candidate_limit,
+                ),
+            ).fetchall()
+            seen = {row["id"] for row in rows}
+            rows = list(rows) + [row for row in like_rows if row["id"] not in seen]
+
+        return [_build_dict_entry_payload(row) for row in rows[:limit]]
+    finally:
+        con.close()
+
+
+def _book_page_url(book_key: str | None, page: int | None) -> Optional[str]:
+    if not book_key or page is None:
+        return None
+    short_key = _book_key_to_short.get(book_key, "")
+    if not short_key:
+        return None
+    try:
+        page_num = int(page)
+    except Exception:
+        return None
+    return f"{IMG_CDN}/pages/{short_key}/p{page_num}.webp"
+
+
+def _build_context_snippet(text: str | None, query: str, *, window: int = 180) -> str:
+    plain = re.sub(r"\s+", " ", text or "").strip()
+    if not plain:
+        return ""
+    idx = plain.find(query)
+    if idx < 0:
+        return plain[:window]
+    half = max(50, window // 2)
+    start = max(0, idx - half)
+    end = min(len(plain), idx + len(query) + half)
+    prefix = "…" if start > 0 else ""
+    suffix = "…" if end < len(plain) else ""
+    return f"{prefix}{plain[start:end]}{suffix}"
+
+
+def _extract_passage_heading(text: str | None) -> str:
+    for raw_line in (text or "").splitlines()[:6]:
+        line = raw_line.strip().strip("*")
+        if not line:
+            continue
+        if len(line) > 28:
+            continue
+        if re.fullmatch(r"[0-9一二三四五六七八九十百千（）()·.、 ]+", line):
+            continue
+        if any(mark in line for mark in ("。", "？", "！", "；", "：", ":")):
+            continue
+        return line
+    return ""
+
+
+def _classical_marker_score(text: str) -> int:
+    if not text:
+        return 0
+    score = 0
+    for marker in CLASSICAL_MARKERS_STRONG:
+        score += min(4, text.count(marker)) * 2
+    for marker in CLASSICAL_MARKERS_LIGHT:
+        score += min(4, text.count(marker))
+    if "《" in text and "》" in text:
+        score += 2
+    return score
+
+
+def _looks_like_poem(text: str) -> bool:
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    if len(lines) < 4:
+        return False
+    sample = lines[:16]
+    short_lines = []
+    for line in sample:
+        normalized = re.sub(r"[（(].*?[)）]", "", line)
+        normalized = normalized.strip("· ")
+        if 2 <= len(normalized) <= 18 and not normalized.endswith("。"):
+            short_lines.append(normalized)
+    return len(short_lines) >= 4 and len(short_lines) >= max(4, int(len(sample) * 0.4))
+
+
+def _find_textbook_classics_hit(book_key: str | None, physical_page: int | None) -> Optional[dict]:
+    if not book_key or physical_page is None:
+        return None
+    manifest = _load_textbook_classics_manifest()
+    ranges = manifest.get(book_key)
+    if not isinstance(ranges, list):
+        return None
+    for item in ranges:
+        if not isinstance(item, dict):
+            continue
+        start = int(item.get("page_start") or -1)
+        end = int(item.get("page_end") or start)
+        if start <= physical_page <= end:
+            return item
+    return None
+
+
+def _score_textbook_classical_row(row: sqlite3.Row) -> tuple[int, Optional[dict]]:
+    text = _normalize_text_line(row["text"])
+    if not text or len(text) < 12:
+        return 0, None
+
+    manifest_hit = _find_textbook_classics_hit(row["book_key"], row["section"])
+    if manifest_hit:
+        return 100, manifest_hit
+
+    if any(hint in text[:120] for hint in CLASSICAL_TEXTBOOK_EXCLUDE_HINTS) and not _looks_like_poem(text):
+        return 0, None
+
+    score = _classical_marker_score(text)
+    if _looks_like_poem(text):
+        score += 6
+    heading = _extract_passage_heading(text)
+    if heading:
+        score += 2
+    if re.search(r"[兮矣焉哉曰]", text):
+        score += 3
+    return score, None
+
+
+def _score_gaokao_classical_row(row: sqlite3.Row) -> int:
+    text = _normalize_text_line(row["text"])
+    if not text or len(text) < 12:
+        return 0
+    title = _normalize_text_line(row["title"])
+    category = _normalize_text_line(row["category"])
+    hint_score = sum(
+        4 for hint in CLASSICAL_GAOKAO_HINTS
+        if hint in title or hint in category
+    )
+    score = hint_score + _classical_marker_score(text)
+    if _looks_like_poem(text):
+        score += 4
+    return score
+
+
+def _build_dict_entry_payload(row: sqlite3.Row) -> dict:
+    dict_source = row["dict_source"] or "changyong"
+    meta = DICT_SOURCE_META.get(dict_source, {})
+    page_start = row["page_start"]
+    page_end = row["page_end"] if "page_end" in row.keys() else row["page_start"]
+    page_numbers = _normalize_page_number_list(None, page_start=page_start, page_end=page_end)
+    page_urls = []
+    if "page_urls_json" in row.keys() and row["page_urls_json"]:
+        loaded = _load_json_list(row["page_urls_json"])
+        page_urls = [item for item in loaded if isinstance(item, str) and item.strip()]
+    if not page_urls:
+        page_urls = _dict_page_urls(dict_source, page_start, page_end)
+    return {
+        "id": row["id"],
+        "headword": row["headword"],
+        "headword_trad": row["headword_trad"] if "headword_trad" in row.keys() else None,
+        "dict_source": dict_source,
+        "dict_label": meta.get("label", dict_source),
+        "entry_text": row["entry_text"],
+        "page_start": page_start,
+        "page_end": page_end,
+        "page_url": page_urls[0] if page_urls else _dict_page_url(dict_source, page_start),
+        "page_urls": page_urls,
+        "page_numbers": page_numbers,
+        "page_count": len(page_numbers) if page_numbers else len(page_urls),
+        "sort_order": row["sort_order"] if "sort_order" in row.keys() else meta.get("sort_order", 99),
+        "display_mode": "page_images",
+    }
+
+
+def _build_dict_chat_prompt(
+    headword: str,
+    user_message: str,
+    *,
+    dict_context: str,
+    textbook_context: str,
+    gaokao_context: str,
+    history: list[dict] | None,
+) -> str:
+    history_text = "\n".join(_format_chat_history_lines(history)) or "（无）"
+    return f"""你是“实虚词典”的古汉语学习教练。用户当前检索的是「{headword}」。
+
+词典证据：
+{dict_context[:5000] or '（无）'}
+
+教材中的古文 / 古诗词证据：
+{textbook_context[:5000] or '（无）'}
+
+语文真题中的古文 / 古诗词证据：
+{gaokao_context[:4000] or '（无）'}
+
+历史对话：
+{history_text}
+
+用户本轮问题：
+{user_message}
+
+请按这个结构回答：
+【字词定位】先说明这是实词、虚词，或两者兼有；若证据不足，明确写“证据不足”。
+【教材必记】只根据给定教材证据，提炼最该记住的义项、句法位置、固定搭配。
+【真题拿分】只根据给定真题证据，总结高频考法、常见误判、答题抓手。
+【速记方法】给出可直接背诵的 3-6 条记忆或辨析规则。
+
+规则：
+1. 只能依据给定证据，不得编造出处、页码、义项或例句。
+2. 若同一字在三本词典解释不同，要点明差异。
+3. 若用户追问，保持上下文连续，不重复整段前文。
+4. 语言尽量具体，面向高中语文得分。
+5. 优先使用简体；若涉及《辞源》原字头，可顺带标出繁体。"""
+
+
+def _build_dict_context_block(entries: list[dict]) -> str:
+    blocks = []
+    for item in entries[:8]:
+        page_numbers = item.get("page_numbers") or []
+        if page_numbers:
+            if len(page_numbers) > 1:
+                page_label = f"p{page_numbers[0]}-{page_numbers[-1]}"
+            else:
+                page_label = f"p{page_numbers[0]}"
+        else:
+            page_label = "p?"
+        trad = item.get("headword_trad")
+        trad_text = f"（{trad}）" if trad and trad != item.get("headword") else ""
+        entry_text = _normalize_text_line(item.get("entry_text")) or f"学生端仅展示馆藏原页图片，当前条目定位到 {page_label}。"
+        blocks.append(f"[{item.get('dict_label', item.get('dict_source', '词典'))}·{page_label}] {item.get('headword', '')}{trad_text}\n{entry_text[:420]}")
+    return "\n\n".join(blocks)
+
+
+def _build_dict_textbook_context_block(results: list[dict]) -> str:
+    blocks = []
+    for item in results[:8]:
+        display_title = item.get("display_title") or item.get("title") or ""
+        page_label = f"p{item.get('logical_page')}" if item.get("logical_page") is not None else ""
+        blocks.append(f"[教材·{display_title}·{page_label}] {(_normalize_text_line(item.get('text')) or _normalize_text_line(item.get('snippet')))[:260]}")
+    return "\n\n".join(blocks)
+
+
+def _build_dict_gaokao_context_block(results: list[dict]) -> str:
+    blocks = []
+    for item in results[:6]:
+        meta = " · ".join(str(part) for part in (item.get("year"), item.get("category"), item.get("title")) if part)
+        blocks.append(f"[真题·{meta}] {(_normalize_text_line(item.get('text')) or _normalize_text_line(item.get('snippet')))[:260]}")
+    return "\n\n".join(blocks)
+
+
+def _build_dict_chat_context_for_request(headword: str) -> dict:
+    dict_payload = dict_search(headword, limit=8)
+    textbook_payload = dict_textbook(headword, limit=8)
+    gaokao_payload = dict_gaokao(headword, limit=6)
+    dict_entries = dict_payload.get("entries") or []
+    textbook_results = textbook_payload.get("results") or []
+    gaokao_results = gaokao_payload.get("results") or []
+    return {
+        "dict_entries": dict_entries,
+        "textbook_results": textbook_results,
+        "gaokao_results": gaokao_results,
+        "dict_context": _build_dict_context_block(dict_entries),
+        "textbook_context": _build_dict_textbook_context_block(textbook_results),
+        "gaokao_context": _build_dict_gaokao_context_block(gaokao_results),
+        "summary": {
+            "subject_count": 1 if textbook_results or gaokao_results else 0,
+            "evidence_count": len(dict_entries) + len(textbook_results) + len(gaokao_results),
+            "gaokao_hit_count": len(gaokao_results),
+        },
+    }
+
+
+def _build_moe_search_url(host: str, query: str) -> str:
+    return (
+        f"https://{host}/search.jsp"
+        f"?la=1&powerMode=0&md=1&word={quote(query, safe='')}&qMd=0&qCol=1"
+    )
+
+
+def _build_moe_variant_url(query: str) -> str:
+    return f"https://dict.variants.moe.edu.tw/search.jsp?QTP=0&WORD={quote(query, safe='')}&la=1"
+
+
+def _build_external_reference_payload(query: str) -> dict:
+    compact_query = _compact_query_text(query)
+    single_char = _is_single_hanzi_query(compact_query)
+    split_chars = _unique_query_characters(compact_query)
+
+    references = [
+        {
+            "id": "moe_revised",
+            "label": "教育部《重编国语辞典修订本》",
+            "category": "official",
+            "scope": "字词",
+            "match_mode": "exact_term",
+            "integration_mode": "deep_link",
+            "priority": 1,
+            "summary": "官方大型国语辞典，适合核对本义、书证和历史用法。后续建议用教育部授权包做站内镜像检索。",
+            "url": _build_moe_search_url("dict.revised.moe.edu.tw", compact_query),
+            "action_label": "打开重编",
+        },
+        {
+            "id": "moe_concised",
+            "label": "教育部《国语辞典简编本》",
+            "category": "official",
+            "scope": "字词",
+            "match_mode": "exact_term",
+            "integration_mode": "deep_link",
+            "priority": 2,
+            "summary": "官方简明释义，适合学生先看常见义，再回到古文语境辨析。",
+            "url": _build_moe_search_url("dict.concised.moe.edu.tw", compact_query),
+            "action_label": "打开简编",
+        },
+    ]
+
+    if single_char:
+        references.extend(
+            [
+                {
+                    "id": "moe_variants",
+                    "label": "教育部《异体字字典》",
+                    "category": "official",
+                    "scope": "单字",
+                    "match_mode": "single_char",
+                    "integration_mode": "deep_link",
+                    "priority": 3,
+                    "summary": "适合核对正字、异体、繁简和古文常见写法差异。",
+                    "url": _build_moe_variant_url(compact_query),
+                    "action_label": "看异体",
+                },
+                {
+                    "id": "zi_tools",
+                    "label": "zi.tools",
+                    "category": "supplementary",
+                    "scope": "单字",
+                    "match_mode": "single_char",
+                    "integration_mode": "deep_link",
+                    "priority": 4,
+                    "summary": "适合补充字形、字源、部件和音韵信息，不作为本站核心判定来源。",
+                    "url": f"https://zi.tools/zi/{quote(compact_query, safe='')}",
+                    "action_label": "打开 zi.tools",
+                },
+                {
+                    "id": "humanum",
+                    "label": "汉语多功能字库",
+                    "category": "supplementary",
+                    "scope": "单字",
+                    "match_mode": "single_char",
+                    "integration_mode": "deep_link",
+                    "priority": 5,
+                    "summary": "适合深查说文、广韵、形义通解和部件树，作为单字深层补充。",
+                    "url": f"https://humanum.arts.cuhk.edu.hk/Lexis/lexi-mf/search.php?word={quote(compact_query, safe='')}",
+                    "action_label": "打开字库",
+                },
+            ]
+        )
+    elif split_chars:
+        split_items = [{"char": ch, "url": f"https://zi.tools/zi/{quote(ch, safe='')}"} for ch in split_chars]
+        references.extend(
+            [
+                {
+                    "id": "zi_tools_chars",
+                    "label": "zi.tools 单字拆查",
+                    "category": "supplementary",
+                    "scope": "拆字",
+                    "match_mode": "split_chars",
+                    "integration_mode": "split_chars",
+                    "priority": 4,
+                    "summary": "zi.tools 更适合单字。多字词建议拆成关键字逐个核对字形和字源。",
+                    "items": split_items,
+                },
+                {
+                    "id": "humanum_chars",
+                    "label": "汉语多功能字库单字拆查",
+                    "category": "supplementary",
+                    "scope": "拆字",
+                    "match_mode": "split_chars",
+                    "integration_mode": "split_chars",
+                    "priority": 5,
+                    "summary": "多字词在字库中同样建议拆字查看，重点看构形和古文字材料。",
+                    "items": [
+                        {
+                            "char": ch,
+                            "url": f"https://humanum.arts.cuhk.edu.hk/Lexis/lexi-mf/search.php?word={quote(ch, safe='')}",
+                        }
+                        for ch in split_chars
+                    ],
+                },
+            ]
+        )
+
+    references.sort(key=lambda item: (item.get("priority", 99), item.get("label", "")))
+    return {
+        "query": query,
+        "compact_query": compact_query,
+        "query_kind": "single_char" if single_char else "term",
+        "references": references,
+    }
+
+
+def _build_dict_status_payload() -> dict:
+    payload = _load_dict_headword_index()
+    qc_payload = _load_dict_qc_payload()
+    source_summaries = {}
+    payload_sources = payload.get("sources") if isinstance(payload, dict) else {}
+    if not isinstance(payload_sources, dict):
+        payload_sources = {}
+
+    entries = payload.get("entries") if isinstance(payload, dict) else {}
+    if not isinstance(entries, dict):
+        entries = {}
+
+    verified_counts = Counter()
+    for raw_items in entries.values():
+        if isinstance(raw_items, dict):
+            raw_items = [raw_items]
+        if not isinstance(raw_items, list):
+            continue
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            source = str(item.get("dict_source") or item.get("source") or "").strip()
+            if source:
+                verified_counts[source] += 1
+
+    for source, meta in DICT_SOURCE_META.items():
+        record = payload_sources.get(source, {}) if source in payload_sources else {}
+        if not isinstance(record, dict):
+            record = {}
+        qc_record = qc_payload.get(source) if isinstance(qc_payload, dict) else {}
+        if not isinstance(qc_record, dict):
+            qc_record = {}
+        verified = int(record.get("verified_headwords") or verified_counts.get(source, 0))
+        candidate = int(record.get("candidate_headwords") or 0)
+        source_summaries[source] = {
+            "label": meta["label"],
+            "enabled": source in DICT_ENABLED_SOURCE_SET,
+            "verified_headwords": verified,
+            "candidate_headwords": candidate,
+            "has_candidates": candidate > 0 or verified > 0,
+            "coverage_ratio": qc_record.get("coverage_ratio"),
+            "page_count": meta["page_count"],
+        }
+
+    return {
+        "available": bool(entries),
+        "built_at": payload.get("built_at") if isinstance(payload, dict) else None,
+        "enabled_sources": list(DICT_ENABLED_SOURCES),
+        "student_safe_mode": "page_images_only",
+        "external_reference_mode": "deep_links",
+        "source_summaries": source_summaries,
+    }
+
+
 @app.get("/api/search")
 def search(
     q: str = Query(..., min_length=1, max_length=200),
@@ -1987,6 +2868,263 @@ async def chat(payload: dict = Body(...)):
             "relation_hints": context_payload.get("relation_hints"),
             "suggested_questions": context_payload.get("suggested_questions"),
         },
+    }
+
+
+# ── Dictionary APIs ────────────────────────────────────────────────────
+
+@app.get("/api/dict/search")
+def dict_search(
+    q: str = Query(..., min_length=1, max_length=40),
+    limit: int = Query(20, ge=1, le=50),
+):
+    clean_q = _clean_query_text(q)
+    if not clean_q:
+        raise HTTPException(400, "Invalid query")
+    query_kind = "single_char" if _is_single_hanzi_query(clean_q) else "term"
+
+    entries = _load_headword_page_candidates(clean_q, limit)
+    source_mode = "headword_page_index" if entries else None
+    if not entries:
+        entries = _build_dict_db_entries(clean_q, limit)
+        source_mode = "dict_db" if entries else None
+
+    return {
+        "query": q,
+        "query_kind": query_kind,
+        "available": bool(entries),
+        "enabled_sources": list(DICT_ENABLED_SOURCES),
+        "display_mode": "page_images",
+        "student_safe_only": True,
+        "source_mode": source_mode or "unavailable",
+        "entries": entries,
+    }
+
+
+@app.get("/api/dict/references")
+def dict_references(
+    q: str = Query(..., min_length=1, max_length=40),
+):
+    clean_q = _clean_query_text(q)
+    if not clean_q:
+        raise HTTPException(400, "Invalid query")
+    payload = _build_external_reference_payload(clean_q)
+    payload["student_safe_mode"] = "external_cards"
+    return payload
+
+
+@app.get("/api/dict/status")
+def dict_status():
+    return _build_dict_status_payload()
+
+
+@app.get("/api/dict/textbook")
+def dict_textbook(
+    q: str = Query(..., min_length=1, max_length=40),
+    limit: int = Query(30, ge=1, le=80),
+):
+    clean_q = _clean_query_text(q)
+    if not clean_q:
+        raise HTTPException(400, "Invalid query")
+
+    con = get_db()
+    try:
+        rows = con.execute(
+            """
+            SELECT id, subject, title, book_key, section, logical_page, text
+            FROM chunks
+            WHERE source = 'mineru'
+              AND subject = '语文'
+              AND text LIKE ?
+            ORDER BY
+                CASE
+                    WHEN INSTR(text, ?) > 0 THEN INSTR(text, ?)
+                    ELSE 999999
+                END,
+                COALESCE(logical_page, section),
+                id
+            LIMIT ?
+            """,
+            (f"%{clean_q}%", clean_q, clean_q, max(limit * 6, 120)),
+        ).fetchall()
+
+        matches = []
+        for row in rows:
+            score, manifest_hit = _score_textbook_classical_row(row)
+            if score < 5:
+                continue
+            heading = ""
+            if manifest_hit:
+                heading = str(manifest_hit.get("title") or "").strip()
+            if not heading:
+                heading = _extract_passage_heading(row["text"])
+            display_title = heading or row["title"]
+            physical_page = row["section"]
+            matches.append(
+                {
+                    "id": row["id"],
+                    "book_key": row["book_key"],
+                    "title": row["title"],
+                    "display_title": display_title,
+                    "classical_title": heading or None,
+                    "section": physical_page,
+                    "logical_page": row["logical_page"] if row["logical_page"] is not None else physical_page,
+                    "text": (row["text"] or "")[:DICT_TEXTBOOK_RESPONSE_TEXT_LIMIT],
+                    "snippet": _build_context_snippet(row["text"], clean_q),
+                    "page_url": _book_page_url(row["book_key"], physical_page),
+                    "classical_kind": manifest_hit.get("kind") if manifest_hit else None,
+                    "score": score,
+                }
+            )
+
+        matches.sort(
+            key=lambda item: (
+                -item["score"],
+                -item["text"].count(clean_q),
+                item["text"].find(clean_q) if clean_q in item["text"] else 999999,
+                item["logical_page"],
+                item["id"],
+            )
+        )
+        return {
+            "query": q,
+            "results": [
+                {
+                    k: v
+                    for k, v in item.items()
+                    if k not in {"score"}
+                }
+                for item in matches[:limit]
+            ],
+        }
+    finally:
+        con.close()
+
+
+@app.get("/api/dict/gaokao")
+def dict_gaokao(
+    q: str = Query(..., min_length=1, max_length=40),
+    limit: int = Query(20, ge=1, le=60),
+):
+    clean_q = _clean_query_text(q)
+    if not clean_q:
+        raise HTTPException(400, "Invalid query")
+
+    con = get_db()
+    try:
+        rows = con.execute(
+            """
+            SELECT id, title, year, category, text, answer
+            FROM chunks
+            WHERE source = 'gaokao'
+              AND subject = '语文'
+              AND text LIKE ?
+            ORDER BY year DESC, id DESC
+            LIMIT ?
+            """,
+            (f"%{clean_q}%", max(limit * 8, 120)),
+        ).fetchall()
+
+        matches = []
+        for row in rows:
+            score = _score_gaokao_classical_row(row)
+            if score < 6:
+                continue
+            matches.append(
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "year": row["year"],
+                    "category": row["category"],
+                    "text": (row["text"] or "")[:DICT_GAOKAO_RESPONSE_TEXT_LIMIT],
+                    "answer": row["answer"],
+                    "snippet": _build_context_snippet(row["text"], clean_q, window=220),
+                    "score": score,
+                }
+            )
+
+        matches.sort(
+            key=lambda item: (
+                -item["score"],
+                -(item["text"] or "").count(clean_q),
+                -(item["year"] or 0),
+                item["id"],
+            )
+        )
+        return {
+            "query": q,
+            "results": [
+                {
+                    k: v
+                    for k, v in item.items()
+                    if k not in {"score"}
+                }
+                for item in matches[:limit]
+            ],
+        }
+    finally:
+        con.close()
+
+
+@app.get("/api/dict/page-images")
+def dict_page_images(
+    dict_source: str = Query(..., description="changyong, xuci, or ciyuan"),
+    page: int = Query(..., ge=1, description="1-based PDF page"),
+    context: int = Query(2, ge=0, le=8),
+):
+    meta = DICT_SOURCE_META.get(dict_source)
+    if not meta:
+        raise HTTPException(404, "Dictionary source not found")
+    if dict_source not in DICT_ENABLED_SOURCE_SET:
+        raise HTTPException(404, "Dictionary source not enabled")
+
+    total_pages = int(meta["page_count"])
+    current_page = max(1, min(int(page), total_pages))
+    start = max(1, current_page - context)
+    end = min(total_pages, current_page + context)
+    pages = [
+        {
+            "page": page_num,
+            "url": _dict_page_url(dict_source, page_num),
+            "current": page_num == current_page,
+        }
+        for page_num in range(start, end + 1)
+    ]
+    return {
+        "dict_source": dict_source,
+        "dict_label": meta["label"],
+        "current_page": current_page,
+        "total_pages": total_pages,
+        "pages": pages,
+    }
+
+
+@app.post("/api/dict/chat")
+async def dict_chat(payload: dict = Body(...)):
+    headword = str(payload.get("headword", "")).strip()
+    user_message = str(payload.get("user_message", "")).strip()
+    if not headword or not user_message:
+        raise HTTPException(400, "headword and user_message are required")
+
+    history = payload.get("history") or []
+    context_payload = await run_in_threadpool(_build_dict_chat_context_for_request, headword)
+    prompt = _build_dict_chat_prompt(
+        headword,
+        user_message,
+        dict_context=context_payload.get("dict_context", ""),
+        textbook_context=context_payload.get("textbook_context", ""),
+        gaokao_context=context_payload.get("gaokao_context", ""),
+        history=history,
+    )
+    try:
+        ai_data = await _call_ai_service(prompt)
+        await run_in_threadpool(log_ai_chat, headword, user_message, context_payload, success=True)
+    except HTTPException as e:
+        await run_in_threadpool(log_ai_chat, headword, user_message, context_payload, success=False, error=str(e.detail))
+        raise
+    return {
+        "answer": ai_data.get("answer"),
+        "provider": AI_SERVICE_LABEL,
     }
 
 
@@ -3253,3 +4391,7 @@ if FRONTEND.exists():
     @app.get("/", response_class=HTMLResponse)
     def index():
         return (FRONTEND / "index.html").read_text(encoding="utf-8")
+
+    @app.get("/dict.html", response_class=HTMLResponse)
+    def dict_page():
+        return (FRONTEND / "dict.html").read_text(encoding="utf-8")

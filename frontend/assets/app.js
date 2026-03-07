@@ -584,7 +584,7 @@ async function loadFrontendVersion() {
 loadFrontendVersion();
 
 // ── Navigation ────────────────────────────────────────────
-document.querySelectorAll('.nav-btn').forEach(btn => {
+document.querySelectorAll('.nav-btn[data-view]').forEach(btn => {
     btn.addEventListener('click', () => {
         document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
         document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
