@@ -16,8 +16,8 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&family=Noto+Serif+SC:wght@400;600;700&display=swap"
         rel="stylesheet">
-    <link rel="stylesheet" href="assets/style.css?v=20260306k">
-    <link rel="stylesheet" href="assets/dict.css?v=20260306a">
+    <link rel="stylesheet" href="assets/style.css?v=20260307a">
+    <link rel="stylesheet" href="assets/dict.css?v=20260307a">
 </head>
 
 <body class="dict-page">
@@ -28,10 +28,14 @@
                     <a href="/" class="dict-home-link">
                         <span class="logo-icon">🔗</span>
                         <span class="logo-text">AI 高中教材</span>
+                        <span class="logo-badge">BETA</span>
                     </a>
                 </div>
                 <nav class="nav">
                     <a href="/" class="nav-btn">搜索</a>
+                    <a href="/?view=gaokao" class="nav-btn">📝 真题</a>
+                    <a href="/?view=insights" class="nav-btn">📊 数据</a>
+                    <a href="/?view=graph" class="nav-btn">知识图谱</a>
                     <a href="/dict.html" class="nav-btn active">实虚词典</a>
                 </nav>
             </div>
@@ -39,87 +43,23 @@
 
         <main class="dict-view">
             <section class="dict-hero">
-                <div class="dict-hero-copy">
-                    <p class="dict-kicker">Classical Chinese Lab</p>
-                    <h1>实虚词典</h1>
-                    <p class="dict-subtitle">教材古文、古诗词与语文真题沿用现有检索逻辑；馆藏辞典只展示原页图片，再补教育部与高质量单字网站作参考层。</p>
-                </div>
-                <div class="dict-sources">
-                    <span id="source-chip-xuci" class="dict-source-chip is-primary">《古代汉语虚词词典》馆藏页图</span>
-                    <span id="source-chip-changyong" class="dict-source-chip">王力《古汉语常用字字典》馆藏页图</span>
-                    <span id="source-chip-external" class="dict-source-chip is-trad">教育部辞典 / zi.tools / 汉语多功能字库</span>
-                </div>
                 <div class="dict-search-box">
-                    <input id="dict-input" type="text" placeholder="输入字或词，如：之、以、而、固、斯民…" autocomplete="off">
+                    <span class="dict-search-icon">🔍</span>
+                    <input id="dict-input" type="text" placeholder="输入字或词，如：之、以、而、固…" autocomplete="off">
                     <button id="dict-search-btn" type="button">查典</button>
                 </div>
-                <div class="dict-tips">
-                    <span>先筛教材里的古文 / 古诗词，再看馆藏辞典原页，最后汇总真题与外部高质量参考。</span>
-                    <span id="dict-status-note">学生端只展示辞典原页；机器文本仅保留给后台质检与 AI 助手使用。</span>
-                </div>
             </section>
 
-            <section class="dict-flow" aria-label="检索链路总览">
-                <div class="dict-flow-head">
-                    <div>
-                        <p class="dict-flow-kicker">检索链路</p>
-                        <h2>一次检索，四层证据同步展开</h2>
-                    </div>
-                    <div id="dict-flow-query" class="dict-flow-query">等待输入字词</div>
-                </div>
-                <div class="dict-flow-grid">
-                    <article id="flow-step-textbook" class="dict-flow-step is-ready">
-                        <div class="dict-flow-step-top">
-                            <span class="dict-flow-step-index">01</span>
-                            <span class="dict-flow-step-tag">教材</span>
-                        </div>
-                        <h3>古文 / 古诗词筛选</h3>
-                        <p id="flow-step-textbook-body">先把教材结果收敛到古典文本范围，尽量避开现代文噪音。</p>
-                        <div id="flow-step-textbook-foot" class="dict-flow-foot">检索后优先展开教材证据</div>
-                    </article>
-                    <article id="flow-step-dict" class="dict-flow-step is-pending">
-                        <div class="dict-flow-step-top">
-                            <span class="dict-flow-step-index">02</span>
-                            <span class="dict-flow-step-tag">辞典</span>
-                        </div>
-                        <h3>馆藏页图 / 官方参考</h3>
-                        <p id="flow-step-dict-body">馆藏辞典只展示已核字头页图；外部参考用于补充释义和字形信息。</p>
-                        <div id="flow-step-dict-foot" class="dict-flow-foot">学生端不直接展示 OCR 文字</div>
-                    </article>
-                    <article id="flow-step-gaokao" class="dict-flow-step is-ready">
-                        <div class="dict-flow-step-top">
-                            <span class="dict-flow-step-index">03</span>
-                            <span class="dict-flow-step-tag">真题</span>
-                        </div>
-                        <h3>高考古文考法</h3>
-                        <p id="flow-step-gaokao-body">同步汇总语文真题中的古文、古诗词命中，方便对照常考方式。</p>
-                        <div id="flow-step-gaokao-foot" class="dict-flow-foot">检索后展示历年相关题目</div>
-                    </article>
-                    <article id="flow-step-ai" class="dict-flow-step is-ready">
-                        <div class="dict-flow-step-top">
-                            <span class="dict-flow-step-index">04</span>
-                            <span class="dict-flow-step-tag">AI</span>
-                        </div>
-                        <h3>拿分导向总结</h3>
-                        <p id="flow-step-ai-body">把教材、辞典与真题证据一起发给 Worker AI，自动生成首轮学习建议。</p>
-                        <div id="flow-step-ai-foot" class="dict-flow-foot">支持多轮追问与全文复制</div>
-                    </article>
-                </div>
-            </section>
+
 
             <section id="dict-empty" class="dict-empty">
-                <div class="dict-empty-card">
-                    <p class="dict-empty-icon">册</p>
-                    <h2>从一个字开始</h2>
-                    <p>适合查实词、虚词、通假、常见义项，也适合反向梳理教材和高考考法。</p>
-                    <div class="dict-suggestions">
-                        <button class="dict-suggestion" type="button" data-dict-suggestion="之">之</button>
-                        <button class="dict-suggestion" type="button" data-dict-suggestion="以">以</button>
-                        <button class="dict-suggestion" type="button" data-dict-suggestion="而">而</button>
-                        <button class="dict-suggestion" type="button" data-dict-suggestion="其">其</button>
-                        <button class="dict-suggestion" type="button" data-dict-suggestion="所以">所以</button>
-                        <button class="dict-suggestion" type="button" data-dict-suggestion="斯民">斯民</button>
-                    </div>
+                <div class="dict-suggestions">
+                    <button class="dict-suggestion" type="button" data-dict-suggestion="之">之</button>
+                    <button class="dict-suggestion" type="button" data-dict-suggestion="以">以</button>
+                    <button class="dict-suggestion" type="button" data-dict-suggestion="而">而</button>
+                    <button class="dict-suggestion" type="button" data-dict-suggestion="其">其</button>
+                    <button class="dict-suggestion" type="button" data-dict-suggestion="所以">所以</button>
+                    <button class="dict-suggestion" type="button" data-dict-suggestion="斯民">斯民</button>
                 </div>
             </section>
 
@@ -127,10 +67,7 @@
                 <div class="dict-columns">
                     <article class="dict-panel">
                         <div class="dict-panel-head">
-                            <div>
-                                <h2>教材古文 / 古诗词</h2>
-                                <p>仅展示语文教材中的古典文献范围</p>
-                            </div>
+                            <h2>教材古文 / 古诗词</h2>
                             <span id="tb-count" class="dict-count">0</span>
                         </div>
                         <div id="tb-results" class="dict-panel-body"></div>
@@ -139,34 +76,17 @@
                     <div class="dict-side-stack">
                         <article class="dict-panel">
                             <div class="dict-panel-head">
-                                <div>
-                                    <h2>馆藏辞典原页</h2>
-                                    <p>只展示字头页图，避免 OCR 文字误差直接进入学生视野</p>
-                                </div>
+                                <h2>馆藏辞典原页</h2>
                                 <span id="dict-count" class="dict-count">0</span>
                             </div>
                             <div id="dict-entries" class="dict-panel-body"></div>
-                        </article>
-
-                        <article class="dict-panel">
-                            <div class="dict-panel-head">
-                                <div>
-                                    <h2>官方与外部参考</h2>
-                                    <p>教育部辞典优先，单字补充 zi.tools 与汉语多功能字库</p>
-                                </div>
-                                <span id="ref-count" class="dict-count">0</span>
-                            </div>
-                            <div id="ref-results" class="dict-panel-body"></div>
                         </article>
                     </div>
                 </div>
 
                 <article class="dict-panel dict-panel-wide">
                     <div class="dict-panel-head">
-                        <div>
-                            <h2>语文真题中的古文 / 古诗词</h2>
-                            <p>优先展示文言文、古诗文阅读相关命中</p>
-                        </div>
+                        <h2>真题中的古文 / 古诗词</h2>
                         <span id="gk-count" class="dict-count">0</span>
                     </div>
                     <div id="gk-results" class="dict-panel-body dict-panel-body-wide"></div>
@@ -174,16 +94,13 @@
 
                 <article class="dict-chat">
                     <div class="dict-chat-head">
-                        <div>
-                            <h2>AI 学习助手</h2>
-                            <p>将教材、词典、真题证据一起送入 Worker AI，支持多轮追问与全文复制。</p>
-                        </div>
+                        <h2>AI 学习助手</h2>
                         <button id="chat-copy-btn" class="dict-chat-copy hidden" type="button">复制全文</button>
                     </div>
                     <div id="chat-messages" class="dict-chat-messages"></div>
                     <div class="dict-chat-compose">
-                        <textarea id="chat-input" rows="3" placeholder="继续追问，例如：这个字在文言文翻译题里最容易失分的点是什么？"></textarea>
-                        <button id="chat-send-btn" type="button" disabled>发送</button>
+                        <textarea id="chat-input" rows="2" placeholder="继续追问…"></textarea>
+                        <button id="chat-send-btn" type="button" disabled>➤</button>
                     </div>
                 </article>
             </section>
@@ -202,10 +119,18 @@
         </div>
 
         <footer class="footer">
-            <p>实虚词典 · <a class="footer-link" href="/">AI 高中教材</a> · 北大附中</p>
+            <div class="footer-meta">
+                <a class="footer-link" href="https://github.com/ieduer/cross-subject-knowledge" target="_blank"
+                    rel="noopener noreferrer">GitHub</a>
+                <a class="footer-link"
+                    href="https://github.com/ieduer/cross-subject-knowledge/issues/new?title=%5BFeedback%5D%20sun.bdfz.net%20&body=%23%23%20%E9%97%AE%E9%A2%98%E6%88%96%E5%BB%BA%E8%AE%AE%0A%0A%23%23%20%E6%A3%80%E7%B4%A2%E8%AF%8D%0A%0A%23%23%20%E5%AF%B9%E5%BA%94%E9%A1%B5%E9%9D%A2%2F%E4%B9%A6%E7%B1%8D%0A%0A%23%23%20%E5%A4%8D%E7%8E%B0%E6%AD%A5%E9%AA%A4"
+                    target="_blank" rel="noopener noreferrer">反馈建议</a>
+                <a class="footer-link" href="https://bdfz.net/posts/sun/" target="_blank"
+                    rel="noopener noreferrer">作者说</a>
+            </div>
         </footer>
     </div>
-    <script src="assets/dict.js?v=20260306a"></script>
+    <script src="assets/dict.js?v=20260307a"></script>
 </body>
 
 </html>
