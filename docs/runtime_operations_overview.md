@@ -65,3 +65,4 @@ Current production deploy is:
 - Production should not be used for FAISS rebuild or MinerU OCR
 - The runtime DB and FAISS manifest must stay aligned; dense retrieval should remain gated if manifest validation fails
 - The production repo can contain hotfix history or manual changes, so deployment should always build from a clean release checkout rather than `git pull` into the runtime directory
+- Page-image sync to R2 must stage textbook page maps together with dictionary page trees such as `pages/dict_xuci/` and `pages/dict_changyong/`; a root-level `rclone sync` from textbook-only sources will delete existing dictionary page assets from R2

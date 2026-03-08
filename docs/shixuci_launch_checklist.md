@@ -131,6 +131,11 @@
 - `pages/dict_xuci/p{N}.webp`
 - `pages/dict_changyong/p{N}.webp`
 
+运维约束：
+
+- 不要把教材页图目录单独对 `r2:textbook-images/pages/` 做根级 `sync`
+- 页图上传前必须把教材页图和 `data/dict_pages/` 一起合并到同一个 staging tree，否则远端现有的 `dict_xuci` / `dict_changyong` 会被删除
+
 ## 部署前代码同步清单
 
 必须同步：
