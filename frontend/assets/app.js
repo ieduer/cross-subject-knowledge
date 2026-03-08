@@ -2186,6 +2186,18 @@ async function loadHeatmap() {
     } catch (e) { container.innerHTML = `<div class="loading">加载失败: ${e.message}</div>`; }
 }
 
+function getHeatmapTextStyle(fillColor) {
+    const color = d3.color(fillColor);
+    if (!color) {
+        return { fill: '#f8fbff', stroke: 'rgba(0,0,0,0.35)' };
+    }
+    const luminance = (0.299 * color.r + 0.587 * color.g + 0.114 * color.b) / 255;
+    if (luminance >= 0.66) {
+        return { fill: '#17202a', stroke: 'rgba(255,255,255,0.55)' };
+    }
+    return { fill: '#f8fbff', stroke: 'rgba(0,0,0,0.35)' };
+}
+
 function renderHeatmap(container, data) {
     container.innerHTML = '';
     const subjects = data.subjects;
@@ -2209,22 +2221,27 @@ function renderHeatmap(container, data) {
     for (let i = 0; i < n; i++) {
         for (let j = 0; j < n; j++) {
             const val = matrix[i][j];
+            const fillColor = val > 0 ? color(val) : 'rgba(255,255,255,0.03)';
             const cell = g.append('rect')
                 .attr('x', j * cellSize).attr('y', i * cellSize)
                 .attr('width', cellSize - 2).attr('height', cellSize - 2)
-                .attr('fill', val > 0 ? color(val) : 'rgba(255,255,255,0.03)')
+                .attr('fill', fillColor)
                 .attr('rx', 4)
                 .attr('opacity', 0)
                 .transition().duration(400).delay((i + j) * 30)
                 .attr('opacity', 1);
 
             if (val > 0) {
+                const textStyle = getHeatmapTextStyle(fillColor);
                 g.append('text')
                     .attr('x', j * cellSize + cellSize / 2 - 1)
                     .attr('y', i * cellSize + cellSize / 2)
                     .attr('dy', '0.35em')
                     .attr('text-anchor', 'middle')
-                    .attr('fill', val > maxVal * 0.6 ? '#000' : '#fff')
+                    .attr('fill', textStyle.fill)
+                    .attr('stroke', textStyle.stroke)
+                    .attr('stroke-width', 2)
+                    .attr('paint-order', 'stroke')
                     .attr('font-size', '11px')
                     .attr('font-weight', '600')
                     .text(val);

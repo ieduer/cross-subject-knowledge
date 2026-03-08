@@ -23,12 +23,12 @@ Production runtime depends on host-mounted directories instead of baking data in
 
 ## Current runtime profile
 
-As of 2026-03-06:
+As of 2026-03-08:
 
-- DB chunks: `20553`
-- Textbook chunks: `16524`
+- DB chunks: `21925`
+- Textbook chunks: `17896`
 - Gaokao chunks: `4029`
-- FAISS vectors: `16524`
+- FAISS vectors: `17896`
 - Embedder: `BAAI/bge-m3`
 - Production image size: about `2.07 GB`
 - Host-side model cache: shared HF hub snapshot for `BAAI/bge-m3`; pre-dedupe size was about `8.6 GB`

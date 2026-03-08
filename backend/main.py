@@ -2,7 +2,7 @@
 跨学科教材知识平台 · FastAPI 后端
 """
 import asyncio, sqlite3, json, math, os, re, time, functools, hashlib, threading, unicodedata
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
@@ -137,6 +137,71 @@ MATCH_PHRASE_MAX_WINDOW = max(2, int(os.getenv("MATCH_PHRASE_MAX_WINDOW", "6")))
 CHAT_BOOK_QUOTA_PER_BOOK = max(1, int(os.getenv("CHAT_BOOK_QUOTA_PER_BOOK", "2")))
 DICT_TEXTBOOK_RESPONSE_TEXT_LIMIT = max(240, int(os.getenv("DICT_TEXTBOOK_RESPONSE_TEXT_LIMIT", "900")))
 DICT_GAOKAO_RESPONSE_TEXT_LIMIT = max(240, int(os.getenv("DICT_GAOKAO_RESPONSE_TEXT_LIMIT", "900")))
+TRENDING_QUERY_EXCLUDE_RE = re.compile(
+    r"(?:concurrency[\W_/-]*smoke|smoke[\W_/-]*test|health[\W_/-]*check|load[\W_/-]*test|synthetic[\W_/-]*smoke|dummy[\W_/-]*smoke)",
+    re.IGNORECASE,
+)
+TRENDING_QUERY_MARKERS = (
+    "concurrencysmoke",
+    "smoketest",
+    "healthcheck",
+    "loadtest",
+    "syntheticsmoke",
+    "dummysmoke",
+)
+ENGLISH_ANALYTICS_MIN_TERM_COUNT = 2
+ENGLISH_ANALYTICS_MAX_DOC_SHARE = 0.12
+ENGLISH_ANALYTICS_MAX_DOC_TERMS = 8
+ENGLISH_ANALYTICS_ACRONYMS = {"AI", "DNA", "GDP", "PCR", "RNA", "UN", "UK", "US"}
+ENGLISH_ANALYTICS_STOPWORDS = {
+    "a", "about", "after", "again", "all", "also", "an", "and", "any", "are", "as", "at",
+    "be", "because", "been", "before", "being", "between", "both", "but", "by",
+    "can", "could",
+    "did", "do", "does", "doing", "down", "during",
+    "each", "either", "else",
+    "for", "from", "further",
+    "get", "gets", "getting",
+    "had", "has", "have", "having", "he", "her", "here", "hers", "him", "his", "how",
+    "if", "in", "into", "is", "it", "its", "itself",
+    "just",
+    "let", "like",
+    "may", "might", "more", "most", "much", "must", "my",
+    "near", "need", "no", "nor", "not", "now",
+    "of", "off", "on", "once", "one", "only", "or", "other", "our", "out", "over", "own",
+    "same", "she", "should", "since", "so", "some", "such",
+    "than", "that", "the", "their", "them", "then", "there", "these", "they", "this", "those", "through", "to", "too",
+    "under", "until", "up", "us",
+    "very",
+    "was", "we", "were", "what", "when", "where", "which", "while", "who", "why", "will", "with", "would",
+    "you", "your",
+    "am", "isn", "aren", "wasn", "weren", "don", "doesn", "didn", "won", "wouldn", "couldn", "shouldn",
+    "lesson", "unit", "topic", "topics", "page", "pages",
+    "activity", "activities", "task", "tasks", "project", "projects",
+    "read", "reading", "reader", "listen", "listening", "speak", "speaking", "talk", "talking",
+    "write", "writing", "written", "match", "circle", "underline", "complete", "choose",
+    "question", "questions", "answer", "answers", "example", "examples", "passage", "text", "texts", "report",
+    "dialogue", "conversation", "grammar", "vocabulary", "language", "communication", "skill", "skills",
+    "learning", "review", "homework", "warm", "pair", "group", "word", "words", "sentence", "sentences",
+    "photo", "photos", "picture", "pictures", "chart", "table", "tables", "figure", "figures",
+    "section", "sections", "part", "parts", "module", "modules", "tip", "tips", "focus", "self", "assessment",
+    "english", "chinese", "student", "students", "teacher", "teachers", "class", "classes",
+    "img", "image", "images", "jpg", "jpeg", "png", "webp", "gif",
+    "unit", "units", "lesson", "lessons", "workbook", "workbooks", "workshop", "workshops",
+    "builder", "builders", "club", "clubs", "assessment", "assessments", "progress", "textbook",
+    "activate", "view", "views", "general", "understanding", "critical", "thinking",
+    "adj", "adv", "prep", "pron", "conj", "noun", "verb", "phrase", "phr", "vt", "vi",
+    "people", "person", "time", "times", "life", "many", "make", "made", "use", "used", "think", "work",
+    "day", "days", "year", "years", "thing", "things", "way", "ways", "place", "places",
+    "kind", "kinds", "sort", "sorts", "someone", "somebody", "everyone", "everybody", "everything",
+    "find", "help", "world", "know", "first", "good", "information", "new", "story", "learn",
+    "two", "three", "four", "five", "share", "well", "important", "look", "give", "different",
+    "see", "take", "great", "using", "said", "going", "want", "expression", "expressions",
+    "one", "second", "third", "also", "another", "around", "back", "best", "better", "come",
+    "coming", "got", "go", "came", "left", "right", "long", "little", "big", "small",
+    "don't", "i'm", "im", "say", "something", "even", "correct", "form", "really", "feel",
+    "ideas", "discuss", "below", "book", "books", "notes", "following", "often", "learnt",
+    "always", "last", "present", "yes",
+}
 DICT_SOURCE_META = {
     "changyong": {
         "label": "常用字",
@@ -526,6 +591,216 @@ def _concept_matches_text(concept: str, normalized_text: str, phrase_set: set[st
     if _contains_chinese(concept):
         return concept in phrase_set
     return bool(_compile_non_cjk_term_pattern(concept).search(normalized_text))
+
+
+def _is_synthetic_query(query: str | None) -> bool:
+    raw = str(query or "").strip()
+    normalized = re.sub(r"[\s_/\-]+", "", raw.lower())
+    if not normalized:
+        return False
+    if any(marker in normalized for marker in TRENDING_QUERY_MARKERS):
+        return True
+    return bool(TRENDING_QUERY_EXCLUDE_RE.search(raw))
+
+
+def _current_query_result_count(con: sqlite3.Connection, query: str, *, cap: int = 200) -> int:
+    clean_q = str(query or "").strip()
+    if not clean_q:
+        return 0
+    like_pattern = f"%{clean_q}%"
+    try:
+        row = con.execute(
+            """
+                SELECT COUNT(*) AS cnt
+                FROM (
+                    SELECT c.id
+                    FROM chunks c
+                    JOIN chunks_fts ON chunks_fts.rowid = c.id
+                    WHERE c.text IS NOT NULL AND c.text != '' AND chunks_fts MATCH ?
+                    UNION
+                    SELECT id
+                    FROM chunks
+                    WHERE text LIKE ?
+                    LIMIT ?
+                )
+            """,
+            (clean_q, like_pattern, cap),
+        ).fetchone()
+        return int(row["cnt"] or 0) if row else 0
+    except Exception:
+        row = con.execute(
+            """
+                SELECT COUNT(*) AS cnt
+                FROM (
+                    SELECT id
+                    FROM chunks
+                    WHERE text LIKE ?
+                    LIMIT ?
+                )
+            """,
+            (like_pattern, cap),
+        ).fetchone()
+        return int(row["cnt"] or 0) if row else 0
+
+
+def _normalize_english_analytics_token(token: str) -> str:
+    compact = unicodedata.normalize("NFKC", token or "").strip().strip("-'")
+    compact = re.sub(r"'s$", "", compact, flags=re.IGNORECASE)
+    compact = re.sub(r"^[^A-Za-z]+|[^A-Za-z]+$", "", compact)
+    if not compact:
+        return ""
+    upper = compact.upper()
+    if upper in ENGLISH_ANALYTICS_ACRONYMS:
+        return upper
+    return compact.lower()
+
+
+def _is_valid_english_analytics_token(token: str) -> bool:
+    if not token:
+        return False
+    if token.upper() in ENGLISH_ANALYTICS_ACRONYMS:
+        return True
+    if not re.fullmatch(r"[A-Za-z]+(?:[-'][A-Za-z]+)*", token):
+        return False
+    if len(token) < 3 or len(token) > 32:
+        return False
+    return token.lower() not in ENGLISH_ANALYTICS_STOPWORDS
+
+
+def _extract_english_analytics_tokens(text: str | None) -> list[tuple[str, str]]:
+    cleaned_text = _clean_english_analytics_text(text)
+    if not cleaned_text:
+        return []
+    pairs: list[tuple[str, str]] = []
+    for raw in re.findall(r"[A-Za-z]+(?:[-'][A-Za-z]+)*", cleaned_text):
+        canonical = _normalize_english_analytics_token(raw)
+        if _is_valid_english_analytics_token(canonical):
+            pairs.append((canonical, raw.strip()))
+    return pairs
+
+
+def _clean_english_analytics_text(text: str | None) -> str:
+    normalized = unicodedata.normalize("NFKC", text or "")
+    if not normalized:
+        return ""
+
+    normalized = re.sub(r"!\[[^\]]*]\([^)]*\)", " ", normalized)
+    normalized = re.sub(r"\bimages/[A-Za-z0-9._/-]+\b", " ", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\b[A-Za-z0-9_-]+\.(?:jpg|jpeg|png|webp|gif)\b", " ", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\$[^$\n]{0,160}\$", " ", normalized)
+    normalized = re.sub(r"\\[A-Za-z]+", " ", normalized)
+
+    cleaned_lines: list[str] = []
+    for raw_line in re.split(r"[\r\n]+", normalized):
+        line = " ".join(raw_line.split())
+        if not line:
+            continue
+
+        words = re.findall(r"[A-Za-z]+(?:[-'][A-Za-z]+)*", line)
+        if not words:
+            continue
+
+        if len(re.findall(r"\bpp?\.\s*\d", line, flags=re.IGNORECASE)) >= 2:
+            continue
+        if _contains_chinese(line) and (
+            re.search(r"/[^/\n]{1,40}/", line)
+            or re.search(r"\b(?:adj|adv|prep|pron|conj|noun|verb|phrase|phr|vt|vi)\b", line, flags=re.IGNORECASE)
+        ):
+            continue
+
+        upper_words = sum(1 for word in words if len(word) > 1 and word.isupper())
+        if len(words) >= 6 and upper_words / len(words) >= 0.6 and not re.search(r"[.!?]", line):
+            continue
+        if len(re.findall(r"\b(?:UNIT|Unit|LESSON|Lesson)\b", line)) >= 2:
+            continue
+
+        cleaned_lines.append(line)
+
+    return " ".join(cleaned_lines)
+
+
+def _english_source_where(source: str) -> tuple[str, tuple]:
+    if source == "gaokao":
+        return "subject = ? AND source = 'gaokao' AND text IS NOT NULL AND text != ''", ("英语",)
+    if source == "textbook":
+        return "subject = ? AND (source = 'mineru' OR source IS NULL) AND text IS NOT NULL AND text != ''", ("英语",)
+    return "subject = ? AND text IS NOT NULL AND text != ''", ("英语",)
+
+
+def _pick_english_display_term(canonical: str, surface_counts: Counter | None) -> str:
+    if canonical.upper() in ENGLISH_ANALYTICS_ACRONYMS:
+        return canonical.upper()
+    if not surface_counts:
+        return canonical
+    surface = max(
+        surface_counts.items(),
+        key=lambda item: (item[1], any(ch.isupper() for ch in item[0]), len(item[0])),
+    )[0]
+    if surface and surface[0].isupper():
+        return surface
+    return canonical
+
+
+@functools.lru_cache(maxsize=8)
+def _build_english_term_stats(db_token: tuple[str, int, int], source: str) -> dict:
+    if db_token[1] < 0:
+        return {"terms": [], "pairs": [], "subjects": ["英语"]}
+
+    where_sql, params = _english_source_where(source)
+    con = get_db()
+    try:
+        rows = con.execute(f"SELECT text FROM chunks WHERE {where_sql}", params).fetchall()
+    finally:
+        con.close()
+
+    term_counts: Counter = Counter()
+    doc_counts: Counter = Counter()
+    surface_counts: dict[str, Counter] = defaultdict(Counter)
+    pair_counts: Counter = Counter()
+    total_docs = 0
+
+    for row in rows:
+        token_pairs = _extract_english_analytics_tokens(row["text"] or "")
+        if not token_pairs:
+            continue
+        total_docs += 1
+        doc_counter: Counter = Counter()
+        for canonical, surface in token_pairs:
+            term_counts[canonical] += 1
+            doc_counter[canonical] += 1
+            surface_counts[canonical][surface] += 1
+        for canonical in doc_counter:
+            doc_counts[canonical] += 1
+        doc_terms = [term for term, _ in doc_counter.most_common(ENGLISH_ANALYTICS_MAX_DOC_TERMS)]
+        for idx, left in enumerate(doc_terms):
+            for right in doc_terms[idx + 1:]:
+                pair_counts[tuple(sorted((left, right)))] += 1
+
+    terms = []
+    for canonical, count in term_counts.items():
+        doc_freq = int(doc_counts[canonical] or 0)
+        if count < ENGLISH_ANALYTICS_MIN_TERM_COUNT or doc_freq < ENGLISH_ANALYTICS_MIN_TERM_COUNT:
+            continue
+        if total_docs and doc_freq / total_docs > ENGLISH_ANALYTICS_MAX_DOC_SHARE:
+            continue
+        terms.append(
+            {
+                "canonical": canonical,
+                "term": _pick_english_display_term(canonical, surface_counts.get(canonical)),
+                "count": int(count),
+                "docs": doc_freq,
+            }
+        )
+
+    terms.sort(key=lambda item: (-item["count"], -item["docs"], item["term"].lower()))
+    allowed = {item["canonical"] for item in terms[: max(40, min(len(terms), 120))]}
+    pairs = [
+        {"source": left, "target": right, "weight": int(weight)}
+        for (left, right), weight in pair_counts.items()
+        if weight >= 2 and left in allowed and right in allowed
+    ]
+    pairs.sort(key=lambda item: (-item["weight"], item["source"], item["target"]))
+    return {"terms": terms, "pairs": pairs, "subjects": ["英语"]}
 
 
 def _present_terms_in_text(
@@ -1508,7 +1783,7 @@ init_search_logs()
 def log_search(query: str, subject=None, book_key=None, source=None, result_count=0):
     """Record a search query asynchronously."""
     normalized = re.sub(r'\s+', '', query.strip().lower())
-    if len(normalized) < 1:
+    if len(normalized) < 1 or _is_synthetic_query(normalized):
         return
     try:
         with _write_lock:
@@ -2748,9 +3023,19 @@ def search_trending():
             WHERE result_count > 0
             GROUP BY query_normalized
             ORDER BY latest_ts DESC
-            LIMIT 15
+            LIMIT 50
         """).fetchall()
-        recent = [{"query": r["query"], "count": r["cnt"]} for r in recent_rows]
+        recent = []
+        for row in recent_rows:
+            query = row["query"]
+            if _is_synthetic_query(query):
+                continue
+            current_count = _current_query_result_count(con, query)
+            if current_count <= 0:
+                continue
+            recent.append({"query": query, "count": current_count})
+            if len(recent) >= 15:
+                break
 
         # Popular queries (last 7 days, by frequency, min 2 searches)
         week_ago = time.time() - 7 * 86400
@@ -2759,11 +3044,21 @@ def search_trending():
             FROM search_logs
             WHERE ts > ? AND result_count > 0
             GROUP BY query_normalized
-            HAVING freq >= 1
+            HAVING freq >= 2
             ORDER BY freq DESC
-            LIMIT 20
+            LIMIT 50
         """, (week_ago,)).fetchall()
-        popular = [{"query": r["query"], "freq": r["freq"], "count": r["cnt"]} for r in popular_rows]
+        popular = []
+        for row in popular_rows:
+            query = row["query"]
+            if _is_synthetic_query(query):
+                continue
+            current_count = _current_query_result_count(con, query)
+            if current_count <= 0:
+                continue
+            popular.append({"query": query, "freq": int(row["freq"] or 0), "count": current_count})
+            if len(popular) >= 20:
+                break
 
         return {"recent": recent, "popular": popular}
     finally:
@@ -4133,6 +4428,16 @@ def word_freq(
     """Word frequency for curated academic terms (pre-computed)."""
     con = get_db()
     try:
+        if subject == "英语":
+            stats = _build_english_term_stats(_db_cache_token(), source)
+            return {
+                "frequencies": [
+                    {"term": item["term"], "count": item["count"]}
+                    for item in stats["terms"][:limit]
+                ],
+                "source": source,
+                "subject": subject,
+            }
         # Use pre-computed keyword_counts table for fast lookups
         has_kc = con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='keyword_counts'").fetchone()
         if has_kc:
@@ -4500,28 +4805,46 @@ def graph_overview(
 
         if mode == "subject" and subject:
             # Per-subject mode: show concepts within one subject
-            rows = con.execute("""
-                SELECT concept, count FROM concept_map
-                WHERE subject = ? ORDER BY count DESC LIMIT ?
-            """, (subject, limit)).fetchall()
-            concepts = [{"term": r["concept"], "count": r["count"]} for r in rows]
-            for c in concepts:
-                nodes.append({"id": c["term"], "type": "concept", "weight": c["count"]})
+            if subject == "英语":
+                english_stats = _build_english_term_stats(_db_cache_token(), "textbook")
+                top_terms = english_stats["terms"][:limit]
+                display_by_canonical = {item["canonical"]: item["term"] for item in top_terms}
+                for item in top_terms:
+                    nodes.append({"id": item["term"], "type": "concept", "weight": item["count"]})
+                allowed = set(display_by_canonical.keys())
+                for pair in english_stats["pairs"]:
+                    if pair["source"] not in allowed or pair["target"] not in allowed:
+                        continue
+                    links.append(
+                        {
+                            "source": display_by_canonical[pair["source"]],
+                            "target": display_by_canonical[pair["target"]],
+                            "weight": pair["weight"],
+                        }
+                    )
+            else:
+                rows = con.execute("""
+                    SELECT concept, count FROM concept_map
+                    WHERE subject = ? ORDER BY count DESC LIMIT ?
+                """, (subject, limit)).fetchall()
+                concepts = [{"term": r["concept"], "count": r["count"]} for r in rows]
+                for c in concepts:
+                    nodes.append({"id": c["term"], "type": "concept", "weight": c["count"]})
 
-            # Link concepts that co-occur in the same chunk (use FTS)
-            terms = [c["term"] for c in concepts]
-            for i, t1 in enumerate(terms[:30]):
-                for t2 in terms[i+1:30]:
-                    try:
-                        co = con.execute("""
-                            SELECT COUNT(*) as cnt FROM chunks c
-                            JOIN chunks_fts ON chunks_fts.rowid = c.id
-                            WHERE c.subject = ? AND chunks_fts MATCH ?
-                        """, (subject, f'"{t1}" AND "{t2}"')).fetchone()
-                        if co and co["cnt"] >= 2:
-                            links.append({"source": t1, "target": t2, "weight": co["cnt"]})
-                    except Exception:
-                        pass
+                # Link concepts that co-occur in the same chunk (use FTS)
+                terms = [c["term"] for c in concepts]
+                for i, t1 in enumerate(terms[:30]):
+                    for t2 in terms[i+1:30]:
+                        try:
+                            co = con.execute("""
+                                SELECT COUNT(*) as cnt FROM chunks c
+                                JOIN chunks_fts ON chunks_fts.rowid = c.id
+                                WHERE c.subject = ? AND chunks_fts MATCH ?
+                            """, (subject, f'"{t1}" AND "{t2}"')).fetchone()
+                            if co and co["cnt"] >= 2:
+                                links.append({"source": t1, "target": t2, "weight": co["cnt"]})
+                        except Exception:
+                            pass
 
         else:
             # Cross-subject mode: use cross_subject_map clusters as primary edges
