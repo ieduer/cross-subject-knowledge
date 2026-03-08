@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.03.08-r16",
+  "frontend_refactor_version": "2026.03.08-r17",
   "updated_at": "2026-03-08",
   "history": [
+    {
+      "version": "2026.03.08-r17",
+      "date": "2026-03-08",
+      "summary": "filtered synthetic trending queries, switched English analytics and subject graph to English-only terms, improved heatmap contrast, and refreshed runtime documentation counters"
+    },
     {
       "version": "2026.03.08-r16",
       "date": "2026-03-08",
