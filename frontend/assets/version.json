@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.03.06-r13",
-  "updated_at": "2026-03-06",
+  "frontend_refactor_version": "2026.03.08-r14",
+  "updated_at": "2026-03-08",
   "history": [
+    {
+      "version": "2026.03.08-r14",
+      "date": "2026-03-08",
+      "summary": "textbook classics now use curated page manifests, dictionary views show book page plus PDF page, and xuci single-character lookups prefer verified stroke-index anchors"
+    },
     {
       "version": "2026.03.06-r13",
       "date": "2026-03-06",

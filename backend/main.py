@@ -54,6 +54,9 @@ DICT_DB_PATH = _resolve_data_asset("dictionary_index.db")
 DICT_HEADWORD_INDEX_PATH = _resolve_data_asset("dict_headword_pages.json")
 DICT_QC_PATH = _resolve_data_asset("dict_headword_qc.json")
 TEXTBOOK_CLASSICS_MANIFEST_PATH = DATA_ROOT / "index" / "textbook_classics_manifest.json"
+BUNDLED_TEXTBOOK_CLASSICS_MANIFEST_PATH = Path(__file__).with_name("textbook_classics_manifest.json")
+XUCI_SINGLE_CHAR_INDEX_PATH = DATA_ROOT / "index" / "xuci_single_char_index.json"
+BUNDLED_XUCI_SINGLE_CHAR_INDEX_PATH = Path(__file__).with_name("xuci_single_char_index.json")
 FRONTEND = Path(__file__).parent.parent / "frontend"
 FAISS_INDEX_PATH = _resolve_data_asset("textbook_chunks.index")
 FAISS_MANIFEST_PATH = _resolve_data_asset("textbook_chunks.manifest.json")
@@ -139,18 +142,24 @@ DICT_SOURCE_META = {
         "sort_order": 1,
         "page_prefix": "dict_changyong",
         "page_count": 659,
+        "book_page_offset": 60,
+        "entry_page_limit": 553,
     },
     "xuci": {
         "label": "虚词",
         "sort_order": 2,
         "page_prefix": "dict_xuci",
         "page_count": 921,
+        "book_page_offset": 12,
+        "entry_page_limit": 888,
     },
     "ciyuan": {
         "label": "辞源",
         "sort_order": 3,
         "page_prefix": "dict_ciyuan",
         "page_count": 3940,
+        "book_page_offset": 0,
+        "entry_page_limit": 3940,
     },
 }
 _dict_enabled_sources = [
@@ -163,6 +172,7 @@ DICT_ENABLED_SOURCE_SET = set(DICT_ENABLED_SOURCES)
 CLASSICAL_TEXTBOOK_EXCLUDE_HINTS = (
     "目录",
     "单元学习任务",
+    "单元研习任务",
     "学习提示",
     "词语积累与词语解释",
     "整本书阅读",
@@ -208,6 +218,11 @@ CLASSICAL_MARKERS_LIGHT = (
     "未尝",
     "故",
     "夫",
+)
+TEXTBOOK_CLASSICS_TRIM_HINTS = (
+    "学习提示",
+    "单元学习任务",
+    "单元研习任务",
 )
 
 
@@ -1623,7 +1638,38 @@ def _load_json_file_cached(path_str: str, mtime_ns: int, size: int):
 def _load_textbook_classics_manifest() -> dict:
     token = _path_cache_token(TEXTBOOK_CLASSICS_MANIFEST_PATH)
     data = _load_json_file_cached(*token)
-    return data if isinstance(data, dict) else {}
+    if isinstance(data, dict) and data:
+        return data
+    bundled_token = _path_cache_token(BUNDLED_TEXTBOOK_CLASSICS_MANIFEST_PATH)
+    bundled = _load_json_file_cached(*bundled_token)
+    return bundled if isinstance(bundled, dict) else {}
+
+
+def _normalize_single_char_page_map(payload) -> dict[str, int]:
+    if not isinstance(payload, dict):
+        return {}
+    raw_map = payload.get("anchors") if isinstance(payload.get("anchors"), dict) else payload
+    anchors: dict[str, int] = {}
+    for raw_headword, raw_page in raw_map.items():
+        headword = _compact_query_text(str(raw_headword or ""))
+        if not _is_single_hanzi_query(headword):
+            continue
+        try:
+            page_num = int(raw_page)
+        except Exception:
+            continue
+        if page_num > 0:
+            anchors[headword] = page_num
+    return anchors
+
+
+def _load_xuci_single_char_index() -> dict[str, int]:
+    token = _path_cache_token(XUCI_SINGLE_CHAR_INDEX_PATH)
+    data = _normalize_single_char_page_map(_load_json_file_cached(*token))
+    if data:
+        return data
+    bundled_token = _path_cache_token(BUNDLED_XUCI_SINGLE_CHAR_INDEX_PATH)
+    return _normalize_single_char_page_map(_load_json_file_cached(*bundled_token))
 
 
 def _load_dict_headword_index() -> dict:
@@ -1651,17 +1697,68 @@ def _get_dict_db() -> Optional[sqlite3.Connection]:
     return con
 
 
-def _dict_page_url(dict_source: str, page: int | None) -> Optional[str]:
-    meta = DICT_SOURCE_META.get(dict_source)
-    if not meta or page is None:
+def _dict_book_page_offset(dict_source: str) -> int:
+    meta = DICT_SOURCE_META.get(dict_source, {})
+    return max(0, int(meta.get("book_page_offset") or 0))
+
+
+def _dict_book_page_limit(dict_source: str) -> int:
+    meta = DICT_SOURCE_META.get(dict_source, {})
+    configured = int(meta.get("entry_page_limit") or 0)
+    if configured > 0:
+        return configured
+    page_count = int(meta.get("page_count") or 0)
+    return max(0, page_count - _dict_book_page_offset(dict_source))
+
+
+def _dict_pdf_page(dict_source: str, book_page: int | None) -> Optional[int]:
+    if book_page is None:
         return None
     try:
-        page_num = int(page)
+        page_num = int(book_page)
     except Exception:
         return None
     if page_num <= 0:
         return None
-    return f"{IMG_CDN}/pages/{meta['page_prefix']}/p{page_num}.webp"
+    pdf_page = page_num + _dict_book_page_offset(dict_source)
+    page_count = int(DICT_SOURCE_META.get(dict_source, {}).get("page_count") or 0)
+    if page_count > 0 and pdf_page > page_count:
+        return None
+    return pdf_page
+
+
+def _dict_book_page(dict_source: str, pdf_page: int | None) -> Optional[int]:
+    if pdf_page is None:
+        return None
+    try:
+        page_num = int(pdf_page)
+    except Exception:
+        return None
+    if page_num <= 0:
+        return None
+    book_page = page_num - _dict_book_page_offset(dict_source)
+    if book_page <= 0:
+        return None
+    return book_page
+
+
+def _dict_book_page_numbers(dict_source: str, pdf_pages: list[int]) -> list[int]:
+    pages = []
+    for pdf_page in pdf_pages:
+        book_page = _dict_book_page(dict_source, pdf_page)
+        if book_page is not None:
+            pages.append(book_page)
+    return sorted(set(pages))
+
+
+def _dict_page_url(dict_source: str, page: int | None) -> Optional[str]:
+    meta = DICT_SOURCE_META.get(dict_source)
+    if not meta or page is None:
+        return None
+    pdf_page = _dict_pdf_page(dict_source, page)
+    if pdf_page is None:
+        return None
+    return f"{IMG_CDN}/pages/{meta['page_prefix']}/p{pdf_page}.webp"
 
 
 def _dict_page_urls(
@@ -1748,13 +1845,16 @@ def _build_dict_page_entry_payload(raw_entry: dict, *, fallback_headword: str | 
     if not headword:
         return None
     headword_trad = str(raw_entry.get("headword_trad") or "").strip() or None
-    page_numbers = _normalize_page_number_list(
+    raw_pdf_page_numbers = _normalize_page_number_list(
         raw_entry.get("page_numbers") or raw_entry.get("pages"),
         page_start=raw_entry.get("page_start"),
         page_end=raw_entry.get("page_end"),
     )
-    if not page_numbers:
+    if not raw_pdf_page_numbers:
         return None
+    page_numbers = _dict_book_page_numbers(dict_source, raw_pdf_page_numbers)
+    if not page_numbers:
+        page_numbers = raw_pdf_page_numbers
     page_urls = _normalize_page_url_list(dict_source, raw_entry.get("page_urls"), page_numbers)
     meta = DICT_SOURCE_META.get(dict_source, {})
     entry_text = _normalize_text_line(raw_entry.get("entry_text"))
@@ -1770,12 +1870,57 @@ def _build_dict_page_entry_payload(raw_entry: dict, *, fallback_headword: str | 
         "page_url": page_urls[0] if page_urls else _dict_page_url(dict_source, page_numbers[0]),
         "page_urls": page_urls,
         "page_numbers": page_numbers,
+        "pdf_page_numbers": raw_pdf_page_numbers,
         "page_count": len(page_numbers),
         "sort_order": int(raw_entry.get("sort_order") or meta.get("sort_order", 99)),
         "verified": bool(raw_entry.get("verified", True)),
         "display_mode": "page_images",
         "match_mode": str(raw_entry.get("match_mode") or "headword"),
     }
+
+
+def _expand_xuci_page_window(entry: dict, *, window_size: int = 20) -> dict:
+    if entry.get("dict_source") != "xuci":
+        return entry
+    headword = _compact_query_text(str(entry.get("headword") or ""))
+    if not _is_single_hanzi_query(headword):
+        return entry
+    anchor_page = _load_xuci_single_char_index().get(headword)
+    start_page = int(anchor_page or entry.get("page_start") or 0)
+    if start_page <= 0:
+        return entry
+    page_limit = _dict_book_page_limit("xuci")
+    if page_limit <= 0:
+        return entry
+    end_page = min(page_limit, start_page + window_size - 1)
+    page_numbers = list(range(start_page, end_page + 1))
+    pdf_page_numbers = [
+        pdf_page
+        for page_num in page_numbers
+        if (pdf_page := _dict_pdf_page("xuci", page_num)) is not None
+    ]
+    page_urls = _normalize_page_url_list("xuci", None, page_numbers)
+    updated = dict(entry)
+    updated["page_start"] = page_numbers[0]
+    updated["page_end"] = page_numbers[-1]
+    updated["page_numbers"] = page_numbers
+    updated["pdf_page_numbers"] = pdf_page_numbers
+    updated["page_urls"] = page_urls
+    updated["page_url"] = page_urls[0] if page_urls else None
+    updated["page_count"] = len(page_numbers)
+    if anchor_page:
+        updated["page_anchor_source"] = "xuci_single_char_index"
+    return updated
+
+
+def _dict_candidate_sort_key(item: dict) -> tuple[int, int, int, str]:
+    exact_rank = 0 if str(item.get("match_mode") or "") == "exact_headword" else 1
+    return (
+        exact_rank,
+        int(item.get("sort_order") or 99),
+        int(item.get("page_start") or 0),
+        str(item.get("headword") or ""),
+    )
 
 
 def _load_headword_page_candidates(clean_q: str, limit: int) -> list[dict]:
@@ -1795,10 +1940,12 @@ def _load_headword_page_candidates(clean_q: str, limit: int) -> list[dict]:
             payload_item = _build_dict_page_entry_payload(item, fallback_headword=clean_q)
             if payload_item:
                 payload_item["match_mode"] = "exact_headword"
+                if _is_single_hanzi_query(clean_q):
+                    payload_item = _expand_xuci_page_window(payload_item)
                 candidates.append(payload_item)
 
     if len(candidates) >= limit:
-        return sorted(candidates, key=lambda item: (item["sort_order"], item["page_start"]))[:limit]
+        return sorted(candidates, key=_dict_candidate_sort_key)[:limit]
 
     seen = {(item["dict_source"], item["headword"], item["page_start"], item["page_end"]) for item in candidates}
     for headword_key, raw_items in entries.items():
@@ -1824,9 +1971,9 @@ def _load_headword_page_candidates(clean_q: str, limit: int) -> list[dict]:
             candidates.append(payload_item)
             seen.add(candidate_key)
             if len(candidates) >= limit:
-                return sorted(candidates, key=lambda row: (row["sort_order"], row["page_start"]))[:limit]
+                return sorted(candidates, key=_dict_candidate_sort_key)[:limit]
 
-    return sorted(candidates, key=lambda row: (row["sort_order"], row["page_start"]))[:limit]
+    return sorted(candidates, key=_dict_candidate_sort_key)[:limit]
 
 
 def _build_dict_db_entries(clean_q: str, limit: int) -> list[dict]:
@@ -1957,34 +2104,80 @@ def _looks_like_poem(text: str) -> bool:
     return len(short_lines) >= 4 and len(short_lines) >= max(4, int(len(sample) * 0.4))
 
 
-def _find_textbook_classics_hit(book_key: str | None, physical_page: int | None) -> Optional[dict]:
-    if not book_key or physical_page is None:
-        return None
+def _find_textbook_classics_hits(book_key: str | None, logical_page: int | None) -> list[dict]:
+    if not book_key or logical_page is None:
+        return []
     manifest = _load_textbook_classics_manifest()
     ranges = manifest.get(book_key)
     if not isinstance(ranges, list):
-        return None
+        return []
+    hits = []
     for item in ranges:
         if not isinstance(item, dict):
             continue
         start = int(item.get("page_start") or -1)
         end = int(item.get("page_end") or start)
-        if start <= physical_page <= end:
-            return item
-    return None
+        if start <= logical_page <= end:
+            hits.append(item)
+    hits.sort(key=lambda item: (int(item.get("page_start") or 0), int(item.get("page_end") or 0)))
+    return hits
 
 
-def _score_textbook_classical_row(row: sqlite3.Row) -> tuple[int, Optional[dict]]:
+def _find_textbook_classics_hit(book_key: str | None, logical_page: int | None) -> Optional[dict]:
+    hits = _find_textbook_classics_hits(book_key, logical_page)
+    return hits[0] if hits else None
+
+
+def _book_has_textbook_classics_manifest(book_key: str | None) -> bool:
+    if not book_key:
+        return False
+    manifest = _load_textbook_classics_manifest()
+    ranges = manifest.get(book_key)
+    return isinstance(ranges, list) and bool(ranges)
+
+
+def _clip_textbook_classics_text(text: str | None, manifest_hit: dict | None = None) -> str:
+    clipped = (text or "").strip()
+    if not clipped:
+        return ""
+
+    start_index = 0
+    if manifest_hit:
+        start_marker = str(manifest_hit.get("start_marker") or "").strip()
+        if not start_marker:
+            start_marker = str(manifest_hit.get("title") or "").strip()
+        if start_marker:
+            marker_index = clipped.find(start_marker)
+            if marker_index >= 0:
+                start_index = marker_index
+        end_marker = str(manifest_hit.get("end_marker") or "").strip()
+        if end_marker:
+            marker_index = clipped.find(end_marker, start_index + 1)
+            if marker_index > start_index:
+                clipped = clipped[start_index:marker_index]
+                start_index = 0
+
+    if start_index > 0:
+        clipped = clipped[start_index:]
+
+    trim_points = []
+    for hint in TEXTBOOK_CLASSICS_TRIM_HINTS:
+        marker_index = clipped.find(hint)
+        if marker_index > 24:
+            trim_points.append(marker_index)
+    if trim_points:
+        clipped = clipped[:min(trim_points)]
+
+    return clipped.strip()
+
+
+def _score_textbook_classical_row(row: sqlite3.Row) -> int:
     text = _normalize_text_line(row["text"])
     if not text or len(text) < 12:
-        return 0, None
-
-    manifest_hit = _find_textbook_classics_hit(row["book_key"], row["section"])
-    if manifest_hit:
-        return 100, manifest_hit
+        return 0
 
     if any(hint in text[:120] for hint in CLASSICAL_TEXTBOOK_EXCLUDE_HINTS) and not _looks_like_poem(text):
-        return 0, None
+        return 0
 
     score = _classical_marker_score(text)
     if _looks_like_poem(text):
@@ -1994,7 +2187,7 @@ def _score_textbook_classical_row(row: sqlite3.Row) -> tuple[int, Optional[dict]
         score += 2
     if re.search(r"[兮矣焉哉曰]", text):
         score += 3
-    return score, None
+    return score
 
 
 def _score_gaokao_classical_row(row: sqlite3.Row) -> int:
@@ -2016,15 +2209,18 @@ def _score_gaokao_classical_row(row: sqlite3.Row) -> int:
 def _build_dict_entry_payload(row: sqlite3.Row) -> dict:
     dict_source = row["dict_source"] or "changyong"
     meta = DICT_SOURCE_META.get(dict_source, {})
-    page_start = row["page_start"]
-    page_end = row["page_end"] if "page_end" in row.keys() else row["page_start"]
-    page_numbers = _normalize_page_number_list(None, page_start=page_start, page_end=page_end)
+    raw_page_start = row["page_start"]
+    raw_page_end = row["page_end"] if "page_end" in row.keys() else row["page_start"]
+    raw_pdf_page_numbers = _normalize_page_number_list(None, page_start=raw_page_start, page_end=raw_page_end)
+    page_numbers = _dict_book_page_numbers(dict_source, raw_pdf_page_numbers)
+    if not page_numbers:
+        page_numbers = raw_pdf_page_numbers
     page_urls = []
     if "page_urls_json" in row.keys() and row["page_urls_json"]:
         loaded = _load_json_list(row["page_urls_json"])
         page_urls = [item for item in loaded if isinstance(item, str) and item.strip()]
     if not page_urls:
-        page_urls = _dict_page_urls(dict_source, page_start, page_end)
+        page_urls = _dict_page_urls(dict_source, page_numbers[0], page_numbers[-1])
     return {
         "id": row["id"],
         "headword": row["headword"],
@@ -2032,11 +2228,12 @@ def _build_dict_entry_payload(row: sqlite3.Row) -> dict:
         "dict_source": dict_source,
         "dict_label": meta.get("label", dict_source),
         "entry_text": row["entry_text"],
-        "page_start": page_start,
-        "page_end": page_end,
-        "page_url": page_urls[0] if page_urls else _dict_page_url(dict_source, page_start),
+        "page_start": page_numbers[0],
+        "page_end": page_numbers[-1],
+        "page_url": page_urls[0] if page_urls else _dict_page_url(dict_source, page_numbers[0]),
         "page_urls": page_urls,
         "page_numbers": page_numbers,
+        "pdf_page_numbers": raw_pdf_page_numbers,
         "page_count": len(page_numbers) if page_numbers else len(page_urls),
         "sort_order": row["sort_order"] if "sort_order" in row.keys() else meta.get("sort_order", 99),
         "display_mode": "page_images",
@@ -2949,17 +3146,70 @@ def dict_textbook(
         ).fetchall()
 
         matches = []
+        seen = set()
+        normalized_query = re.sub(r"\s+", "", clean_q)
         for row in rows:
-            score, manifest_hit = _score_textbook_classical_row(row)
+            raw_text = _normalize_text_line(row["text"])
+            if not raw_text:
+                continue
+            physical_page = row["section"]
+            logical_page = row["logical_page"] if row["logical_page"] is not None else physical_page
+            manifest_hits = _find_textbook_classics_hits(row["book_key"], logical_page)
+
+            if manifest_hits:
+                for manifest_hit in manifest_hits:
+                    clipped_text = _clip_textbook_classics_text(raw_text, manifest_hit)
+                    if not clipped_text:
+                        continue
+                    if normalized_query not in re.sub(r"\s+", "", clipped_text):
+                        continue
+                    heading = str(manifest_hit.get("title") or "").strip() or _extract_passage_heading(clipped_text)
+                    display_title = heading or row["title"]
+                    dedupe_key = (row["id"], display_title, physical_page)
+                    if dedupe_key in seen:
+                        continue
+                    seen.add(dedupe_key)
+                    score = max(8, _classical_marker_score(clipped_text))
+                    if _looks_like_poem(clipped_text):
+                        score += 6
+                    if heading:
+                        score += 2
+                    matches.append(
+                        {
+                            "id": row["id"],
+                            "book_key": row["book_key"],
+                            "title": row["title"],
+                            "display_title": display_title,
+                            "classical_title": heading or None,
+                            "section": physical_page,
+                            "logical_page": logical_page,
+                            "text": clipped_text[:DICT_TEXTBOOK_RESPONSE_TEXT_LIMIT],
+                            "snippet": _build_context_snippet(clipped_text, clean_q),
+                            "page_url": _book_page_url(row["book_key"], physical_page),
+                            "classical_kind": manifest_hit.get("kind"),
+                            "score": score,
+                        }
+                    )
+                continue
+
+            if _book_has_textbook_classics_manifest(row["book_key"]):
+                continue
+
+            clipped_text = _clip_textbook_classics_text(raw_text)
+            if not clipped_text:
+                continue
+            score = _score_textbook_classical_row(row)
             if score < 5:
                 continue
-            heading = ""
-            if manifest_hit:
-                heading = str(manifest_hit.get("title") or "").strip()
-            if not heading:
-                heading = _extract_passage_heading(row["text"])
+            if normalized_query not in re.sub(r"\s+", "", clipped_text):
+                continue
+
+            heading = _extract_passage_heading(clipped_text)
             display_title = heading or row["title"]
-            physical_page = row["section"]
+            dedupe_key = (row["id"], display_title, physical_page)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
             matches.append(
                 {
                     "id": row["id"],
@@ -2968,11 +3218,11 @@ def dict_textbook(
                     "display_title": display_title,
                     "classical_title": heading or None,
                     "section": physical_page,
-                    "logical_page": row["logical_page"] if row["logical_page"] is not None else physical_page,
-                    "text": (row["text"] or "")[:DICT_TEXTBOOK_RESPONSE_TEXT_LIMIT],
-                    "snippet": _build_context_snippet(row["text"], clean_q),
+                    "logical_page": logical_page,
+                    "text": clipped_text[:DICT_TEXTBOOK_RESPONSE_TEXT_LIMIT],
+                    "snippet": _build_context_snippet(clipped_text, clean_q),
                     "page_url": _book_page_url(row["book_key"], physical_page),
-                    "classical_kind": manifest_hit.get("kind") if manifest_hit else None,
+                    "classical_kind": None,
                     "score": score,
                 }
             )
@@ -3069,7 +3319,7 @@ def dict_gaokao(
 @app.get("/api/dict/page-images")
 def dict_page_images(
     dict_source: str = Query(..., description="changyong, xuci, or ciyuan"),
-    page: int = Query(..., ge=1, description="1-based PDF page"),
+    page: int = Query(..., ge=1, description="1-based dictionary book page"),
     context: int = Query(2, ge=0, le=8),
 ):
     meta = DICT_SOURCE_META.get(dict_source)
@@ -3078,22 +3328,29 @@ def dict_page_images(
     if dict_source not in DICT_ENABLED_SOURCE_SET:
         raise HTTPException(404, "Dictionary source not enabled")
 
-    total_pages = int(meta["page_count"])
+    total_pages = _dict_book_page_limit(dict_source) or int(meta["page_count"])
     current_page = max(1, min(int(page), total_pages))
     start = max(1, current_page - context)
     end = min(total_pages, current_page + context)
-    pages = [
-        {
-            "page": page_num,
-            "url": _dict_page_url(dict_source, page_num),
-            "current": page_num == current_page,
-        }
-        for page_num in range(start, end + 1)
-    ]
+    pages = []
+    for page_num in range(start, end + 1):
+        url = _dict_page_url(dict_source, page_num)
+        pdf_page = _dict_pdf_page(dict_source, page_num)
+        if not url or pdf_page is None:
+            continue
+        pages.append(
+            {
+                "page": page_num,
+                "pdf_page": pdf_page,
+                "url": url,
+                "current": page_num == current_page,
+            }
+        )
     return {
         "dict_source": dict_source,
         "dict_label": meta["label"],
         "current_page": current_page,
+        "current_pdf_page": _dict_pdf_page(dict_source, current_page),
         "total_pages": total_pages,
         "pages": pages,
     }

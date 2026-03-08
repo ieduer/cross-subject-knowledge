@@ -119,20 +119,49 @@ async function loadStatus() {
 }
 
 function formatPageLabel(entry) {
-    const numbers = Array.isArray(entry.page_numbers) ? entry.page_numbers : [];
-    if (numbers.length > 1) {
-        return `页 ${numbers[0]}-${numbers[numbers.length - 1]}`;
+    const bookBounds = getPageBounds(
+        Array.isArray(entry.page_numbers) ? entry.page_numbers : [],
+        entry.page_start,
+        entry.page_end,
+    );
+    const pdfBounds = getPageBounds(
+        Array.isArray(entry.pdf_page_numbers) ? entry.pdf_page_numbers : [],
+    );
+    const bookLabel = formatPageBounds(bookBounds, '书页');
+    const pdfLabel = formatPageBounds(pdfBounds, 'PDF');
+    if (bookLabel && pdfLabel && !samePageBounds(bookBounds, pdfBounds)) {
+        return `${bookLabel}（${pdfLabel}）`;
     }
-    if (numbers.length === 1) {
-        return `页 ${numbers[0]}`;
+    return bookLabel || pdfLabel || '页码待补';
+}
+
+function getPageBounds(numbers, fallbackStart = null, fallbackEnd = null) {
+    const cleanNumbers = (numbers || [])
+        .map(value => Number(value))
+        .filter(value => Number.isFinite(value) && value > 0);
+    if (cleanNumbers.length) {
+        return { start: cleanNumbers[0], end: cleanNumbers[cleanNumbers.length - 1] };
     }
-    if (entry.page_start && entry.page_end && entry.page_start !== entry.page_end) {
-        return `页 ${entry.page_start}-${entry.page_end}`;
+    const start = Number(fallbackStart);
+    if (!Number.isFinite(start) || start <= 0) return null;
+    const end = Number(fallbackEnd);
+    if (Number.isFinite(end) && end >= start) {
+        return { start, end };
     }
-    if (entry.page_start) {
-        return `页 ${entry.page_start}`;
+    return { start, end: start };
+}
+
+function formatPageBounds(bounds, label) {
+    if (!bounds) return '';
+    if (bounds.start === bounds.end) {
+        return `${label} ${bounds.start}`;
     }
-    return '页码待补';
+    return `${label} ${bounds.start}-${bounds.end}`;
+}
+
+function samePageBounds(left, right) {
+    if (!left || !right) return false;
+    return left.start === right.start && left.end === right.end;
 }
 
 function buildDictContext(entries) {
@@ -193,8 +222,10 @@ function renderTextbookResults(results) {
 function buildModalPagesFromEntry(entry) {
     const pageUrls = Array.isArray(entry.page_urls) ? entry.page_urls : [];
     const pageNumbers = Array.isArray(entry.page_numbers) ? entry.page_numbers : [];
+    const pdfPageNumbers = Array.isArray(entry.pdf_page_numbers) ? entry.pdf_page_numbers : [];
     return pageUrls.map((url, index) => ({
         page: pageNumbers[index] || (entry.page_start || 1) + index,
+        pdfPage: pdfPageNumbers[index] || null,
         url,
     }));
 }
@@ -450,7 +481,9 @@ function renderModal() {
     const current = state.modalPages[state.modalIndex];
     if (!current) return;
     el.modalImage.src = current.url;
-    el.modalMeta.textContent = `第 ${current.page} 页`;
+    el.modalMeta.textContent = current.pdfPage && current.pdfPage !== current.page
+        ? `书页 ${current.page}（PDF ${current.pdfPage}）`
+        : `第 ${current.page} 页`;
     el.modalPrev.disabled = state.modalIndex === 0;
     el.modalNext.disabled = state.modalIndex >= state.modalPages.length - 1;
 }
@@ -466,7 +499,7 @@ function closeModal() {
 async function openBookModal(bookKey, page) {
     try {
         const data = await fetchJson(`${API}/api/page-image?book_key=${encodeURIComponent(bookKey)}&page=${page}&context=2`);
-        openModalWithPages((data.pages || []).map(item => ({ page: item.page, url: item.url })));
+        openModalWithPages((data.pages || []).map(item => ({ page: item.page, pdfPage: null, url: item.url })));
     } catch (error) {
         window.alert(`无法加载教材页图：${error.message}`);
     }
@@ -478,8 +511,12 @@ async function openDictModal(dictSource, pageStart, pageEnd) {
         const data = await fetchJson(`${API}/api/dict/page-images?dict_source=${encodeURIComponent(dictSource)}&page=${pageStart}&context=${context}`);
         const relevant = (data.pages || [])
             .filter(item => item.page >= pageStart && item.page <= Math.max(pageStart, pageEnd))
-            .map(item => ({ page: item.page, url: item.url }));
-        openModalWithPages(relevant.length ? relevant : (data.pages || []).map(item => ({ page: item.page, url: item.url })));
+            .map(item => ({ page: item.page, pdfPage: item.pdf_page || null, url: item.url }));
+        openModalWithPages(
+            relevant.length
+                ? relevant
+                : (data.pages || []).map(item => ({ page: item.page, pdfPage: item.pdf_page || null, url: item.url })),
+        );
     } catch (error) {
         window.alert(`无法加载词典页图：${error.message}`);
     }
