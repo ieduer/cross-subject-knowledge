@@ -55,6 +55,7 @@ DICT_HEADWORD_INDEX_PATH = _resolve_data_asset("dict_headword_pages.json")
 DICT_QC_PATH = _resolve_data_asset("dict_headword_qc.json")
 TEXTBOOK_CLASSICS_MANIFEST_PATH = DATA_ROOT / "index" / "textbook_classics_manifest.json"
 BUNDLED_TEXTBOOK_CLASSICS_MANIFEST_PATH = Path(__file__).with_name("textbook_classics_manifest.json")
+TEXTBOOK_VERSION_MANIFEST_PATH = Path(__file__).with_name("textbook_version_manifest.json")
 XUCI_SINGLE_CHAR_INDEX_PATH = DATA_ROOT / "index" / "xuci_single_char_index.json"
 BUNDLED_XUCI_SINGLE_CHAR_INDEX_PATH = Path(__file__).with_name("xuci_single_char_index.json")
 FRONTEND = Path(__file__).parent.parent / "frontend"
@@ -714,6 +715,69 @@ def _parse_textbook_ref(ref: str) -> Optional[dict]:
     }
 
 
+def _resolve_textbook_ref_row(con, parsed: dict):
+    try:
+        rows = con.execute(
+            """
+            SELECT c.id, c.subject, c.title, c.book_key, c.section, c.logical_page, c.text,
+                   c.content_id, s.summary AS ai_summary
+            FROM chunks c
+            LEFT JOIN ai_summaries s ON s.chunk_id = c.id
+            WHERE c.source = 'mineru'
+              AND c.subject = ?
+              AND (c.logical_page = ? OR c.section = ?)
+            ORDER BY CASE
+                WHEN c.logical_page = ? THEN 0
+                WHEN c.section = ? THEN 1
+                ELSE 2
+            END, c.id
+            """,
+            (
+                parsed["subject"],
+                parsed["page"],
+                parsed["page"],
+                parsed["page"],
+                parsed["page"],
+            ),
+        ).fetchall()
+    except Exception:
+        return None
+
+    parsed_title = (parsed.get("title") or "").strip()
+    if not rows:
+        return None
+    if not parsed_title:
+        return rows[0]
+
+    best_row = None
+    best_score = -1
+    for row in rows:
+        meta = _resolve_book_runtime_meta(
+            row["book_key"],
+            fallback_title=row["title"],
+            content_id=row["content_id"] if "content_id" in row.keys() else None,
+        )
+        candidate_titles = [
+            (row["title"] or "").strip(),
+            (meta.get("title") or "").strip(),
+            (meta.get("display_title") or "").strip(),
+        ]
+        score = -1
+        if parsed_title == candidate_titles[2]:
+            score = 100
+        elif parsed_title == candidate_titles[1]:
+            score = 95
+        elif parsed_title == candidate_titles[0]:
+            score = 90
+        elif parsed_title in {title for title in candidate_titles if title}:
+            score = 80
+        if score > best_score:
+            best_row = row
+            best_score = score
+
+    return best_row or rows[0]
+
+
 def _compose_chunk_snippet(summary: str | None, text: str | None, *, limit: int = 220) -> str:
     clean_summary = _normalize_text_line(summary)
     if clean_summary:
@@ -728,57 +792,33 @@ def _resolve_textbook_refs(con, refs: list[str], *, question_subject: str | None
         parsed = _parse_textbook_ref(ref)
         if not parsed:
             continue
-        try:
-            row = con.execute(
-                """
-                SELECT c.id, c.subject, c.title, c.book_key, c.section, c.logical_page, c.text,
-                       s.summary AS ai_summary
-                FROM chunks c
-                LEFT JOIN ai_summaries s ON s.chunk_id = c.id
-                WHERE c.source = 'mineru'
-                  AND c.subject = ?
-                  AND c.title = ?
-                  AND (c.logical_page = ? OR c.section = ?)
-                ORDER BY CASE
-                    WHEN c.logical_page = ? THEN 0
-                    WHEN c.section = ? THEN 1
-                    ELSE 2
-                END, c.id
-                LIMIT 1
-                """,
-                (
-                    parsed["subject"],
-                    parsed["title"],
-                    parsed["page"],
-                    parsed["page"],
-                    parsed["page"],
-                    parsed["page"],
-                ),
-            ).fetchone()
-        except Exception:
-            row = None
+        row = _resolve_textbook_ref_row(con, parsed)
         if not row or row["id"] in seen_ids:
             continue
         seen_ids.add(row["id"])
         snippet = _compose_chunk_snippet(row["ai_summary"], row["text"], limit=180)
         logical_page = row["logical_page"] if row["logical_page"] is not None else row["section"]
         resolved.append(
-            {
-                "id": row["id"],
-                "subject": row["subject"],
-                "title": row["title"],
-                "book_key": row["book_key"],
-                "section": row["section"],
-                "logical_page": logical_page,
-                "snippet": snippet,
-                "summary": _normalize_text_line(row["ai_summary"]),
-                "text": row["text"] or "",
-                "link_type": "precomputed",
-                "relevance_score": max(80, 96 - idx * 3),
-                "matched_concepts": [],
-                "precomputed_ref": ref,
-                **SUBJECT_META.get(row["subject"], {"icon": "📚", "color": "#95a5a6"}),
-            }
+            _apply_book_runtime_meta(
+                {
+                    "id": row["id"],
+                    "subject": row["subject"],
+                    "title": row["title"],
+                    "book_key": row["book_key"],
+                    "section": row["section"],
+                    "logical_page": logical_page,
+                    "snippet": snippet,
+                    "summary": _normalize_text_line(row["ai_summary"]),
+                    "text": row["text"] or "",
+                    "link_type": "precomputed",
+                    "relevance_score": max(80, 96 - idx * 3),
+                    "matched_concepts": [],
+                    "precomputed_ref": ref,
+                    **SUBJECT_META.get(row["subject"], {"icon": "📚", "color": "#95a5a6"}),
+                },
+                book_key=row["book_key"],
+                fallback_title=row["title"],
+            )
         )
         if len(resolved) >= limit:
             break
@@ -1197,18 +1237,22 @@ def _build_chat_context_payload(con, query: str, user_message: str, history: lis
         for row in diverse_rows[:2]:
             logical_page = row["logical_page"] if row["logical_page"] is not None else row["section"]
             snippet = _compose_chunk_snippet(row.get("ai_summary"), row.get("text"), limit=180)
-            citation = f"[{subject}·{row['title']}·p{logical_page}]"
-            item = {
-                "id": row["id"],
-                "subject": subject,
-                "title": row["title"],
-                "book_key": row["book_key"],
-                "section": row["section"],
-                "logical_page": logical_page,
-                "snippet": snippet,
-                "citation": citation,
-                "matched_term": row.get("matched_term"),
-            }
+            item = _apply_book_runtime_meta(
+                {
+                    "id": row["id"],
+                    "subject": subject,
+                    "title": row["title"],
+                    "book_key": row["book_key"],
+                    "section": row["section"],
+                    "logical_page": logical_page,
+                    "snippet": snippet,
+                    "matched_term": row.get("matched_term"),
+                },
+                book_key=row["book_key"],
+                fallback_title=row["title"],
+                content_id=row.get("content_id"),
+            )
+            item["citation"] = f"[{subject}·{item['title']}·p{logical_page}]"
             selected.append(item)
             evidence.append(item)
         groups.append({"subject": subject, "count": len(subject_rows), "items": selected})
@@ -2559,7 +2603,7 @@ def search(
         # Guarantees we NEVER miss a direct textual match due to FTS5 tokenization issues
         like_params = [clean_q, f"%{clean_q}%"] + filter_params + [candidate_limit]
         like_rows = con.execute(f"""
-            SELECT c.id, c.subject, c.title, c.book_key, c.section, c.logical_page,
+            SELECT c.id, c.content_id, c.subject, c.title, c.book_key, c.section, c.logical_page,
                    SUBSTR(c.text, MAX(1, INSTR(c.text, ?)-30), 120) as snippet,
                    c.text, c.source, c.year, c.category,
                    -100.0 as rank
@@ -2585,7 +2629,7 @@ def search(
 
         try:
             fts_rows = con.execute(f"""
-                SELECT c.id, c.subject, c.title, c.book_key, c.section, c.logical_page,
+                SELECT c.id, c.content_id, c.subject, c.title, c.book_key, c.section, c.logical_page,
                        snippet(chunks_fts, 0, '<mark>', '</mark>', '…', 40) as snippet,
                        c.text, c.source, c.year, c.category,
                        f.rank as rank
@@ -2630,7 +2674,6 @@ def search(
             bm_info = _book_map.get(bk, {})
             result_item = {
                 "id": r["id"],
-                "title": r["title"],
                 "book_key": bk,
                 "section": r["section"],
                 "logical_page": r["logical_page"] if "logical_page" in r.keys() and r["logical_page"] is not None else r["section"],
@@ -2643,6 +2686,15 @@ def search(
                 "page_num": page_num,
                 "total_pages": bm_info.get("pages", 0),
             }
+            if (r["source"] or "mineru") != "gaokao":
+                result_item = _apply_book_runtime_meta(
+                    result_item,
+                    book_key=bk,
+                    fallback_title=r["title"],
+                    content_id=r["content_id"] if "content_id" in r.keys() else None,
+                )
+            else:
+                result_item["title"] = r["title"]
             if r["source"] == "gaokao":
                 result_item["year"] = r["year"]
                 result_item["category"] = r["category"]
@@ -2933,7 +2985,7 @@ def books():
     con = get_db()
     try:
         rows = con.execute("""
-            SELECT DISTINCT book_key, title, subject
+            SELECT DISTINCT book_key, title, subject, content_id
             FROM chunks
             WHERE source != 'gaokao'
             ORDER BY subject, title
@@ -2944,10 +2996,22 @@ def books():
             if s not in by_subject:
                 meta = SUBJECT_META.get(s, {"icon": "📚", "color": "#95a5a6"})
                 by_subject[s] = {"subject": s, **meta, "books": []}
+            book_item = _apply_book_runtime_meta(
+                {
+                    "book_key": r["book_key"],
+                },
+                book_key=r["book_key"],
+                fallback_title=r["title"],
+                content_id=r["content_id"] if "content_id" in r.keys() else None,
+            )
             by_subject[s]["books"].append({
                 "book_key": r["book_key"],
-                "title": r["title"],
+                "title": book_item["title"],
+                "base_title": book_item["base_title"],
+                "edition": book_item.get("edition", ""),
             })
+        for payload in by_subject.values():
+            payload["books"].sort(key=lambda item: (item.get("title") or "", item.get("book_key") or ""))
         return list(by_subject.values())
     finally:
         con.close()
@@ -3175,20 +3239,24 @@ def dict_textbook(
                     if heading:
                         score += 2
                     matches.append(
-                        {
-                            "id": row["id"],
-                            "book_key": row["book_key"],
-                            "title": row["title"],
-                            "display_title": display_title,
-                            "classical_title": heading or None,
-                            "section": physical_page,
-                            "logical_page": logical_page,
-                            "text": clipped_text[:DICT_TEXTBOOK_RESPONSE_TEXT_LIMIT],
-                            "snippet": _build_context_snippet(clipped_text, clean_q),
-                            "page_url": _book_page_url(row["book_key"], physical_page),
-                            "classical_kind": manifest_hit.get("kind"),
-                            "score": score,
-                        }
+                        _apply_book_runtime_meta(
+                            {
+                                "id": row["id"],
+                                "book_key": row["book_key"],
+                                "title": row["title"],
+                                "display_title": display_title,
+                                "classical_title": heading or None,
+                                "section": physical_page,
+                                "logical_page": logical_page,
+                                "text": clipped_text[:DICT_TEXTBOOK_RESPONSE_TEXT_LIMIT],
+                                "snippet": _build_context_snippet(clipped_text, clean_q),
+                                "page_url": _book_page_url(row["book_key"], physical_page),
+                                "classical_kind": manifest_hit.get("kind"),
+                                "score": score,
+                            },
+                            book_key=row["book_key"],
+                            fallback_title=row["title"],
+                        )
                     )
                 continue
 
@@ -3211,20 +3279,24 @@ def dict_textbook(
                 continue
             seen.add(dedupe_key)
             matches.append(
-                {
-                    "id": row["id"],
-                    "book_key": row["book_key"],
-                    "title": row["title"],
-                    "display_title": display_title,
-                    "classical_title": heading or None,
-                    "section": physical_page,
-                    "logical_page": logical_page,
-                    "text": clipped_text[:DICT_TEXTBOOK_RESPONSE_TEXT_LIMIT],
-                    "snippet": _build_context_snippet(clipped_text, clean_q),
-                    "page_url": _book_page_url(row["book_key"], physical_page),
-                    "classical_kind": None,
-                    "score": score,
-                }
+                _apply_book_runtime_meta(
+                    {
+                        "id": row["id"],
+                        "book_key": row["book_key"],
+                        "title": row["title"],
+                        "display_title": display_title,
+                        "classical_title": heading or None,
+                        "section": physical_page,
+                        "logical_page": logical_page,
+                        "text": clipped_text[:DICT_TEXTBOOK_RESPONSE_TEXT_LIMIT],
+                        "snippet": _build_context_snippet(clipped_text, clean_q),
+                        "page_url": _book_page_url(row["book_key"], physical_page),
+                        "classical_kind": None,
+                        "score": score,
+                    },
+                    book_key=row["book_key"],
+                    fallback_title=row["title"],
+                )
             )
 
         matches.sort(
@@ -3747,7 +3819,7 @@ def gaokao_link(
         if search_q:
             try:
                 rows = con.execute("""
-                    SELECT c.id, c.subject, c.title, c.book_key, c.section, c.logical_page,
+                    SELECT c.id, c.content_id, c.subject, c.title, c.book_key, c.section, c.logical_page,
                            snippet(chunks_fts, 0, '<mark>', '</mark>', '…', 40) as snippet,
                            c.text, s.summary AS ai_summary
                     FROM chunks c
@@ -3779,7 +3851,7 @@ def gaokao_link(
                 if faiss_ids:
                     placeholders = ','.join('?' * len(faiss_ids))
                     faiss_rows = con.execute(f"""
-                        SELECT c.id, c.subject, c.title, c.book_key, c.section, c.logical_page,
+                        SELECT c.id, c.content_id, c.subject, c.title, c.book_key, c.section, c.logical_page,
                                substr(c.text, 1, 100) as snippet,
                                c.text, s.summary AS ai_summary
                         FROM chunks c
@@ -3847,6 +3919,12 @@ def gaokao_link(
                 "matched_concepts": r_matched[:5],
                 **SUBJECT_META.get(r["subject"], {"icon": "📚", "color": "#95a5a6"}),
             }
+            item = _apply_book_runtime_meta(
+                item,
+                book_key=r["book_key"],
+                fallback_title=r["title"],
+                content_id=r["content_id"] if "content_id" in r.keys() else None,
+            )
             if r["subject"] == q_subject:
                 same_subject.append(item)
             else:
@@ -4583,7 +4661,11 @@ IMG_CDN = os.getenv("IMG_CDN", "https://img.rdfzer.com")
 # ── Book Map for page images ─────────────────────────────────────────
 _book_map = {}  # book_key -> {key, title, pages}
 _book_key_to_short = {}  # book_key -> short_key (12-char hash)
+_book_version_manifest = {}  # content_id -> {title, display_title, edition, ...}
 try:
+    if TEXTBOOK_VERSION_MANIFEST_PATH.exists():
+        with open(TEXTBOOK_VERSION_MANIFEST_PATH, encoding="utf-8") as _f:
+            _book_version_manifest = json.load(_f)
     _bm_path = FRONTEND / "assets/pages/book_map.json"
     if _bm_path.exists():
         with open(_bm_path) as _f:
@@ -4592,6 +4674,41 @@ try:
         print(f"Book map loaded: {len(_book_map)} books", flush=True)
 except Exception as e:
     print(f"Book map load failed: {e}", flush=True)
+
+
+def _extract_book_content_id(book_key: str | None) -> str:
+    if not book_key:
+        return ""
+    match = re.search(r"([0-9a-f]{8}-[0-9a-f\-]{27})", book_key, re.IGNORECASE)
+    return match.group(1) if match else ""
+
+
+def _resolve_book_runtime_meta(book_key: str | None, fallback_title: str | None = None, content_id: str | None = None) -> dict:
+    info = _book_map.get(book_key or "", {})
+    resolved_content_id = str(content_id or info.get("content_id") or _extract_book_content_id(book_key)).strip()
+    manifest_row = _book_version_manifest.get(resolved_content_id, {}) if resolved_content_id else {}
+    base_title = str(manifest_row.get("title") or info.get("title") or fallback_title or "").strip()
+    display_title = str(manifest_row.get("display_title") or info.get("display_title") or base_title or fallback_title or "").strip()
+    edition = str(manifest_row.get("edition") or info.get("edition") or "").strip()
+    subject = str(manifest_row.get("subject") or info.get("subject") or "").strip()
+    return {
+        "content_id": resolved_content_id,
+        "title": base_title or str(fallback_title or "").strip(),
+        "display_title": display_title or base_title or str(fallback_title or "").strip(),
+        "edition": edition,
+        "subject": subject,
+    }
+
+
+def _apply_book_runtime_meta(payload: dict, *, book_key: str | None, fallback_title: str | None = None, content_id: str | None = None) -> dict:
+    meta = _resolve_book_runtime_meta(book_key, fallback_title=fallback_title, content_id=content_id)
+    payload["title"] = meta["display_title"] or payload.get("title") or fallback_title or ""
+    payload["base_title"] = meta["title"] or fallback_title or ""
+    payload["display_title"] = payload.get("display_title") or meta["display_title"] or payload["title"]
+    payload["edition"] = meta["edition"]
+    if meta["content_id"]:
+        payload["content_id"] = meta["content_id"]
+    return payload
 
 
 @app.get("/api/page-image")
@@ -4608,7 +4725,11 @@ def page_image(
 
     short_key = info["key"]
     total_pages = info["pages"]
-    title = info["title"]
+    title = _resolve_book_runtime_meta(
+        book_key,
+        fallback_title=info.get("title"),
+        content_id=info.get("content_id"),
+    )["display_title"] or info["title"]
 
     # Clamp page to valid range
     page = max(0, min(page, total_pages - 1))
@@ -4637,8 +4758,19 @@ def page_image(
 @app.get("/api/book-pages")
 def book_pages():
     """Return the full book map for frontend use."""
-    return {bk: {"key": info["key"], "title": info["title"], "pages": info["pages"]}
-            for bk, info in _book_map.items()}
+    return {
+        bk: {
+            "key": info["key"],
+            "title": _resolve_book_runtime_meta(
+                bk,
+                fallback_title=info.get("title"),
+                content_id=info.get("content_id"),
+            )["display_title"] or info.get("title", ""),
+            "pages": info["pages"],
+            "edition": info.get("edition", ""),
+        }
+        for bk, info in _book_map.items()
+    }
 
 
 # Serve frontend

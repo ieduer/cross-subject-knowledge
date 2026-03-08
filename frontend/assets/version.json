@@ -1,7 +1,17 @@
 {
-  "frontend_refactor_version": "2026.03.08-r14",
+  "frontend_refactor_version": "2026.03.08-r16",
   "updated_at": "2026-03-08",
   "history": [
+    {
+      "version": "2026.03.08-r16",
+      "date": "2026-03-08",
+      "summary": "refined gaokao textbook anchors for parallel textbook editions so version-labeled refs resolve to the correct book and new chemistry/english additions can share precomputed links cleanly"
+    },
+    {
+      "version": "2026.03.08-r15",
+      "date": "2026-03-08",
+      "summary": "added Luko chemistry and Beishida English textbook editions in parallel, version-labeled textbook titles across the site, and rebuilt page maps plus retrieval indexes for the expanded corpus"
+    },
     {
       "version": "2026.03.08-r14",
       "date": "2026-03-08",

@@ -516,7 +516,14 @@ body.dict-page {
 .page-modal-toolbar {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 12px;
+}
+
+.page-modal-title {
+    flex: 1 1 100%;
+    color: #fff;
+    font-weight: 700;
 }
 
 .page-modal-toolbar button {

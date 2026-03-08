@@ -10,6 +10,7 @@ const state = {
     statusPayload: null,
     modalPages: [],
     modalIndex: 0,
+    modalTitle: '',
     searchInFlight: false,
     chatInFlight: false,
     dictEntries: [],
@@ -36,6 +37,7 @@ const el = {
     modalPrev: document.getElementById('page-modal-prev'),
     modalNext: document.getElementById('page-modal-next'),
     modalImage: document.getElementById('page-modal-image'),
+    modalTitle: document.getElementById('page-modal-title'),
     modalMeta: document.getElementById('page-modal-meta'),
 };
 
@@ -468,10 +470,11 @@ async function runSearch(initialQuery) {
     }
 }
 
-function openModalWithPages(pages) {
+function openModalWithPages(pages, title = '') {
     if (!pages.length) return;
     state.modalPages = pages;
     state.modalIndex = 0;
+    state.modalTitle = title || '';
     renderModal();
     el.modal.classList.remove('hidden');
     el.modal.setAttribute('aria-hidden', 'false');
@@ -481,6 +484,7 @@ function renderModal() {
     const current = state.modalPages[state.modalIndex];
     if (!current) return;
     el.modalImage.src = current.url;
+    el.modalTitle.textContent = state.modalTitle || '原文页图';
     el.modalMeta.textContent = current.pdfPage && current.pdfPage !== current.page
         ? `书页 ${current.page}（PDF ${current.pdfPage}）`
         : `第 ${current.page} 页`;
@@ -493,13 +497,18 @@ function closeModal() {
     el.modal.setAttribute('aria-hidden', 'true');
     state.modalPages = [];
     state.modalIndex = 0;
+    state.modalTitle = '';
+    el.modalTitle.textContent = '原文页图';
     el.modalImage.src = '';
 }
 
 async function openBookModal(bookKey, page) {
     try {
         const data = await fetchJson(`${API}/api/page-image?book_key=${encodeURIComponent(bookKey)}&page=${page}&context=2`);
-        openModalWithPages((data.pages || []).map(item => ({ page: item.page, pdfPage: null, url: item.url })));
+        openModalWithPages(
+            (data.pages || []).map(item => ({ page: item.page, pdfPage: null, url: item.url })),
+            data.title || '教材原文',
+        );
     } catch (error) {
         window.alert(`无法加载教材页图：${error.message}`);
     }
@@ -516,6 +525,7 @@ async function openDictModal(dictSource, pageStart, pageEnd) {
             relevant.length
                 ? relevant
                 : (data.pages || []).map(item => ({ page: item.page, pdfPage: item.pdf_page || null, url: item.url })),
+            data.dict_label || data.title || '馆藏原页',
         );
     } catch (error) {
         window.alert(`无法加载词典页图：${error.message}`);
