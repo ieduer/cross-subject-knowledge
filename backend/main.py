@@ -3005,13 +3005,25 @@ def _append_precision_candidate(
 def _definition_intent_bonus(query_profile: dict, candidate: dict) -> float:
     if query_profile.get("intent") != "definition":
         return 0.0
-    target = _compact_query_text(query_profile.get("target") or "")
-    if not target:
+    target_raw = _clean_query_text(query_profile.get("target") or "")
+    target = _compact_query_text(target_raw)
+    if not target or not target_raw:
         return 0.0
     title = _compact_query_text(candidate.get("title") or "")
-    text = _compact_query_text(candidate.get("text") or "")
+    raw_text = candidate.get("text") or ""
+    text = _compact_query_text(raw_text)
     bonus = 0.0
-    patterns = (
+    anchored_patterns = (
+        rf"(?:^|[。！？；：\n])(?:什么是)?{re.escape(target_raw)}(?:通常)?是指",
+        rf"(?:^|[。！？；：\n])(?:什么是)?{re.escape(target_raw)}(?:通常)?指",
+        rf"(?:^|[。！？；：\n]){re.escape(target_raw)}(?:是|叫做|称为)",
+        rf"什么样的物质才能称为{re.escape(target_raw)}",
+        rf"才能称为{re.escape(target_raw)}",
+    )
+    for pattern in anchored_patterns:
+        if re.search(pattern, raw_text):
+            bonus += 22.0
+    compact_patterns = (
         f"{target}是指",
         f"{target}通常指",
         f"{target}称为",
@@ -3022,16 +3034,16 @@ def _definition_intent_bonus(query_profile: dict, candidate: dict) -> float:
         f"什么样的物质才能称为{target}",
         f"{target}概念",
     )
-    for pattern in patterns:
+    for pattern in compact_patterns:
         if pattern in text:
-            bonus += 18.0
-    if target and f"{target}是" in text:
-        bonus += 12.0
+            bonus += 10.0
     if "定义" in title or "概念" in title:
         bonus += 10.0
     if target and target in title:
         bonus += 6.0
-    return min(42.0, bonus)
+    if _compact_query_text(candidate.get("matched_term") or "") == target and bonus <= 0:
+        bonus -= 24.0
+    return max(-24.0, min(54.0, bonus))
 
 
 def _normalize_rerank_score(score: float) -> float:
@@ -3188,9 +3200,16 @@ def _build_hybrid_search_term_plan(query_analysis: dict, query_profile: dict) ->
         plan.append({"term": clean, "basis": basis})
 
     if precision_mode:
+        deferred_items = []
         for round_index, basis in ((0, "precision_query"), (1, "precision_followup")):
             for term in _build_precision_search_terms(query_profile, query_analysis, round_index=round_index):
+                compact_term = _compact_query_text(term)
+                if query_profile.get("intent") == "definition" and compact_term == _compact_query_text(target):
+                    deferred_items.append((term, basis))
+                    continue
                 add_item(term, basis)
+        for term, basis in deferred_items:
+            add_item(term, basis)
     else:
         for item in _build_search_term_plan(query_analysis):
             add_item(item.get("term", ""), item.get("basis") or "query")
@@ -3241,7 +3260,12 @@ def _build_search_semantic_queries(query: str, query_analysis: dict, query_profi
 
     add_query(query)
     add_query(query_profile.get("target") or "")
-    add_query(query_analysis.get("display_term") or "")
+    display_term = query_analysis.get("display_term") or ""
+    if not (
+        query_profile.get("precision_mode")
+        and _is_low_signal_precision_term(display_term, query_profile.get("target") or query)
+    ):
+        add_query(display_term)
 
     if query_profile.get("precision_mode") and query_profile.get("intent") == "definition":
         target = query_profile.get("target") or query
@@ -3269,8 +3293,10 @@ def _collect_hybrid_search_rows(
     lexical_limit = max(8, min(24, math.ceil(candidate_limit / max(1, min(len(term_plan), 4)))))
     supplemental_limit = max(12, min(SUPPLEMENTAL_FALLBACK_LIMIT, math.ceil(candidate_limit / 2)))
     bucket: dict[int | str, dict] = {}
+    definition_target = _compact_query_text(query_profile.get("target") or query)
 
     for priority, item in enumerate(term_plan):
+        compact_term = _compact_query_text(item["term"])
         rows = _search_chunks_by_term(
             con,
             item["term"],
@@ -3284,6 +3310,14 @@ def _collect_hybrid_search_rows(
             base_score = 168.0 - priority * 10.0
             base_score += _hybrid_search_basis_bonus(item.get("basis") or "query")
             base_score += _hybrid_search_channel_bonus(channel)
+            if query_profile.get("intent") == "definition":
+                if compact_term == definition_target:
+                    base_score -= 42.0
+                elif (
+                    compact_term.endswith("是")
+                    or any(marker in compact_term for marker in ("是什么", "什么是", "是指", "称为", "叫做", "定义", "概念"))
+                ):
+                    base_score += 22.0
             _append_precision_candidate(
                 bucket,
                 dict(row),
