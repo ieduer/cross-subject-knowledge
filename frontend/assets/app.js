@@ -6,11 +6,14 @@ const AI_API = 'https://ai.bdfz.net/';
 const AI_API_FALLBACK = 'https://apis.bdfz.workers.dev/';
 const AI_CHAT_MODEL = 'gemini-flash-latest';
 const AI_CONTEXT_TIMEOUT_MS = 15000;
+const AI_PRECISION_CONTEXT_TIMEOUT_MS = 30000;
 const AI_SERVER_CHAT_TIMEOUT_MS = 45000;
+const AI_PRECISION_SERVER_CHAT_TIMEOUT_MS = 60000;
 const AI_DIRECT_REQUEST_TIMEOUT_MS = 25000;
 const AI_BROWSER_FALLBACK_DELAY_MS = 8000;
+const AI_PRECISION_BROWSER_FALLBACK_DELAY_MS = 18000;
 const IMG_CDN = 'https://img.rdfzer.com';
-const DEFAULT_FRONTEND_VERSION = '2026.03.10-r18';
+const DEFAULT_FRONTEND_VERSION = '2026.03.10-r19';
 const FRONTEND_VERSION_FILE = '/assets/version.json';
 const AI_MEMORY_LIMIT = 12;
 const AI_AUTO_TRIGGER_DELAY_MS = 120;
@@ -323,12 +326,12 @@ function renderAIStarters() {
     });
 }
 
-async function fetchAIContext(userMessage, history) {
+async function fetchAIContext(userMessage, history, timeoutMs = AI_CONTEXT_TIMEOUT_MS) {
     const res = await fetchWithTimeout(`${API}/api/chat/context`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(buildAIServerPayload(userMessage, history)),
-    }, AI_CONTEXT_TIMEOUT_MS);
+    }, timeoutMs);
     const { data, raw } = await readJsonLike(res);
     if (!res.ok || !data) {
         throw new Error(responseErrorMessage(res, data, raw, '上下文构建失败'));
@@ -336,12 +339,12 @@ async function fetchAIContext(userMessage, history) {
     return data;
 }
 
-async function requestServerChat(payload) {
+async function requestServerChat(payload, timeoutMs = AI_SERVER_CHAT_TIMEOUT_MS) {
     const res = await fetchWithTimeout(`${API}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-    }, AI_SERVER_CHAT_TIMEOUT_MS);
+    }, timeoutMs);
     const { data, raw } = await readJsonLike(res);
     if (!res.ok || !data) {
         throw new Error(responseErrorMessage(res, data, raw, 'AI 对话失败'));
@@ -713,11 +716,16 @@ async function sendAIMessage(userMessage) {
         let answer = '';
         let contextPayload = null;
         let usedBrowserFallback = false;
-        const contextPromise = fetchAIContext(cleanMessage, history);
+        const queryProfile = inferAIQueryProfile(currentQuery, cleanMessage);
+        const isPrecisionMode = queryProfile.mode === 'precision_agent';
+        const contextTimeoutMs = isPrecisionMode ? AI_PRECISION_CONTEXT_TIMEOUT_MS : AI_CONTEXT_TIMEOUT_MS;
+        const serverTimeoutMs = isPrecisionMode ? AI_PRECISION_SERVER_CHAT_TIMEOUT_MS : AI_SERVER_CHAT_TIMEOUT_MS;
+        const browserFallbackDelayMs = isPrecisionMode ? AI_PRECISION_BROWSER_FALLBACK_DELAY_MS : AI_BROWSER_FALLBACK_DELAY_MS;
+        const contextPromise = fetchAIContext(cleanMessage, history, contextTimeoutMs);
 
         const payload = buildAIServerPayload(cleanMessage, history);
 
-        const serverPromise = requestServerChat(payload).then(data => ({
+        const serverPromise = requestServerChat(payload, serverTimeoutMs).then(data => ({
             channel: 'server',
             answer: data.answer || '',
             contextPayload: data.context || {},
@@ -725,7 +733,7 @@ async function sendAIMessage(userMessage) {
         }));
 
         const browserPromise = (async () => {
-            await delay(AI_BROWSER_FALLBACK_DELAY_MS);
+            await delay(browserFallbackDelayMs);
             let fullContext = null;
             try {
                 fullContext = await contextPromise;
