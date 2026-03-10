@@ -1265,7 +1265,13 @@ function renderMatchChannelBadge(result) {
     if (result.match_channel === 'exact') {
         return '<span class="match-channel exact">🎯 精确命中</span>';
     }
-    return '<span class="match-channel fts">🧠 语义召回</span>';
+    if (result.match_channel === 'semantic') {
+        return '<span class="match-channel fts">🧠 向量召回</span>';
+    }
+    if (result.match_channel === 'fts') {
+        return '<span class="match-channel fts">🔎 全文命中</span>';
+    }
+    return '<span class="match-channel fts">🔀 混合召回</span>';
 }
 
 function renderQueryAnalysis(analysis, filterSubject = null) {
@@ -1323,8 +1329,12 @@ function renderEvidenceTrace(result, subject, subjectBreadth, query) {
         evidenceChips.push('<span class="evidence-chip supplemental">备份教材页</span>');
     } else if (result.match_channel === 'exact') {
         evidenceChips.push('<span class="evidence-chip strong">原文精确命中</span>');
+    } else if (result.match_channel === 'semantic') {
+        evidenceChips.push('<span class="evidence-chip semantic">向量语义召回</span>');
+    } else if (result.match_channel === 'fts') {
+        evidenceChips.push('<span class="evidence-chip semantic">全文检索命中</span>');
     } else {
-        evidenceChips.push('<span class="evidence-chip semantic">FTS / 语义召回</span>');
+        evidenceChips.push('<span class="evidence-chip semantic">混合召回</span>');
     }
 
     if (result.page_url) {

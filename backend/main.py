@@ -3255,6 +3255,8 @@ def _hybrid_search_channel_bonus(channel: str) -> float:
 def _build_search_semantic_queries(query: str, query_analysis: dict, query_profile: dict) -> list[str]:
     queries = []
     seen = set()
+    precision_definition = bool(query_profile.get("precision_mode")) and query_profile.get("intent") == "definition"
+    target = query_profile.get("target") or ""
 
     def add_query(value: str):
         clean = _clean_query_text(value)
@@ -3265,20 +3267,69 @@ def _build_search_semantic_queries(query: str, query_analysis: dict, query_profi
         queries.append(clean)
 
     add_query(query)
-    add_query(query_profile.get("target") or "")
+    if not precision_definition:
+        add_query(target)
     display_term = query_analysis.get("display_term") or ""
     if not (
         query_profile.get("precision_mode")
-        and _is_low_signal_precision_term(display_term, query_profile.get("target") or query)
+        and (
+            _is_low_signal_precision_term(display_term, target or query)
+            or (precision_definition and _compact_query_text(display_term) == _compact_query_text(target))
+        )
     ):
         add_query(display_term)
 
-    if query_profile.get("precision_mode") and query_profile.get("intent") == "definition":
-        target = query_profile.get("target") or query
+    if precision_definition:
+        target = target or query
         for value in (f"{target}是什么", f"什么是{target}", f"{target}是"):
             add_query(value)
 
     return queries[:4]
+
+
+def _search_row_book_token(row: dict) -> str:
+    source = row.get("source") or "mineru"
+    return str(row.get("book_key") or f"{source}::{row.get('subject') or ''}::{row.get('title') or ''}")
+
+
+def _search_row_page_token(row: dict) -> tuple[str, int | str] | None:
+    logical_page = row.get("logical_page")
+    if logical_page is None:
+        logical_page = row.get("section")
+    if logical_page is None:
+        return None
+    return (_search_row_book_token(row), logical_page)
+
+
+def _reorder_hybrid_search_rows(rows: list[dict], query_profile: dict) -> list[dict]:
+    if not rows or not query_profile.get("precision_mode"):
+        return rows
+
+    intent = query_profile.get("intent") or "lookup"
+    book_cap = 2 if intent == "definition" else 3
+    page_cap = 1 if intent in {"definition", "comparison"} else 2
+    book_counts: Counter[str] = Counter()
+    page_counts: Counter[tuple[str, int | str]] = Counter()
+    prioritized = []
+    deferred = []
+
+    for row in rows:
+        allow = True
+        book_token = _search_row_book_token(row)
+        page_token = _search_row_page_token(row)
+        if book_counts[book_token] >= book_cap:
+            allow = False
+        if page_token and page_counts[page_token] >= page_cap:
+            allow = False
+        if allow:
+            prioritized.append(row)
+            book_counts[book_token] += 1
+            if page_token:
+                page_counts[page_token] += 1
+        else:
+            deferred.append(row)
+
+    return prioritized + deferred
 
 
 def _collect_hybrid_search_rows(
@@ -3303,15 +3354,18 @@ def _collect_hybrid_search_rows(
 
     for priority, item in enumerate(term_plan):
         compact_term = _compact_query_text(item["term"])
+        term_candidate_limit = lexical_limit
+        if query_profile.get("intent") == "definition" and compact_term == definition_target:
+            term_candidate_limit = max(4, min(6, lexical_limit))
         rows = _search_chunks_by_term(
             con,
             item["term"],
             where_extra=textbook_where_extra,
             filter_params=textbook_filter_params,
-            candidate_limit=lexical_limit,
+            candidate_limit=term_candidate_limit,
             sort="relevance",
         )
-        for row in rows[:lexical_limit]:
+        for row in rows[:term_candidate_limit]:
             channel = row.get("match_channel") or "fts"
             base_score = 168.0 - priority * 10.0
             base_score += _hybrid_search_basis_bonus(item.get("basis") or "query")
@@ -3381,6 +3435,7 @@ def _collect_hybrid_search_rows(
         )
     )
     reranked = _rerank_precision_candidates(query, query_profile, candidates)
+    reranked = _reorder_hybrid_search_rows(reranked, query_profile)
     for item in reranked:
         item["rank"] = -float(item.get("final_score", item.get("base_score", 0.0)))
 

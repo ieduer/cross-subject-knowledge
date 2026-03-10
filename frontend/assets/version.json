@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.03.10-r20",
+  "frontend_refactor_version": "2026.03.10-r21",
   "updated_at": "2026-03-10",
   "history": [
+    {
+      "version": "2026.03.10-r21",
+      "date": "2026-03-10",
+      "summary": "distinguished exact, full-text, vector, and supplemental search traces in the UI and refreshed cache markers for the hybrid rerank search rollout"
+    },
     {
       "version": "2026.03.10-r20",
       "date": "2026-03-10",
