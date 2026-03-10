@@ -3041,6 +3041,8 @@ def _definition_intent_bonus(query_profile: dict, candidate: dict) -> float:
             bonus += 10.0
     if any(marker in raw_text for marker in ("什么样的", "究竟什么", "有什么不同", "为什么")):
         bonus -= 12.0
+    if re.search(rf"(?:称为|叫做){re.escape(target_raw)}[A-Za-z0-9\u4e00-\u9fff]", raw_text):
+        bonus -= 14.0
     if "定义" in title or "概念" in title:
         bonus += 10.0
     if target and target in title:
