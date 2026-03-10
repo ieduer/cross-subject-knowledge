@@ -3017,6 +3017,8 @@ def _definition_intent_bonus(query_profile: dict, candidate: dict) -> float:
         rf"(?:^|[。！？；：\n])(?:什么是)?{re.escape(target_raw)}(?:通常)?是指",
         rf"(?:^|[。！？；：\n])(?:什么是)?{re.escape(target_raw)}(?:通常)?指",
         rf"(?:^|[。！？；：\n]){re.escape(target_raw)}(?:是|叫做|称为)",
+        rf"(?:把|将)[^。！？；：\n]{{0,40}}(?:称为|叫做){re.escape(target_raw)}",
+        rf"[^。！？；：\n]{{0,40}}物质(?:称为|叫做){re.escape(target_raw)}",
         rf"什么样的物质才能称为{re.escape(target_raw)}",
         rf"才能称为{re.escape(target_raw)}",
     )
@@ -3037,6 +3039,8 @@ def _definition_intent_bonus(query_profile: dict, candidate: dict) -> float:
     for pattern in compact_patterns:
         if pattern in text:
             bonus += 10.0
+    if any(marker in raw_text for marker in ("什么样的", "究竟什么", "有什么不同", "为什么")):
+        bonus -= 12.0
     if "定义" in title or "概念" in title:
         bonus += 10.0
     if target and target in title:
