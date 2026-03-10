@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.03.10-r19",
+  "frontend_refactor_version": "2026.03.10-r20",
   "updated_at": "2026-03-10",
   "history": [
+    {
+      "version": "2026.03.10-r20",
+      "date": "2026-03-10",
+      "summary": "made precision-mode AI wait for the backend agent path first and only fall back to browser-direct generation if the server chat request fails"
+    },
     {
       "version": "2026.03.10-r19",
       "date": "2026-03-10",

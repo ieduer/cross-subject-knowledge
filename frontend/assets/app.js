@@ -13,7 +13,7 @@ const AI_DIRECT_REQUEST_TIMEOUT_MS = 25000;
 const AI_BROWSER_FALLBACK_DELAY_MS = 8000;
 const AI_PRECISION_BROWSER_FALLBACK_DELAY_MS = 18000;
 const IMG_CDN = 'https://img.rdfzer.com';
-const DEFAULT_FRONTEND_VERSION = '2026.03.10-r19';
+const DEFAULT_FRONTEND_VERSION = '2026.03.10-r20';
 const FRONTEND_VERSION_FILE = '/assets/version.json';
 const AI_MEMORY_LIMIT = 12;
 const AI_AUTO_TRIGGER_DELAY_MS = 120;
@@ -732,8 +732,10 @@ async function sendAIMessage(userMessage) {
             providerLabel: data.provider || aiProviderLabel,
         }));
 
-        const browserPromise = (async () => {
-            await delay(browserFallbackDelayMs);
+        const browserFallbackRequest = async ({ withDelay = true } = {}) => {
+            if (withDelay) {
+                await delay(browserFallbackDelayMs);
+            }
             let fullContext = null;
             try {
                 fullContext = await contextPromise;
@@ -752,9 +754,11 @@ async function sendAIMessage(userMessage) {
                 },
                 providerLabel: direct.providerLabel,
             };
-        })();
+        };
 
-        const winner = await Promise.any([serverPromise, browserPromise]);
+        const winner = isPrecisionMode
+            ? await serverPromise.catch(() => browserFallbackRequest({ withDelay: false }))
+            : await Promise.any([serverPromise, browserFallbackRequest()]);
         answer = winner.answer;
         contextPayload = winner.contextPayload;
         usedBrowserFallback = winner.channel === 'browser';
