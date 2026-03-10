@@ -22,7 +22,7 @@ except ImportError:
 try:
     import faiss
     import numpy as np
-    from sentence_transformers import SentenceTransformer
+    from sentence_transformers import SentenceTransformer, CrossEncoder
     FAISS_AVAILABLE = True
 except ImportError:
     FAISS_AVAILABLE = False
@@ -105,9 +105,18 @@ app.add_middleware(
 # ── Global AI Models ──────────────────────────────────────────────────
 faiss_index = None
 embedder = None
+reranker = None
 EMBEDDER_NAME = os.getenv("EMBEDDER", "BAAI/bge-m3")  # upgraded from bge-small-zh-v1.5
+RERANKER_NAME = os.getenv("RERANKER", "BAAI/bge-reranker-base").strip() or "BAAI/bge-reranker-base"
+RERANKER_ENABLED = os.getenv("RERANKER_ENABLED", "1").strip().lower() not in {"0", "false", "no"}
+RERANKER_MAX_CANDIDATES = max(12, int(os.getenv("RERANKER_MAX_CANDIDATES", "36")))
+RERANKER_FINAL_LIMIT = max(4, int(os.getenv("RERANKER_FINAL_LIMIT", "8")))
+GRAPH_RAG_ENABLED = os.getenv("GRAPH_RAG_ENABLED", "1").strip().lower() not in {"0", "false", "no"}
+GRAPH_RAG_MAX_RELATIONS = max(2, int(os.getenv("GRAPH_RAG_MAX_RELATIONS", "6")))
 faiss_status_reason = None
 faiss_manifest = None
+reranker_status_reason = None
+_reranker_lock = threading.Lock()
 # Frontend should stay on ai.bdfz.net, but the current VPS reaches the same Worker more reliably via workers.dev.
 AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "https://apis.bdfz.workers.dev/")
 AI_SERVICE_LABEL = os.getenv("AI_SERVICE_LABEL", "Gemini")
@@ -440,6 +449,33 @@ def _load_sentence_transformer(model_name: str):
         elif use_local_files_only:
             os.environ.pop("HF_HUB_OFFLINE", None)
 
+
+def _load_cross_encoder(model_name: str):
+    kwargs = {}
+    use_local_files_only = _has_local_sentence_transformer_snapshot(model_name)
+    if use_local_files_only:
+        kwargs["local_files_only"] = True
+    return CrossEncoder(model_name, **kwargs)
+
+
+def _get_reranker():
+    global reranker, reranker_status_reason
+    if not RERANKER_ENABLED or not FAISS_AVAILABLE:
+        return None
+    if reranker is not None:
+        return reranker
+    with _reranker_lock:
+        if reranker is not None:
+            return reranker
+        try:
+            reranker = _load_cross_encoder(RERANKER_NAME)
+            reranker_status_reason = None
+        except Exception as e:
+            reranker = None
+            reranker_status_reason = str(e)
+            print(f"Failed to load reranker: {e}", flush=True)
+    return reranker
+
 if FAISS_AVAILABLE and FAISS_INDEX_PATH.exists():
     try:
         print(f"Loading FAISS index from {FAISS_INDEX_PATH}...", flush=True)
@@ -504,6 +540,23 @@ SUBJECT_META = {
     "地理": {"icon": "🗺️", "color": "#16a085"},
     "思想政治": {"icon": "⚖️", "color": "#c0392b"},
 }
+
+EDITION_PATTERNS = (
+    ("A版", ("（A版）", "(A版)", " A版", "_A版_", " A 版", "人民教育出版社 ·北京· A版", "人民教育出版社A版")),
+    ("B版", ("（B版）", "(B版)", " B版", "_B版_", " B 版", "中学数学教材实验研究组", "数学（B版）", "数学(B版)")),
+    ("北师大版", ("北师大版", "北京师范大学出版社", "北京师范大学出版社高中数学编辑室", "王尚志", "保继光")),
+    ("冀教版", ("冀教版", "河北教育出版社")),
+    ("外研社版", ("外语教学与研究出版社", "外研社", "Foreign Language Teaching and Research Press")),
+    ("上外教版", ("上海外语教育出版社", "束定芳", "上海外国语大学")),
+    ("重大版", ("重庆大学出版社", "杨晓钰")),
+    ("沪教版", ("上海教育出版社", "上海教育出版社有限公司", "牛津大学出版社", "华东师范大学")),
+    ("沪科版", ("上海科学技术出版社", "上海世纪出版", "麻生明", "陈寅")),
+    ("苏教版", ("苏教版", "江苏凤凰教育出版社", "江苏凤凰出版传媒", "葛军", "李善良", "王祖浩")),
+    ("鄂教版", ("湖北教育出版社", "武汉中远印务有限公司", "彭双阶", "胡典顺")),
+    ("湘教版", ("湖南教育出版社", "湖南出版中心", "张景中", "黄步高", "邹楚林", "邹伟华")),
+    ("鲁科版", ("鲁科版", "山东科学技术出版社")),
+    ("人教版", ("人民教育出版社", "课程教材研究所", "人教版")),
+)
 
 
 def get_db():
@@ -866,6 +919,14 @@ def _normalize_lookup_title(title: str | None) -> str:
     return normalized.strip()
 
 
+def _extract_embedded_edition(title: str | None) -> str:
+    normalized = unicodedata.normalize("NFKC", title or "")
+    for edition, keywords in EDITION_PATTERNS:
+        if any(keyword in normalized for keyword in keywords):
+            return edition
+    return ""
+
+
 def _parse_subject_from_title(title: str | None) -> str:
     normalized = unicodedata.normalize("NFKC", title or "")
     for subject_name in SUBJECT_META:
@@ -879,6 +940,97 @@ def _parse_subject_from_title(title: str | None) -> str:
 def _parse_content_id_from_text(text: str | None) -> str:
     match = re.search(r"([0-9a-f]{8}-[0-9a-f\-]{27})", text or "", re.IGNORECASE)
     return match.group(1) if match else ""
+
+
+def _build_text_probe(payload: list[dict], *, max_blocks: int = 600, max_chars: int = 60000) -> str:
+    parts = []
+    total = 0
+    for item in payload:
+        if not isinstance(item, dict) or item.get("type") != "text":
+            continue
+        text = _normalize_text_line(item.get("text"))
+        if len(text) < 2:
+            continue
+        parts.append(text)
+        total += len(text)
+        if len(parts) >= max_blocks or total >= max_chars:
+            break
+    return "\n".join(parts)
+
+
+def _detect_edition_label(display_title: str, path: Path, text_probe: str) -> str:
+    probe = "\n".join(part for part in (display_title, str(path), text_probe) if part)
+    normalized = unicodedata.normalize("NFKC", probe)
+    for edition, keywords in EDITION_PATTERNS:
+        if any(keyword in normalized for keyword in keywords):
+            return edition
+    return ""
+
+
+def _with_edition(base_title: str, edition: str) -> str:
+    cleaned_title = str(base_title or "").strip()
+    cleaned_edition = str(edition or "").strip()
+    if not cleaned_title or not cleaned_edition:
+        return cleaned_title
+    if cleaned_edition in cleaned_title:
+        return cleaned_title
+    return f"{cleaned_title}（{cleaned_edition}）"
+
+
+def _match_registry_candidate(candidates, edition_hint: str) -> dict | None:
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return dict(candidates[0])
+    if edition_hint:
+        matched = [
+            item
+            for item in candidates
+            if edition_hint == str(item.get("edition") or "").strip()
+            or edition_hint in str(item.get("display_title") or "")
+            or edition_hint in str(item.get("title") or "")
+            or edition_hint in str(item.get("book_key") or "")
+        ]
+        if len(matched) == 1:
+            return dict(matched[0])
+    return None
+
+
+def _make_supplemental_book_key(subject: str, base_title: str, edition: str, fallback: str) -> str:
+    cleaned_subject = str(subject or "").strip()
+    cleaned_title = str(base_title or "").strip()
+    cleaned_edition = str(edition or "").strip()
+    cleaned_fallback = str(fallback or "").strip()
+    if cleaned_edition:
+        basis = "|".join([cleaned_subject, cleaned_title, cleaned_edition])
+    else:
+        basis = "|".join([cleaned_subject, cleaned_title, cleaned_fallback])
+    return f"suppbook:{hashlib.md5(basis.encode('utf-8')).hexdigest()[:16]}"
+
+
+def _page_text_quality(text: str) -> int:
+    normalized = text or ""
+    cjk = sum(1 for ch in normalized if "\u4e00" <= ch <= "\u9fff")
+    letters = sum(1 for ch in normalized if ch.isalpha())
+    digits = sum(1 for ch in normalized if ch.isdigit())
+    noise = len(re.findall(r"(?:^|[\s/])[\-_=~]{2,}(?:$|[\s/])", normalized))
+    return cjk * 6 + letters * 2 + digits + len(normalized) - noise * 20
+
+
+def _pick_better_page(current: dict | None, candidate: dict) -> dict:
+    if current is None:
+        return candidate
+    current_score = int(current.get("_quality_score") or 0)
+    candidate_score = int(candidate.get("_quality_score") or 0)
+    if candidate_score != current_score:
+        return candidate if candidate_score > current_score else current
+    current_len = len(current.get("text") or "")
+    candidate_len = len(candidate.get("text") or "")
+    if candidate_len != current_len:
+        return candidate if candidate_len > current_len else current
+    current_path = str(current.get("path") or "")
+    candidate_path = str(candidate.get("path") or "")
+    return candidate if candidate_path < current_path else current
 
 
 @functools.lru_cache(maxsize=1)
@@ -904,26 +1056,32 @@ def _load_textbook_registry() -> dict:
         con.close()
 
     by_content_id = {}
-    by_title_subject = {}
-    by_title = {}
+    by_title_subject = defaultdict(list)
+    by_title = defaultdict(list)
     page_lookup = {}
 
     for row in rows:
+        book_key = str(row["book_key"] or "").strip()
+        book_info = _book_map.get(book_key, {}) if book_key else {}
+        display_title = str(book_info.get("display_title") or book_info.get("title") or row["title"] or "").strip()
+        edition = str(book_info.get("edition") or "").strip() or _extract_embedded_edition(display_title) or _extract_embedded_edition(row["title"])
         item = {
             "content_id": row["content_id"],
             "title": row["title"],
-            "book_key": row["book_key"],
+            "display_title": display_title or row["title"],
+            "book_key": book_key,
             "subject": row["subject"],
+            "edition": edition,
         }
         content_id = str(row["content_id"] or "").strip()
         title_key = _normalize_lookup_title(row["title"])
         subject_name = str(row["subject"] or "").strip()
         if content_id and content_id not in by_content_id:
             by_content_id[content_id] = item
-        if title_key and subject_name and (title_key, subject_name) not in by_title_subject:
-            by_title_subject[(title_key, subject_name)] = item
-        if title_key and title_key not in by_title:
-            by_title[title_key] = item
+        if title_key and subject_name:
+            by_title_subject[(title_key, subject_name)].append(item)
+        if title_key:
+            by_title[title_key].append(item)
 
     for row in page_rows:
         book_key = str(row["book_key"] or "").strip()
@@ -940,13 +1098,13 @@ def _load_textbook_registry() -> dict:
 
     return {
         "by_content_id": by_content_id,
-        "by_title_subject": by_title_subject,
-        "by_title": by_title,
+        "by_title_subject": {k: tuple(v) for k, v in by_title_subject.items()},
+        "by_title": {k: tuple(v) for k, v in by_title.items()},
         "page_lookup": page_lookup,
     }
 
 
-def _resolve_supplemental_book_meta(path: Path) -> dict:
+def _resolve_supplemental_book_meta(path: Path, payload: list[dict] | None = None) -> dict:
     registry = _load_textbook_registry()
     raw_title = path.stem
     display_title = raw_title
@@ -959,23 +1117,42 @@ def _resolve_supplemental_book_meta(path: Path) -> dict:
     subject_name = _parse_subject_from_title(display_title)
     if not subject_name:
         subject_name = _parse_subject_from_title(str(path))
+    text_probe = _build_text_probe(payload or [])
+    edition_hint = _detect_edition_label(display_title, path, text_probe)
     matched = registry["by_content_id"].get(content_id)
     if not matched:
         title_key = _normalize_lookup_title(display_title)
-        matched = registry["by_title_subject"].get((title_key, subject_name)) or registry["by_title"].get(title_key)
+        matched = _match_registry_candidate(
+            registry["by_title_subject"].get((title_key, subject_name)) or registry["by_title"].get(title_key) or (),
+            edition_hint,
+        )
 
     if matched:
         return {
             "content_id": matched.get("content_id") or content_id,
-            "title": matched.get("title") or display_title,
+            "title": matched.get("display_title") or matched.get("title") or _with_edition(display_title, edition_hint),
+            "base_title": matched.get("title") or display_title,
             "book_key": matched.get("book_key"),
             "subject": matched.get("subject") or subject_name,
+            "edition": matched.get("edition") or edition_hint,
+            "has_page_images": bool(matched.get("book_key")),
+            "synthetic": False,
         }
+    synthetic_key = _make_supplemental_book_key(
+        subject_name,
+        display_title,
+        edition_hint,
+        content_id or str(path.parent),
+    )
     return {
         "content_id": content_id or None,
-        "title": display_title,
-        "book_key": None,
+        "title": _with_edition(display_title, edition_hint),
+        "base_title": display_title,
+        "book_key": synthetic_key,
         "subject": subject_name,
+        "edition": edition_hint,
+        "has_page_images": False,
+        "synthetic": True,
     }
 
 
@@ -1030,6 +1207,7 @@ def _normalize_supplemental_page_entry(entry: dict) -> dict | None:
         return None
     subject = str(entry.get("subject") or "").strip()
     title = str(entry.get("title") or "").strip()
+    base_title = str(entry.get("base_title") or title).strip()
     text = _normalize_text_line(entry.get("text"))
     if not subject or not title or len(text) < 20:
         return None
@@ -1050,12 +1228,16 @@ def _normalize_supplemental_page_entry(entry: dict) -> dict | None:
         "content_id": str(entry.get("content_id") or "").strip() or None,
         "subject": subject,
         "title": title,
+        "base_title": base_title,
+        "edition": str(entry.get("edition") or "").strip(),
         "book_key": str(entry.get("book_key") or "").strip() or None,
         "section": section,
         "logical_page": logical_page_int,
         "text": text,
         "normalized_text": _compact_query_text(text),
         "path": str(entry.get("path") or "").strip() or None,
+        "has_page_images": bool(entry.get("has_page_images")),
+        "synthetic": bool(entry.get("synthetic")),
     }
 
 
@@ -1085,12 +1267,10 @@ def _load_supplemental_textbook_pages() -> tuple[dict, ...]:
             return tuple()
     else:
         registry = _load_textbook_registry()
+        page_entries_by_key: dict[tuple[str, int], dict] = {}
         for path in sorted(SUPPLEMENTAL_TEXTBOOK_ROOT.rglob("*_content_list.json")):
             lowered = str(path).lower()
             if "test_" in lowered or "/test" in lowered:
-                continue
-            meta = _resolve_supplemental_book_meta(path)
-            if not meta.get("subject"):
                 continue
             try:
                 with path.open("r", encoding="utf-8") as fh:
@@ -1098,6 +1278,9 @@ def _load_supplemental_textbook_pages() -> tuple[dict, ...]:
             except Exception:
                 continue
             if not isinstance(payload, list):
+                continue
+            meta = _resolve_supplemental_book_meta(path, payload)
+            if not meta.get("subject"):
                 continue
 
             blocks_by_page = defaultdict(list)
@@ -1120,22 +1303,31 @@ def _load_supplemental_textbook_pages() -> tuple[dict, ...]:
                 if len(merged_text) < 20:
                     continue
                 book_key = meta.get("book_key")
-                logical_page = registry["page_lookup"].get((book_key, page_num)) if book_key else None
+                logical_page = registry["page_lookup"].get((book_key, page_num)) if meta.get("has_page_images") else None
                 normalized = _normalize_supplemental_page_entry(
                     {
-                        "id": f"supp:{hashlib.md5(f'{path}:{page_num}'.encode('utf-8')).hexdigest()[:16]}",
+                        "id": f"supp:{hashlib.md5(f'{book_key}:{page_num}'.encode('utf-8')).hexdigest()[:16]}",
                         "content_id": meta.get("content_id"),
                         "subject": meta.get("subject"),
                         "title": meta.get("title"),
+                        "base_title": meta.get("base_title") or meta.get("title"),
+                        "edition": meta.get("edition"),
                         "book_key": book_key,
                         "section": int(page_num),
                         "logical_page": int(logical_page) if logical_page is not None else int(page_num),
                         "text": merged_text,
                         "path": str(path),
+                        "has_page_images": bool(meta.get("has_page_images")),
+                        "synthetic": bool(meta.get("synthetic")),
                     }
                 )
                 if normalized:
-                    page_entries.append(normalized)
+                    normalized["_quality_score"] = _page_text_quality(normalized.get("text") or "")
+                    page_entries_by_key[(str(book_key or ""), int(page_num))] = _pick_better_page(
+                        page_entries_by_key.get((str(book_key or ""), int(page_num))),
+                        normalized,
+                    )
+        page_entries.extend(page_entries_by_key.values())
 
     page_entries.sort(
         key=lambda item: (
@@ -1144,7 +1336,69 @@ def _load_supplemental_textbook_pages() -> tuple[dict, ...]:
             int(item.get("section") or 0),
         )
     )
-    return tuple(page_entries)
+    normalized_entries = []
+    for item in page_entries:
+        item.pop("_quality_score", None)
+        normalized_entries.append(item)
+    return tuple(normalized_entries)
+
+
+@functools.lru_cache(maxsize=1)
+def _load_supplemental_book_catalog() -> tuple[dict, ...]:
+    manifest = _load_supplemental_manifest()
+    catalog = manifest.get("book_catalog") if isinstance(manifest, dict) else None
+    if isinstance(catalog, list) and catalog:
+        normalized = []
+        for item in catalog:
+            if not isinstance(item, dict):
+                continue
+            book_key = str(item.get("book_key") or "").strip()
+            subject = str(item.get("subject") or "").strip()
+            title = str(item.get("title") or "").strip()
+            if not book_key or not subject or not title:
+                continue
+            normalized.append(
+                {
+                    "book_key": book_key,
+                    "subject": subject,
+                    "title": title,
+                    "base_title": str(item.get("base_title") or title).strip() or title,
+                    "edition": str(item.get("edition") or "").strip(),
+                    "content_id": str(item.get("content_id") or "").strip() or None,
+                    "has_page_images": bool(item.get("has_page_images")),
+                    "source": str(item.get("source") or ("primary" if item.get("has_page_images") else "supplemental_only")).strip(),
+                    "pages": int(item.get("pages") or 0),
+                }
+            )
+        if normalized:
+            return tuple(normalized)
+
+    by_book = {}
+    for entry in _load_supplemental_textbook_pages():
+        book_key = str(entry.get("book_key") or "").strip()
+        if not book_key:
+            continue
+        item = by_book.setdefault(
+            book_key,
+            {
+                "book_key": book_key,
+                "subject": entry.get("subject") or "",
+                "title": entry.get("title") or "",
+                "base_title": entry.get("base_title") or entry.get("title") or "",
+                "edition": entry.get("edition") or "",
+                "content_id": entry.get("content_id"),
+                "has_page_images": bool(entry.get("has_page_images")),
+                "source": "primary" if entry.get("has_page_images") else "supplemental_only",
+                "pages": 0,
+            },
+        )
+        item["pages"] += 1
+    return tuple(
+        sorted(
+            by_book.values(),
+            key=lambda item: (item.get("subject") or "", item.get("title") or "", item.get("book_key") or ""),
+        )
+    )
 
 
 def _count_textbook_term_hits(
@@ -2031,6 +2285,71 @@ def _fetch_ai_relation_hints(con, terms: list[str], limit: int = 6) -> list[dict
     return hints
 
 
+def _build_graphrag_relation_hints(con, query: str, query_analysis: dict, limit: int = GRAPH_RAG_MAX_RELATIONS) -> list[dict]:
+    if not GRAPH_RAG_ENABLED or limit <= 0:
+        return []
+
+    seeds = []
+    seen_seeds = set()
+    for item in (query_analysis.get("concept_terms") or [])[:3]:
+        term = _clean_query_text(item.get("term") or "")
+        compact = _compact_query_text(term)
+        if not compact or compact in seen_seeds:
+            continue
+        seeds.append(term)
+        seen_seeds.add(compact)
+
+    clean_query = _clean_query_text(query)
+    compact_query = _compact_query_text(clean_query)
+    if compact_query and compact_query not in seen_seeds:
+        seeds.append(clean_query)
+
+    hints = []
+    seen_pairs = set()
+    for seed in seeds[:3]:
+        try:
+            center_dist = con.execute(
+                """
+                SELECT c.subject, COUNT(*) AS cnt
+                FROM chunks c JOIN chunks_fts ON chunks_fts.rowid = c.id
+                WHERE chunks_fts MATCH ? AND c.source = 'mineru'
+                GROUP BY c.subject ORDER BY cnt DESC
+                """,
+                (seed,),
+            ).fetchall()
+        except Exception:
+            center_dist = []
+        center_subjects = {row["subject"] for row in center_dist}
+        if len(center_subjects) < 2:
+            continue
+
+        for item in _fetch_graph_local_related(con, seed, center_subjects, limit=max(limit * 2, 6)):
+            related = _clean_query_text(item.get("term") or "")
+            if not related:
+                continue
+            pair_key = tuple(sorted((seed.casefold(), related.casefold())))
+            if pair_key in seen_pairs:
+                continue
+            seen_pairs.add(pair_key)
+            shared_subjects = item.get("shared_subjects") or []
+            hints.append(
+                {
+                    "anchor": seed,
+                    "related": related,
+                    "relation": "图谱共现",
+                    "description": (
+                        f"跨 {len(shared_subjects)} 科共现：{'、'.join(shared_subjects[:4])}"
+                        if shared_subjects
+                        else "在高信号教材段落中共现"
+                    ),
+                    "source": "graphrag",
+                }
+            )
+            if len(hints) >= limit:
+                return hints
+    return hints
+
+
 def _derive_chat_search_terms(query: str, user_message: str) -> list[str]:
     terms = []
     seen = set()
@@ -2087,8 +2406,28 @@ def _derive_chat_search_terms(query: str, user_message: str) -> list[str]:
     return terms[:5]
 
 
-def _fetch_chat_rows(con, clean_q: str, *, source: str, limit: int):
+def _fetch_chat_rows(
+    con,
+    clean_q: str,
+    *,
+    source: str,
+    limit: int,
+    scope_subject: str | None = None,
+    book_key: str | None = None,
+):
     candidate_limit = _candidate_window_limit(limit, multiplier=2, minimum=max(8, limit * 2), cap=160)
+    where_parts = ["c.source = ?"]
+    like_params: list[object] = [source]
+    fts_params: list[object] = [source]
+    if source != "gaokao" and book_key:
+        where_parts.append("c.book_key = ?")
+        like_params.append(book_key)
+        fts_params.append(book_key)
+    elif scope_subject:
+        where_parts.append("c.subject = ?")
+        like_params.append(scope_subject)
+        fts_params.append(scope_subject)
+    where_sql = " AND ".join(where_parts)
 
     like_rows = con.execute(
         f"""
@@ -2101,15 +2440,15 @@ def _fetch_chat_rows(con, clean_q: str, *, source: str, limit: int):
         FROM chunks c
         LEFT JOIN ai_summaries s ON s.chunk_id = c.id
         LEFT JOIN ai_gaokao_links ag ON ag.chunk_id = c.id
-        WHERE c.source = ? AND c.text LIKE ?
+        WHERE {where_sql} AND c.text LIKE ?
         LIMIT ?
         """,
-        (source, f"%{clean_q}%", candidate_limit),
+        tuple(like_params + [f"%{clean_q}%", candidate_limit]),
     ).fetchall()
 
     try:
         fts_rows = con.execute(
-            """
+            f"""
             SELECT c.id, c.subject, c.title, c.book_key, c.section, c.logical_page,
                    c.text, c.source, c.year, c.category, f.rank AS rank,
                    s.summary AS ai_summary,
@@ -2120,11 +2459,11 @@ def _fetch_chat_rows(con, clean_q: str, *, source: str, limit: int):
             JOIN chunks_fts f ON c.id = f.rowid
             LEFT JOIN ai_summaries s ON s.chunk_id = c.id
             LEFT JOIN ai_gaokao_links ag ON ag.chunk_id = c.id
-            WHERE c.source = ? AND chunks_fts MATCH ?
+            WHERE {where_sql} AND chunks_fts MATCH ?
             ORDER BY rank
             LIMIT ?
             """,
-            (source, clean_q, candidate_limit),
+            tuple(fts_params + [clean_q, candidate_limit]),
         ).fetchall()
     except Exception:
         fts_rows = []
@@ -2132,7 +2471,13 @@ def _fetch_chat_rows(con, clean_q: str, *, source: str, limit: int):
     return _merge_ranked_rows(like_rows, fts_rows)[:limit]
 
 
-def _fetch_ai_gaokao_rows_for_terms(con, terms: list[str], limit: int) -> list[dict]:
+def _fetch_ai_gaokao_rows_for_terms(
+    con,
+    terms: list[str],
+    limit: int,
+    *,
+    scope_subject: str | None = None,
+) -> list[dict]:
     rows = []
     existing_ids = set()
     if not terms:
@@ -2145,7 +2490,7 @@ def _fetch_ai_gaokao_rows_for_terms(con, terms: list[str], limit: int) -> list[d
         like_term = f"%{term}%"
         try:
             term_rows = con.execute(
-                """
+                f"""
                 SELECT c.id, c.subject, c.title, c.book_key, c.section, c.logical_page,
                        c.text, c.source, c.year, c.category, -90.0 AS rank,
                        '' AS ai_summary,
@@ -2155,11 +2500,12 @@ def _fetch_ai_gaokao_rows_for_terms(con, terms: list[str], limit: int) -> list[d
                 FROM ai_gaokao_links ag
                 JOIN chunks c ON c.id = ag.chunk_id
                 WHERE c.source = 'gaokao'
+                  {'AND c.subject = ?' if scope_subject else ''}
                   AND (ag.summary LIKE ? OR ag.knowledge_points LIKE ? OR ag.textbook_refs LIKE ?)
                 ORDER BY c.year DESC, c.id DESC
                 LIMIT ?
                 """,
-                (like_term, like_term, like_term, per_term_limit),
+                tuple(([scope_subject] if scope_subject else []) + [like_term, like_term, like_term, per_term_limit]),
             ).fetchall()
         except Exception:
             term_rows = []
@@ -2225,7 +2571,15 @@ def _apply_chat_book_diversity(rows: list[dict], *, limit: int, quota_per_book: 
     return selected[:limit]
 
 
-def _fetch_chat_rows_for_terms(con, terms: list[str], *, source: str, limit: int):
+def _fetch_chat_rows_for_terms(
+    con,
+    terms: list[str],
+    *,
+    source: str,
+    limit: int,
+    scope_subject: str | None = None,
+    book_key: str | None = None,
+):
     rows = []
     existing_ids = set()
     if not terms:
@@ -2233,7 +2587,14 @@ def _fetch_chat_rows_for_terms(con, terms: list[str], *, source: str, limit: int
 
     per_term_limit = max(4, math.ceil(limit / max(1, min(len(terms), 3))))
     for idx, term in enumerate(terms):
-        for row in _fetch_chat_rows(con, term, source=source, limit=per_term_limit):
+        for row in _fetch_chat_rows(
+            con,
+            term,
+            source=source,
+            limit=per_term_limit,
+            scope_subject=scope_subject,
+            book_key=book_key,
+        ):
             row_id = row["id"]
             if row_id in existing_ids:
                 continue
@@ -2247,12 +2608,592 @@ def _fetch_chat_rows_for_terms(con, terms: list[str], *, source: str, limit: int
     return _apply_chat_book_diversity(rows, limit=limit)
 
 
-def _build_chat_context_payload(con, query: str, user_message: str, history: list[dict] | None = None) -> dict:
+PRECISION_QUERY_PATTERNS = (
+    re.compile(r"什么是.+"),
+    re.compile(r".+是什么"),
+    re.compile(r".+的(?:定义|概念|本质|特点|条件|作用|过程|原因)"),
+    re.compile(r".+指什么"),
+    re.compile(r".+(?:有什么)?区别"),
+    re.compile(r".+和.+的区别"),
+    re.compile(r".+的(?:例子|实例)"),
+    re.compile(r".+为什么.+"),
+)
+
+
+def _is_precision_query(query: str, user_message: str = "") -> bool:
+    compact_query = _compact_query_text(query)
+    compact_message = _compact_query_text(user_message)
+    if compact_query and any(pattern.search(compact_query) for pattern in PRECISION_QUERY_PATTERNS):
+        return True
+    if compact_message and any(pattern.search(compact_message) for pattern in PRECISION_QUERY_PATTERNS):
+        return True
+    return False
+
+
+def _trim_precision_target(text: str) -> str:
+    target = _clean_query_text(text)
+    if not target:
+        return ""
+    patterns = [
+        r"^请(?:直接)?(?:根据教材)?(?:回答|解释|说明)?",
+        r"^(?:帮我|请你)?(?:只)?(?:在课本中|在教材中)?(?:找|查|说明|解释)?",
+        r"(?:的定义|的概念|的本质)$",
+        r"(?:是什么|指什么|是什么意思)$",
+    ]
+    for pattern in patterns:
+        target = re.sub(pattern, "", target)
+    target = re.sub(r"^(什么是)", "", target)
+    target = re.sub(r"[「」“”\"'？?。！，,：:；;（）()\[\]{}]+", " ", target)
+    target = re.sub(r"\s+", " ", target).strip()
+    return target
+
+
+def _build_precision_query_profile(query: str, user_message: str = "") -> dict:
+    clean_query = _clean_query_text(query)
+    clean_message = _clean_query_text(user_message)
+    combined = clean_query
+    if clean_message and (not clean_query or (not _is_precision_query(clean_query) and _is_precision_query(clean_message))):
+        combined = clean_message
+    compact = _compact_query_text(combined)
+    intent = "lookup"
+    target = clean_query
+
+    patterns = [
+        ("definition", re.compile(r"^(?P<target>.+?)的定义$")),
+        ("definition", re.compile(r"^(?P<target>.+?)的概念$")),
+        ("definition", re.compile(r"^(?P<target>.+?)是什么$")),
+        ("definition", re.compile(r"^什么是(?P<target>.+)$")),
+        ("definition", re.compile(r"^(?P<target>.+?)指什么$")),
+        ("comparison", re.compile(r"^(?P<target>.+?)(?:有什么)?区别$")),
+        ("comparison", re.compile(r"^(?P<target>.+?)和(?P<other>.+?)的区别$")),
+        ("example", re.compile(r"^(?P<target>.+?)的例子$")),
+        ("reason", re.compile(r"^(?P<target>.+?)为什么.+$")),
+        ("process", re.compile(r"^(?P<target>.+?)的过程$")),
+    ]
+    for matched_intent, pattern in patterns:
+        matched = pattern.match(compact)
+        if not matched:
+            continue
+        intent = matched_intent
+        if matched_intent == "comparison" and matched.groupdict().get("other"):
+            other = _trim_precision_target(matched.groupdict().get("other") or "")
+            primary = _trim_precision_target(matched.groupdict().get("target") or clean_query)
+            target = "和".join(part for part in (primary, other) if part)
+        else:
+            target = _trim_precision_target(matched.groupdict().get("target") or clean_query)
+        break
+
+    if intent == "lookup" and "定义" in compact:
+        intent = "definition"
+        target = _trim_precision_target(compact.replace("定义", ""))
+    elif intent == "lookup" and ("什么是" in compact or compact.endswith("是什么")):
+        intent = "definition"
+        target = _trim_precision_target(compact.replace("什么是", "").replace("是什么", ""))
+    elif intent == "lookup" and ("区别" in compact or "不同" in compact):
+        intent = "comparison"
+        target = _trim_precision_target(clean_query)
+    elif intent == "lookup" and ("例子" in compact or "实例" in compact):
+        intent = "example"
+        target = _trim_precision_target(clean_query)
+
+    target = _trim_precision_target(target or clean_query) or clean_query
+    return {
+        "query": query,
+        "user_message": user_message,
+        "intent": intent,
+        "target": target,
+        "precision_mode": _is_precision_query(query, user_message),
+    }
+
+
+def _build_precision_search_terms(query_profile: dict, query_analysis: dict, *, round_index: int = 0) -> list[str]:
+    terms = []
+    seen = set()
+
+    def add_term(value: str):
+        clean = _clean_query_text(value)
+        compact = _compact_query_text(clean)
+        if len(compact) < 2 or compact in seen:
+            return
+        seen.add(compact)
+        terms.append(clean)
+
+    query = query_profile.get("query") or ""
+    target = query_profile.get("target") or query
+    intent = query_profile.get("intent") or "lookup"
+
+    add_term(query)
+    add_term(target)
+
+    for item in (query_analysis.get("concept_terms") or [])[:4]:
+        add_term(item.get("term") or "")
+        for alias in item.get("aliases", [])[:2]:
+            add_term(alias)
+    for term in (query_analysis.get("retrieval_terms") or [])[:6]:
+        add_term(term)
+
+    if intent == "definition":
+        if round_index == 0:
+            for term in (
+                f"{target}的定义",
+                f"{target}是什么",
+                f"什么是{target}",
+                f"{target}是",
+                f"{target}概念",
+            ):
+                add_term(term)
+        else:
+            for term in (
+                f"{target}是指",
+                f"{target}通常指",
+                f"{target}称为",
+                f"{target}叫做",
+            ):
+                add_term(term)
+    elif intent == "comparison":
+        if round_index == 0:
+            add_term(f"{target}区别")
+            add_term(f"{target}不同")
+        else:
+            add_term(f"{target}联系")
+    elif intent == "example":
+        add_term(f"{target}例子")
+        add_term(f"{target}实例")
+    elif intent == "reason":
+        add_term(f"{target}原因")
+        add_term(f"{target}为什么")
+    elif intent == "process":
+        add_term(f"{target}过程")
+        add_term(f"{target}步骤")
+
+    return terms[:12]
+
+
+def _search_textbook_semantic_candidates(
+    con: sqlite3.Connection,
+    query_text: str,
+    *,
+    scope_subject: str | None = None,
+    book_key: str | None = None,
+    limit: int = 24,
+) -> list[dict]:
+    clean_query = _clean_query_text(query_text)
+    if not clean_query or not faiss_index or not embedder:
+        return []
+    try:
+        query_vec = embedder.encode([clean_query[:512]], normalize_embeddings=True).astype("float32")
+        distances, ids = faiss_index.search(query_vec, limit * 3)
+    except Exception:
+        return []
+
+    ranked_ids = []
+    seen = set()
+    for score, match_id in zip(distances[0], ids[0]):
+        if match_id == -1 or match_id in seen or score <= FAISS_SCORE_THRESHOLD:
+            continue
+        seen.add(int(match_id))
+        ranked_ids.append((int(match_id), float(score)))
+        if len(ranked_ids) >= limit:
+            break
+    if not ranked_ids:
+        return []
+
+    placeholders = ",".join("?" for _ in ranked_ids)
+    params = [item[0] for item in ranked_ids]
+    where_parts = [f"c.id IN ({placeholders})", "(c.source = 'mineru' OR c.source IS NULL)"]
+    if scope_subject:
+        where_parts.append("c.subject = ?")
+        params.append(scope_subject)
+    if book_key:
+        where_parts.append("c.book_key = ?")
+        params.append(book_key)
+    try:
+        rows = con.execute(
+            f"""
+            SELECT c.id, c.content_id, c.subject, c.title, c.book_key, c.section, c.logical_page,
+                   c.text, c.source, s.summary AS ai_summary
+            FROM chunks c
+            LEFT JOIN ai_summaries s ON s.chunk_id = c.id
+            WHERE {' AND '.join(where_parts)}
+            """,
+            params,
+        ).fetchall()
+    except Exception:
+        return []
+
+    row_by_id = {int(row["id"]): dict(row) for row in rows}
+    results = []
+    for row_id, score in ranked_ids:
+        row = row_by_id.get(row_id)
+        if not row:
+            continue
+        row["semantic_score"] = score
+        row["match_channel"] = "semantic"
+        results.append(row)
+    return results
+
+
+def _append_precision_candidate(
+    bucket: dict[int | str, dict],
+    row: dict,
+    *,
+    base_score: float,
+    matched_term: str,
+    match_basis: str,
+    match_channel: str,
+    retrieval_source: str,
+):
+    row_id = row.get("id")
+    if row_id is None:
+        return
+    text = row.get("text") or ""
+    snippet = row.get("snippet") or _compose_chunk_snippet(row.get("ai_summary"), text, limit=180)
+    logical_page = row.get("logical_page")
+    if logical_page is None:
+        logical_page = row.get("section")
+    data = {
+        "id": row_id,
+        "content_id": row.get("content_id"),
+        "subject": row.get("subject") or "",
+        "title": row.get("title") or "",
+        "book_key": row.get("book_key"),
+        "section": row.get("section"),
+        "logical_page": logical_page,
+        "snippet": snippet,
+        "text": text,
+        "source": row.get("source") or "mineru",
+        "match_channel": match_channel,
+        "match_basis": match_basis,
+        "matched_term": matched_term,
+        "retrieval_source": retrieval_source,
+        "semantic_score": float(row.get("semantic_score") or 0.0),
+        "base_score": float(base_score),
+    }
+    existing = bucket.get(row_id)
+    if existing and existing.get("base_score", 0) >= data["base_score"]:
+        return
+    bucket[row_id] = data
+
+
+def _definition_intent_bonus(query_profile: dict, candidate: dict) -> float:
+    if query_profile.get("intent") != "definition":
+        return 0.0
+    target = _compact_query_text(query_profile.get("target") or "")
+    if not target:
+        return 0.0
+    title = _compact_query_text(candidate.get("title") or "")
+    text = _compact_query_text(candidate.get("text") or "")
+    bonus = 0.0
+    patterns = (
+        f"{target}是指",
+        f"{target}通常指",
+        f"{target}称为",
+        f"{target}叫做",
+        f"什么是{target}",
+        f"{target}概念",
+    )
+    for pattern in patterns:
+        if pattern in text:
+            bonus += 18.0
+    if target and f"{target}是" in text:
+        bonus += 12.0
+    if "定义" in title or "概念" in title:
+        bonus += 10.0
+    if target and target in title:
+        bonus += 6.0
+    return min(42.0, bonus)
+
+
+def _normalize_rerank_score(score: float) -> float:
+    try:
+        value = float(score)
+    except Exception:
+        return 0.0
+    value = max(-12.0, min(12.0, value))
+    return 1.0 / (1.0 + math.exp(-value))
+
+
+def _rerank_precision_candidates(query_text: str, query_profile: dict, candidates: list[dict]) -> list[dict]:
+    if not candidates:
+        return []
+    rerank_model = _get_reranker()
+    rerank_scores = [0.0] * len(candidates)
+    if rerank_model:
+        try:
+            pairs = [
+                (
+                    query_text,
+                    "\n".join(
+                        part for part in (
+                            candidate.get("title") or "",
+                            (candidate.get("snippet") or "")[:240],
+                            (candidate.get("text") or "")[:640],
+                        ) if part
+                    ),
+                )
+                for candidate in candidates[:RERANKER_MAX_CANDIDATES]
+            ]
+            raw_scores = rerank_model.predict(pairs, batch_size=8, show_progress_bar=False)
+            rerank_scores = [_normalize_rerank_score(score) for score in raw_scores] + [0.0] * max(0, len(candidates) - len(raw_scores))
+        except Exception as e:
+            print(f"Precision rerank failed: {e}", flush=True)
+
+    reranked = []
+    for index, candidate in enumerate(candidates):
+        rerank_score = rerank_scores[index] if index < len(rerank_scores) else 0.0
+        intent_bonus = _definition_intent_bonus(query_profile, candidate)
+        semantic_bonus = candidate.get("semantic_score", 0.0) * 35.0
+        final_score = candidate.get("base_score", 0.0) + rerank_score * 100.0 + intent_bonus + semantic_bonus
+        merged = dict(candidate)
+        merged["rerank_score"] = rerank_score
+        merged["intent_bonus"] = intent_bonus
+        merged["final_score"] = final_score
+        reranked.append(merged)
+
+    reranked.sort(
+        key=lambda item: (
+            -item.get("final_score", 0.0),
+            -item.get("rerank_score", 0.0),
+            -len(item.get("matched_term") or ""),
+            item.get("id", 0),
+        )
+    )
+    return reranked
+
+
+def _collect_precision_candidates(
+    con: sqlite3.Connection,
+    query: str,
+    query_profile: dict,
+    query_analysis: dict,
+    *,
+    round_index: int = 0,
+    scope_subject: str | None = None,
+    book_key: str | None = None,
+) -> tuple[list[dict], list[str]]:
+    search_terms = _build_precision_search_terms(query_profile, query_analysis, round_index=round_index)
+    bucket: dict[int | str, dict] = {}
+
+    for priority, term in enumerate(search_terms):
+        rows = _search_chunks_by_term(
+            con,
+            term,
+            where_extra=" AND (c.source = 'mineru' OR c.source IS NULL)",
+            filter_params=[],
+            candidate_limit=18,
+            sort="relevance",
+        )
+        for row in rows[:12]:
+            if scope_subject and row.get("subject") != scope_subject:
+                continue
+            if book_key and row.get("book_key") != book_key:
+                continue
+            channel = row.get("match_channel") or "fts"
+            channel_bonus = 42.0 if channel == "exact" else 24.0 if channel == "fts" else 10.0
+            base_score = 210.0 - priority * 14.0 + channel_bonus
+            _append_precision_candidate(
+                bucket,
+                dict(row),
+                base_score=base_score,
+                matched_term=term,
+                match_basis="precision_query",
+                match_channel=channel,
+                retrieval_source="primary",
+            )
+
+    for row in _search_textbook_semantic_candidates(
+        con,
+        query_profile.get("target") or query,
+        scope_subject=scope_subject,
+        book_key=book_key,
+        limit=18,
+    ):
+        _append_precision_candidate(
+            bucket,
+            row,
+            base_score=170.0,
+            matched_term=query_profile.get("target") or query,
+            match_basis="semantic_query",
+            match_channel="semantic",
+            retrieval_source="primary",
+        )
+
+    plan = [{"term": term, "basis": "precision_query"} for term in search_terms]
+    for index, row in enumerate(
+        _search_supplemental_textbook_pages(
+            query_profile.get("target") or query,
+            plan,
+            scope_subject=scope_subject,
+            book_key=book_key,
+            limit=18,
+        )
+    ):
+        _append_precision_candidate(
+            bucket,
+            row,
+            base_score=190.0 - index * 6.0,
+            matched_term=row.get("matched_term") or (query_profile.get("target") or query),
+            match_basis=row.get("match_basis") or "precision_query",
+            match_channel=row.get("match_channel") or "supplemental",
+            retrieval_source="supplemental",
+        )
+
+    return list(bucket.values()), search_terms
+
+
+def _build_precision_followups(query_profile: dict) -> list[str]:
+    query = query_profile.get("query") or ""
+    target = query_profile.get("target") or query
+    intent = query_profile.get("intent") or "lookup"
+    if intent == "definition":
+        return [
+            f"请只根据教材原文，进一步说明「{target}」的关键特征。",
+            f"「{target}」最容易和哪些概念混淆？",
+            f"如果要背「{target}」的定义，最短表述是什么？",
+        ]
+    if intent == "comparison":
+        return [
+            f"请继续比较「{target}」的核心差异。",
+            f"哪些教材原文最能体现「{target}」的区别？",
+        ]
+    return [
+        f"请只根据教材原文解释「{query}」的核心。",
+        f"围绕「{query}」最容易混淆的概念有哪些？",
+    ]
+
+
+def _build_precision_chat_context_payload(
+    con: sqlite3.Connection,
+    query: str,
+    user_message: str,
+    history: list[dict] | None = None,
+    *,
+    scope_subject: str | None = None,
+    book_key: str | None = None,
+) -> dict:
+    query_profile = _build_precision_query_profile(query, user_message)
+    query_analysis = _analyze_search_query(con, query, scope_subject=scope_subject, book_key=book_key)
+    rounds = []
+    reranked: list[dict] = []
+
+    for round_index in range(2):
+        candidates, round_terms = _collect_precision_candidates(
+            con,
+            query,
+            query_profile,
+            query_analysis,
+            round_index=round_index,
+            scope_subject=scope_subject,
+            book_key=book_key,
+        )
+        reranked = _rerank_precision_candidates(user_message or query, query_profile, candidates)[: max(RERANKER_MAX_CANDIDATES, 16)]
+        rounds.append(
+            {
+                "round": round_index + 1,
+                "search_terms": round_terms,
+                "candidate_count": len(candidates),
+                "top_score": reranked[0]["final_score"] if reranked else 0.0,
+            }
+        )
+        if reranked and (
+            reranked[0].get("final_score", 0.0) >= 230.0
+            or sum(1 for item in reranked[:3] if item.get("final_score", 0.0) >= 190.0) >= 2
+        ):
+            break
+
+    evidence = []
+    groups_by_subject: dict[str, dict] = {}
+    for candidate in reranked[:RERANKER_FINAL_LIMIT]:
+        logical_page = candidate.get("logical_page") if candidate.get("logical_page") is not None else candidate.get("section")
+        item = _apply_book_runtime_meta(
+            {
+                "id": candidate["id"],
+                "subject": candidate["subject"],
+                "title": candidate["title"],
+                "book_key": candidate.get("book_key"),
+                "section": candidate.get("section"),
+                "logical_page": logical_page,
+                "snippet": candidate.get("snippet") or _chat_excerpt(candidate.get("text") or "", limit=180),
+                "summary": "",
+                "text": candidate.get("text") or "",
+                "match_channel": candidate.get("match_channel"),
+                "matched_term": candidate.get("matched_term"),
+                "retrieval_source": candidate.get("retrieval_source"),
+                "final_score": candidate.get("final_score"),
+            },
+            book_key=candidate.get("book_key"),
+            fallback_title=candidate.get("title"),
+            content_id=candidate.get("content_id"),
+        )
+        item["citation"] = f"[{item['subject']}·{item['title']}·p{item.get('logical_page')}]"
+        evidence.append(item)
+        subject_group = groups_by_subject.setdefault(item["subject"], {"subject": item["subject"], "count": 0, "items": []})
+        subject_group["count"] += 1
+        if len(subject_group["items"]) < 2:
+            subject_group["items"].append(item)
+
+    context_lines = []
+    for subject, group in sorted(groups_by_subject.items(), key=lambda pair: pair[1]["count"], reverse=True):
+        lines = [f"【{subject}】（{group['count']}条高相关证据）"]
+        for item in group["items"]:
+            lines.append(f"{item['citation']} {item['snippet']}")
+        context_lines.append("\n".join(lines))
+
+    summary = {
+        "coverage_line": (
+            f"精准检索 · {len(rounds)} 轮召回 · 证据 {len(evidence)} 条 · "
+            f"学科 {len(groups_by_subject)} 个"
+        ),
+        "search_terms_used": rounds[0]["search_terms"] if rounds else [query],
+        "retrieval_terms_used": list(dict.fromkeys(term for round_info in rounds for term in round_info["search_terms"]))[:12],
+        "top_subjects": [
+            {"subject": group["subject"], "count": group["count"]}
+            for group in sorted(groups_by_subject.values(), key=lambda item: item["count"], reverse=True)[:4]
+        ],
+        "relation_hint_count": 0,
+        "gaokao_hit_count": 0,
+        "agent_rounds": rounds,
+        "query_intent": query_profile.get("intent"),
+    }
+
+    return {
+        "mode": "precision_agent",
+        "query": query,
+        "user_message": user_message,
+        "search_terms_used": summary["search_terms_used"],
+        "retrieval_terms_used": summary["retrieval_terms_used"],
+        "alias_hints": [],
+        "relation_hints": [],
+        "alias_text": "（无）",
+        "relation_text": "（无）",
+        "context_text": "\n\n".join(context_lines),
+        "gaokao_text": "（无）",
+        "history_text": "\n".join(_format_chat_history_lines(history)) if history else "（无）",
+        "query_analysis": query_analysis,
+        "query_profile": query_profile,
+        "query_resolution_text": query_analysis.get("summary") or "",
+        "summary": summary,
+        "suggested_questions": _build_precision_followups(query_profile),
+        "evidence": evidence,
+        "groups": list(groups_by_subject.values()),
+        "gaokao_examples": [],
+    }
+
+
+def _build_chat_context_payload_legacy(
+    con,
+    query: str,
+    user_message: str,
+    history: list[dict] | None = None,
+    *,
+    scope_subject: str | None = None,
+    book_key: str | None = None,
+) -> dict:
     clean_q = _clean_query_text(query)
     if not clean_q:
         raise HTTPException(400, "Invalid query")
 
-    query_analysis = _analyze_search_query(con, query)
+    query_analysis = _analyze_search_query(con, query, scope_subject=scope_subject, book_key=book_key)
     search_terms = list(
         dict.fromkeys(
             (query_analysis.get("retrieval_terms") or [])
@@ -2261,15 +3202,39 @@ def _build_chat_context_payload(con, query: str, user_message: str, history: lis
     )
     retrieval_terms, alias_hints = _expand_chat_search_terms(con, search_terms)
     relation_hints = _fetch_ai_relation_hints(con, search_terms, limit=4)
+    if len(relation_hints) < 4:
+        relation_hints.extend(
+            _build_graphrag_relation_hints(
+                con,
+                query,
+                query_analysis,
+                limit=max(0, 4 - len(relation_hints)),
+            )
+        )
 
-    textbook_rows = _fetch_chat_rows_for_terms(con, retrieval_terms, source="mineru", limit=16)
-    gaokao_rows = _fetch_chat_rows_for_terms(con, retrieval_terms, source="gaokao", limit=4)
-    for row in _fetch_ai_gaokao_rows_for_terms(con, retrieval_terms, limit=4):
-        if any(existing["id"] == row["id"] for existing in gaokao_rows):
-            continue
-        gaokao_rows.append(row)
-        if len(gaokao_rows) >= 4:
-            break
+    textbook_rows = _fetch_chat_rows_for_terms(
+        con,
+        retrieval_terms,
+        source="mineru",
+        limit=16,
+        scope_subject=scope_subject,
+        book_key=book_key,
+    )
+    gaokao_rows = []
+    if not book_key:
+        gaokao_rows = _fetch_chat_rows_for_terms(
+            con,
+            retrieval_terms,
+            source="gaokao",
+            limit=4,
+            scope_subject=scope_subject,
+        )
+        for row in _fetch_ai_gaokao_rows_for_terms(con, retrieval_terms, limit=4, scope_subject=scope_subject):
+            if any(existing["id"] == row["id"] for existing in gaokao_rows):
+                continue
+            gaokao_rows.append(row)
+            if len(gaokao_rows) >= 4:
+                break
 
     by_subject = {}
     for row in textbook_rows:
@@ -2367,6 +3332,7 @@ def _build_chat_context_payload(con, query: str, user_message: str, history: lis
         "retrieval_terms_used": retrieval_terms,
         "alias_hint_count": len(alias_hints),
         "relation_hint_count": len(relation_hints),
+        "graph_hint_count": sum(1 for item in relation_hints if item.get("source") == "graphrag"),
         "top_subjects": [
             {"subject": group["subject"], "count": group["count"]}
             for group in groups[:4]
@@ -2374,6 +3340,7 @@ def _build_chat_context_payload(con, query: str, user_message: str, history: lis
     }
 
     return {
+        "mode": "cross_subject",
         "query": query,
         "user_message": user_message,
         "subject_count": len(groups),
@@ -2401,15 +3368,57 @@ def _build_chat_context_payload(con, query: str, user_message: str, history: lis
     }
 
 
-def _build_chat_context_for_request(query: str, user_message: str, history: list[dict] | None = None) -> dict:
+def _build_chat_context_payload(
+    con,
+    query: str,
+    user_message: str,
+    history: list[dict] | None = None,
+    *,
+    scope_subject: str | None = None,
+    book_key: str | None = None,
+) -> dict:
+    if _is_precision_query(query, user_message):
+        return _build_precision_chat_context_payload(
+            con,
+            query,
+            user_message,
+            history=history,
+            scope_subject=scope_subject,
+            book_key=book_key,
+        )
+    return _build_chat_context_payload_legacy(
+        con,
+        query,
+        user_message,
+        history=history,
+        scope_subject=scope_subject,
+        book_key=book_key,
+    )
+
+
+def _build_chat_context_for_request(
+    query: str,
+    user_message: str,
+    history: list[dict] | None = None,
+    *,
+    scope_subject: str | None = None,
+    book_key: str | None = None,
+) -> dict:
     con = get_db()
     try:
-        return _build_chat_context_payload(con, query, user_message, history=history)
+        return _build_chat_context_payload(
+            con,
+            query,
+            user_message,
+            history=history,
+            scope_subject=scope_subject,
+            book_key=book_key,
+        )
     finally:
         con.close()
 
 
-def _build_chat_prompt(query: str, user_message: str, context_payload: dict, history: list[dict] | None = None) -> str:
+def _build_chat_prompt_legacy(query: str, user_message: str, context_payload: dict, history: list[dict] | None = None) -> str:
     history_text = (context_payload.get("history_text") or "").strip()
     if history and not history_text:
         history_text = "\n".join(_format_chat_history_lines(history))
@@ -2458,6 +3467,67 @@ def _build_chat_prompt(query: str, user_message: str, context_payload: dict, his
 4. 可以参考“概念别名 / 关系提示”组织答案，但不能把它们当成教材原文引用。
 5. 语言简洁、具体，避免空泛套话。
 6. 总长度尽量控制在 280 字以内。"""
+
+
+def _build_precision_chat_prompt(
+    query: str,
+    user_message: str,
+    context_payload: dict,
+    history: list[dict] | None = None,
+) -> str:
+    history_text = (context_payload.get("history_text") or "").strip()
+    if history and not history_text:
+        history_text = "\n".join(_format_chat_history_lines(history))
+    if not history_text:
+        history_text = "（无）"
+
+    query_profile = context_payload.get("query_profile") or {}
+    intent = query_profile.get("intent") or "lookup"
+    target = query_profile.get("target") or query
+    rounds = (context_payload.get("summary") or {}).get("agent_rounds") or []
+    intent_label = {
+        "definition": "定义检索",
+        "comparison": "比较检索",
+        "example": "例证检索",
+        "reason": "因果检索",
+        "process": "过程检索",
+    }.get(intent, "精准检索")
+
+    return f"""你是一位严谨的教材检索助手。当前搜索词是「{context_payload.get('query') or query}」，用户当前要解决的是「{target}」的{intent_label}。
+
+Agent 检索轮次：{len(rounds)} 轮
+本轮检索关注词：
+{ "、".join(context_payload.get("search_terms_used") or [query]) }
+
+检索扩展词：
+{ "、".join(context_payload.get("retrieval_terms_used") or context_payload.get("search_terms_used") or [query]) }
+
+术语解析：
+{context_payload.get('query_resolution_text') or '（无）'}
+
+教材证据：
+{context_payload.get('context_text') or '（无）'}
+
+历史对话：
+{history_text}
+
+用户本轮问题：
+{user_message}
+
+请按以下规则回答：
+1. 先直接回答问题本身，不要先空泛铺垫。
+2. 只能根据教材证据作答，每个核心判断尽量附 1 个出处，格式：[学科·书名·p页码]。
+3. 如果用户在问“定义”，先给最短可背诵表述，再补 1-2 个关键特征。
+4. 如果证据不足或检索结果彼此不一致，必须明确写“教材证据不足”。
+5. 忽略低相关结果，不要为了凑字数复述无关内容。
+6. 若用户继续追问，保持连续回答，不重复整段前文。
+7. 总长度尽量控制在 220 字以内。"""
+
+
+def _build_chat_prompt(query: str, user_message: str, context_payload: dict, history: list[dict] | None = None) -> str:
+    if context_payload.get("mode") == "precision_agent":
+        return _build_precision_chat_prompt(query, user_message, context_payload, history=history)
+    return _build_chat_prompt_legacy(query, user_message, context_payload, history=history)
 
 
 async def _call_ai_service(prompt: str) -> dict:
@@ -4084,11 +5154,13 @@ def books():
             ORDER BY subject, title
         """).fetchall()
         by_subject = {}
+        seen_book_keys = set()
         for r in rows:
             s = r["subject"]
             if s not in by_subject:
                 meta = SUBJECT_META.get(s, {"icon": "📚", "color": "#95a5a6"})
                 by_subject[s] = {"subject": s, **meta, "books": []}
+            seen_book_keys.add(r["book_key"])
             book_item = _apply_book_runtime_meta(
                 {
                     "book_key": r["book_key"],
@@ -4102,6 +5174,25 @@ def books():
                 "title": book_item["title"],
                 "base_title": book_item["base_title"],
                 "edition": book_item.get("edition", ""),
+                "source": "primary",
+                "has_page_images": True,
+            })
+        for item in _load_supplemental_book_catalog():
+            book_key = str(item.get("book_key") or "").strip()
+            subject = str(item.get("subject") or "").strip()
+            title = str(item.get("title") or "").strip()
+            if not book_key or not subject or not title or book_key in seen_book_keys:
+                continue
+            if subject not in by_subject:
+                meta = SUBJECT_META.get(subject, {"icon": "📚", "color": "#95a5a6"})
+                by_subject[subject] = {"subject": subject, **meta, "books": []}
+            by_subject[subject]["books"].append({
+                "book_key": book_key,
+                "title": title,
+                "base_title": str(item.get("base_title") or title).strip() or title,
+                "edition": str(item.get("edition") or "").strip(),
+                "source": str(item.get("source") or "supplemental_only").strip() or "supplemental_only",
+                "has_page_images": bool(item.get("has_page_images")),
             })
         for payload in by_subject.values():
             payload["books"].sort(key=lambda item: (item.get("title") or "", item.get("book_key") or ""))
@@ -4167,7 +5258,16 @@ async def chat_context(payload: dict = Body(...)):
     query = str(payload.get("query", "")).strip()
     user_message = str(payload.get("user_message", "")).strip()
     history = payload.get("history") or []
-    return await run_in_threadpool(_build_chat_context_for_request, query, user_message, history)
+    scope_subject = str(payload.get("scope_subject", "")).strip() or None
+    book_key = str(payload.get("book_key", "")).strip() or None
+    return await run_in_threadpool(
+        _build_chat_context_for_request,
+        query,
+        user_message,
+        history,
+        scope_subject=scope_subject,
+        book_key=book_key,
+    )
 
 
 @app.post("/api/chat/log")
@@ -4200,10 +5300,19 @@ async def chat(payload: dict = Body(...)):
     query = str(payload.get("query", "")).strip()
     user_message = str(payload.get("user_message", "")).strip()
     history = payload.get("history") or []
+    scope_subject = str(payload.get("scope_subject", "")).strip() or None
+    book_key = str(payload.get("book_key", "")).strip() or None
     if not query or not user_message:
         raise HTTPException(400, "query and user_message are required")
 
-    context_payload = await run_in_threadpool(_build_chat_context_for_request, query, user_message, history)
+    context_payload = await run_in_threadpool(
+        _build_chat_context_for_request,
+        query,
+        user_message,
+        history,
+        scope_subject=scope_subject,
+        book_key=book_key,
+    )
     prompt = _build_chat_prompt(query, user_message, context_payload, history=history)
     try:
         ai_data = await _call_ai_service(prompt)
@@ -5745,8 +6854,14 @@ def health():
     supplemental_manifest = _load_supplemental_manifest()
     supplemental_has_manifest = bool(supplemental_manifest)
     supplemental_source_is_index = supplemental_source["source"] != "directory"
+    supplemental_unresolved_pages = int((supplemental_manifest or {}).get("unresolved_pages") or 0)
+    supplemental_unresolved_books = int((supplemental_manifest or {}).get("unresolved_books") or 0)
     supplemental_ok = bool(supplemental_source["available"]) and (
-        not supplemental_source_is_index or supplemental_has_manifest
+        not supplemental_source_is_index or (
+            supplemental_has_manifest
+            and supplemental_unresolved_pages == 0
+            and supplemental_unresolved_books == 0
+        )
     )
     # DB check
     try:
@@ -5776,6 +6891,18 @@ def health():
         "ok": embedder is not None,
         "name": EMBEDDER_NAME,
     }
+    status["reranker"] = {
+        "enabled": RERANKER_ENABLED,
+        "loaded": reranker is not None,
+        "name": RERANKER_NAME,
+        "reason": reranker_status_reason,
+        "max_candidates": RERANKER_MAX_CANDIDATES,
+        "final_limit": RERANKER_FINAL_LIMIT,
+    }
+    status["graphrag"] = {
+        "enabled": GRAPH_RAG_ENABLED,
+        "max_relations": GRAPH_RAG_MAX_RELATIONS,
+    }
     status["supplemental"] = {
         "ok": supplemental_ok,
         "required": SUPPLEMENTAL_REQUIRED,
@@ -5787,8 +6914,12 @@ def health():
             "source_files_total": supplemental_manifest.get("source_files_total"),
             "source_files_indexed": supplemental_manifest.get("source_files_indexed"),
             "books": supplemental_manifest.get("books"),
+            "primary_books": supplemental_manifest.get("primary_books"),
+            "supplemental_only_books": supplemental_manifest.get("supplemental_only_books"),
             "pages": supplemental_manifest.get("pages"),
             "subjects": len(supplemental_manifest.get("subjects") or {}),
+            "unresolved_books": supplemental_unresolved_books,
+            "unresolved_pages": supplemental_unresolved_pages,
             "output_sha256": (supplemental_manifest.get("output") or {}).get("sha256"),
         },
     }

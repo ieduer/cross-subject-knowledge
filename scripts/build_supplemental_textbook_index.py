@@ -24,6 +24,23 @@ SUBJECT_META = {
     "思想政治": {"icon": "⚖️", "color": "#c0392b"},
 }
 
+EDITION_PATTERNS = (
+    ("A版", ("（A版）", "(A版)", " A版", "_A版_", " A 版", "人民教育出版社 ·北京· A版", "人民教育出版社A版")),
+    ("B版", ("（B版）", "(B版)", " B版", "_B版_", " B 版", "中学数学教材实验研究组", "数学（B版）", "数学(B版)")),
+    ("北师大版", ("北师大版", "北京师范大学出版社", "北京师范大学出版社高中数学编辑室", "王尚志", "保继光")),
+    ("冀教版", ("冀教版", "河北教育出版社")),
+    ("外研社版", ("外语教学与研究出版社", "外研社", "陈琳", "Foreign Language Teaching and Research Press")),
+    ("上外教版", ("上海外语教育出版社", "上海市中小学（幼儿园）课程改革委员会组织编写", "束定芳", "上海外国语大学")),
+    ("重大版", ("重庆大学出版社", "杨晓钰")),
+    ("沪教版", ("上海教育出版社", "上海教育出版社有限公司", "上海市中小学（幼儿园）课程改革委员会组织编写", "牛津大学出版社", "华东师范大学")),
+    ("沪科版", ("上海科学技术出版社", "上海世纪出版", "麻生明", "陈寅")),
+    ("苏教版", ("苏教版", "江苏凤凰教育出版社", "江苏凤凰出版传媒", "葛军", "李善良", "王祖浩")),
+    ("鄂教版", ("湖北教育出版社", "武汉中远印务有限公司", "彭双阶", "胡典顺")),
+    ("湘教版", ("湖南教育出版社", "湖南出版中心", "张景中", "黄步高", "邹楚林", "邹伟华")),
+    ("鲁科版", ("鲁科版", "山东科学技术出版社")),
+    ("人教版", ("人民教育出版社", "课程教材研究所", "人教版")),
+)
+
 
 def _clean_query_text(query: str) -> str:
     return re.sub(r"[^\w\u4e00-\u9fff\s]", "", (query or "")).strip()
@@ -51,6 +68,14 @@ def _normalize_lookup_title(title: str | None) -> str:
     normalized = normalized.replace("_", "")
     normalized = re.sub(r"\s+", "", normalized)
     return normalized.strip()
+
+
+def _extract_embedded_edition(title: str | None) -> str:
+    normalized = unicodedata.normalize("NFKC", title or "")
+    for edition, keywords in EDITION_PATTERNS:
+        if any(keyword in normalized for keyword in keywords):
+            return edition
+    return ""
 
 
 def _parse_subject_from_title(title: str | None) -> str:
@@ -124,26 +149,40 @@ def _load_textbook_registry(db_path: Path) -> dict:
         con.close()
 
     by_content_id = {}
-    by_title_subject = {}
-    by_title = {}
+    book_map = {}
+    book_map_path = Path(__file__).resolve().parents[1] / "frontend" / "assets" / "pages" / "book_map.json"
+    if book_map_path.exists():
+        try:
+            book_map = json.loads(book_map_path.read_text(encoding="utf-8"))
+        except Exception:
+            book_map = {}
+
+    by_title_subject = defaultdict(list)
+    by_title = defaultdict(list)
     page_lookup = {}
 
     for row in rows:
+        book_key = str(row["book_key"] or "").strip()
+        book_info = book_map.get(book_key, {}) if book_key else {}
+        display_title = str(book_info.get("display_title") or book_info.get("title") or row["title"] or "").strip()
+        edition = str(book_info.get("edition") or "").strip() or _extract_embedded_edition(display_title) or _extract_embedded_edition(row["title"])
         item = {
             "content_id": row["content_id"],
             "title": row["title"],
-            "book_key": row["book_key"],
+            "display_title": display_title or row["title"],
+            "book_key": book_key,
             "subject": row["subject"],
+            "edition": edition,
         }
         content_id = str(row["content_id"] or "").strip()
         title_key = _normalize_lookup_title(row["title"])
         subject_name = str(row["subject"] or "").strip()
         if content_id and content_id not in by_content_id:
             by_content_id[content_id] = item
-        if title_key and subject_name and (title_key, subject_name) not in by_title_subject:
-            by_title_subject[(title_key, subject_name)] = item
-        if title_key and title_key not in by_title:
-            by_title[title_key] = item
+        if title_key and subject_name:
+            by_title_subject[(title_key, subject_name)].append(item)
+        if title_key:
+            by_title[title_key].append(item)
 
     for row in page_rows:
         book_key = str(row["book_key"] or "").strip()
@@ -160,13 +199,81 @@ def _load_textbook_registry(db_path: Path) -> dict:
 
     return {
         "by_content_id": by_content_id,
-        "by_title_subject": by_title_subject,
-        "by_title": by_title,
+        "by_title_subject": {k: tuple(v) for k, v in by_title_subject.items()},
+        "by_title": {k: tuple(v) for k, v in by_title.items()},
         "page_lookup": page_lookup,
     }
 
 
-def _resolve_supplemental_book_meta(path: Path, registry: dict) -> dict:
+def _build_text_probe(payload: list[dict], *, max_blocks: int = 600, max_chars: int = 60000) -> str:
+    parts = []
+    total = 0
+    for item in payload:
+        if not isinstance(item, dict) or item.get("type") != "text":
+            continue
+        text = _normalize_text_line(item.get("text"))
+        if len(text) < 2:
+            continue
+        parts.append(text)
+        total += len(text)
+        if len(parts) >= max_blocks or total >= max_chars:
+            break
+    return "\n".join(parts)
+
+
+def _detect_edition_label(display_title: str, path: Path, text_probe: str) -> str:
+    probe = "\n".join(
+        part for part in (display_title, str(path), text_probe) if part
+    )
+    normalized = unicodedata.normalize("NFKC", probe)
+    for edition, keywords in EDITION_PATTERNS:
+        if any(keyword in normalized for keyword in keywords):
+            return edition
+    return ""
+
+
+def _with_edition(base_title: str, edition: str) -> str:
+    cleaned_title = str(base_title or "").strip()
+    cleaned_edition = str(edition or "").strip()
+    if not cleaned_title or not cleaned_edition:
+        return cleaned_title
+    if cleaned_edition in cleaned_title:
+        return cleaned_title
+    return f"{cleaned_title}（{cleaned_edition}）"
+
+
+def _match_registry_candidate(candidates, edition_hint: str) -> dict | None:
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return dict(candidates[0])
+    if edition_hint:
+        matched = [
+            item
+            for item in candidates
+            if edition_hint == str(item.get("edition") or "").strip()
+            or edition_hint in str(item.get("display_title") or "")
+            or edition_hint in str(item.get("title") or "")
+            or edition_hint in str(item.get("book_key") or "")
+        ]
+        if len(matched) == 1:
+            return dict(matched[0])
+    return None
+
+
+def _make_supplemental_book_key(subject: str, base_title: str, edition: str, fallback: str) -> str:
+    cleaned_subject = str(subject or "").strip()
+    cleaned_title = str(base_title or "").strip()
+    cleaned_edition = str(edition or "").strip()
+    cleaned_fallback = str(fallback or "").strip()
+    if cleaned_edition:
+        basis = "|".join([cleaned_subject, cleaned_title, cleaned_edition])
+    else:
+        basis = "|".join([cleaned_subject, cleaned_title, cleaned_fallback])
+    return f"suppbook:{hashlib.md5(basis.encode('utf-8')).hexdigest()[:16]}"
+
+
+def _resolve_supplemental_book_meta(path: Path, registry: dict, payload: list[dict] | None = None) -> dict:
     raw_title = path.stem
     display_title = raw_title
     display_title = re.sub(r"_content_list$", "", display_title)
@@ -176,24 +283,68 @@ def _resolve_supplemental_book_meta(path: Path, registry: dict) -> dict:
 
     content_id = _parse_content_id_from_text(str(path))
     subject_name = _parse_subject_from_title(display_title) or _parse_subject_from_title(str(path))
+    text_probe = _build_text_probe(payload or [])
+    edition_hint = _detect_edition_label(display_title, path, text_probe)
     matched = registry["by_content_id"].get(content_id)
     if not matched:
         title_key = _normalize_lookup_title(display_title)
-        matched = registry["by_title_subject"].get((title_key, subject_name)) or registry["by_title"].get(title_key)
+        matched = _match_registry_candidate(
+            registry["by_title_subject"].get((title_key, subject_name)) or registry["by_title"].get(title_key) or (),
+            edition_hint,
+        )
 
     if matched:
         return {
             "content_id": matched.get("content_id") or content_id,
-            "title": matched.get("title") or display_title,
+            "title": matched.get("display_title") or matched.get("title") or _with_edition(display_title, edition_hint),
+            "base_title": matched.get("title") or display_title,
             "book_key": matched.get("book_key"),
             "subject": matched.get("subject") or subject_name,
+            "edition": matched.get("edition") or edition_hint,
+            "has_page_images": bool(matched.get("book_key")),
+            "synthetic": False,
         }
+    synthetic_key = _make_supplemental_book_key(
+        subject_name,
+        display_title,
+        edition_hint,
+        content_id or str(path.parent),
+    )
     return {
         "content_id": content_id or None,
-        "title": display_title,
-        "book_key": None,
+        "title": _with_edition(display_title, edition_hint),
+        "base_title": display_title,
+        "book_key": synthetic_key,
         "subject": subject_name,
+        "edition": edition_hint,
+        "has_page_images": False,
+        "synthetic": True,
     }
+
+
+def _page_text_quality(text: str) -> int:
+    normalized = text or ""
+    cjk = sum(1 for ch in normalized if "\u4e00" <= ch <= "\u9fff")
+    letters = sum(1 for ch in normalized if ch.isalpha())
+    digits = sum(1 for ch in normalized if ch.isdigit())
+    noise = len(re.findall(r"(?:^|[\s/])[\-_=~]{2,}(?:$|[\s/])", normalized))
+    return cjk * 6 + letters * 2 + digits + len(normalized) - noise * 20
+
+
+def _pick_better_page(current: dict | None, candidate: dict) -> dict:
+    if current is None:
+        return candidate
+    current_score = int(current.get("_quality_score") or 0)
+    candidate_score = int(candidate.get("_quality_score") or 0)
+    if candidate_score != current_score:
+        return candidate if candidate_score > current_score else current
+    current_len = len(current.get("text") or "")
+    candidate_len = len(candidate.get("text") or "")
+    if candidate_len != current_len:
+        return candidate if candidate_len > current_len else current
+    current_path = str(current.get("path") or "")
+    candidate_path = str(candidate.get("path") or "")
+    return candidate if candidate_path < current_path else current
 
 
 def _sha256_file(path: Path) -> str:
@@ -210,7 +361,8 @@ def build_index(source_root: Path, db_path: Path, output_gz: Path, manifest_path
     source_subjects = set()
     stats_by_subject: dict[str, dict[str, int | set[str]]] = {}
     problems: list[str] = []
-    books_indexed = set()
+    books_catalog: dict[str, dict] = {}
+    page_entries_by_key: dict[tuple[str, int], dict] = {}
     pages_written = 0
     chars_written = 0
     indexed_files = 0
@@ -220,87 +372,124 @@ def build_index(source_root: Path, db_path: Path, output_gz: Path, manifest_path
     tmp_output = output_gz.with_name(f"{output_gz.name}.tmp")
     tmp_manifest = manifest_path.with_name(f"{manifest_path.name}.tmp")
 
-    with gzip.open(tmp_output, "wt", encoding="utf-8", compresslevel=6) as out:
-        for path in source_paths:
-            source_subject = _parse_subject_from_title(str(path))
-            if source_subject:
-                source_subjects.add(source_subject)
+    for path in source_paths:
+        source_subject = _parse_subject_from_title(str(path))
+        if source_subject:
+            source_subjects.add(source_subject)
 
-            meta = _resolve_supplemental_book_meta(path, registry)
-            subject = str(meta.get("subject") or "").strip()
-            title = str(meta.get("title") or "").strip()
-            if not subject:
-                problems.append(f"missing subject: {path}")
-                continue
-            if not title:
-                problems.append(f"missing title: {path}")
-                continue
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+        except Exception as exc:
+            problems.append(f"invalid json: {path}: {exc}")
+            continue
 
+        if not isinstance(payload, list):
+            problems.append(f"unexpected payload type: {path}")
+            continue
+
+        meta = _resolve_supplemental_book_meta(path, registry, payload)
+        subject = str(meta.get("subject") or "").strip()
+        title = str(meta.get("title") or "").strip()
+        base_title = str(meta.get("base_title") or title).strip()
+        if not subject:
+            problems.append(f"missing subject: {path}")
+            continue
+        if not title:
+            problems.append(f"missing title: {path}")
+            continue
+
+        blocks_by_page = defaultdict(list)
+        for item in payload:
+            if not isinstance(item, dict) or item.get("type") != "text":
+                continue
             try:
-                with path.open("r", encoding="utf-8") as fh:
-                    payload = json.load(fh)
-            except Exception as exc:
-                problems.append(f"invalid json: {path}: {exc}")
+                page_idx = int(item.get("page_idx"))
+            except Exception:
                 continue
-
-            if not isinstance(payload, list):
-                problems.append(f"unexpected payload type: {path}")
+            if page_idx < 0:
                 continue
-
-            blocks_by_page = defaultdict(list)
-            for item in payload:
-                if not isinstance(item, dict) or item.get("type") != "text":
-                    continue
-                try:
-                    page_idx = int(item.get("page_idx"))
-                except Exception:
-                    continue
-                if page_idx < 0:
-                    continue
-                text = _normalize_text_line(item.get("text"))
-                if len(text) < 2:
-                    continue
-                blocks_by_page[page_idx].append(text)
-
-            if not blocks_by_page:
-                problems.append(f"no text pages: {path}")
+            text = _normalize_text_line(item.get("text"))
+            if len(text) < 2:
                 continue
+            blocks_by_page[page_idx].append(text)
 
-            page_count_for_file = 0
-            book_identity = str(meta.get("content_id") or meta.get("book_key") or path)
-            subject_stats = stats_by_subject.setdefault(subject, {"books": set(), "pages": 0, "chars": 0})
+        if not blocks_by_page:
+            problems.append(f"no text pages: {path}")
+            continue
 
-            for page_num in sorted(blocks_by_page):
-                merged_text = _merge_supplemental_page_blocks(blocks_by_page[page_num])
-                if len(merged_text) < 20:
-                    continue
-                book_key = meta.get("book_key")
-                logical_page = registry["page_lookup"].get((book_key, page_num)) if book_key else None
-                entry = {
-                    "id": f"supp:{hashlib.md5(f'{path}:{page_num}'.encode('utf-8')).hexdigest()[:16]}",
-                    "content_id": meta.get("content_id"),
-                    "subject": subject,
-                    "title": title,
-                    "book_key": book_key,
-                    "section": int(page_num),
-                    "logical_page": int(logical_page) if logical_page is not None else int(page_num),
-                    "text": merged_text,
-                    "path": str(path.relative_to(source_root.parent)),
-                }
-                out.write(json.dumps(entry, ensure_ascii=False, separators=(",", ":")))
-                out.write("\n")
-                pages_written += 1
-                chars_written += len(merged_text)
-                subject_stats["pages"] += 1
-                subject_stats["chars"] += len(merged_text)
-                page_count_for_file += 1
+        page_count_for_file = 0
+        book_key = str(meta.get("book_key") or "").strip()
+        subject_stats = stats_by_subject.setdefault(subject, {"books": set(), "pages": 0, "chars": 0})
+        catalog = books_catalog.setdefault(
+            book_key,
+            {
+                "book_key": book_key,
+                "subject": subject,
+                "title": title,
+                "base_title": base_title,
+                "edition": str(meta.get("edition") or "").strip(),
+                "content_id": meta.get("content_id"),
+                "has_page_images": bool(meta.get("has_page_images")),
+                "source": "primary" if meta.get("has_page_images") else "supplemental_only",
+                "source_files": set(),
+                "pages": 0,
+            },
+        )
+        catalog["source_files"].add(str(path.relative_to(source_root.parent)))
 
-            if page_count_for_file <= 0:
-                problems.append(f"no merged pages: {path}")
+        for page_num in sorted(blocks_by_page):
+            merged_text = _merge_supplemental_page_blocks(blocks_by_page[page_num])
+            if len(merged_text) < 20:
                 continue
-            indexed_files += 1
-            books_indexed.add(book_identity)
-            subject_stats["books"].add(book_identity)
+            logical_page = registry["page_lookup"].get((book_key, page_num)) if meta.get("has_page_images") else None
+            entry = {
+                "id": f"supp:{hashlib.md5(f'{book_key}:{page_num}'.encode('utf-8')).hexdigest()[:16]}",
+                "content_id": meta.get("content_id"),
+                "subject": subject,
+                "title": title,
+                "base_title": base_title,
+                "edition": str(meta.get("edition") or "").strip(),
+                "book_key": book_key,
+                "section": int(page_num),
+                "logical_page": int(logical_page) if logical_page is not None else int(page_num),
+                "text": merged_text,
+                "path": str(path.relative_to(source_root.parent)),
+                "has_page_images": bool(meta.get("has_page_images")),
+                "synthetic": bool(meta.get("synthetic")),
+                "_quality_score": _page_text_quality(merged_text),
+            }
+            page_entries_by_key[(book_key, int(page_num))] = _pick_better_page(page_entries_by_key.get((book_key, int(page_num))), entry)
+            page_count_for_file += 1
+
+        if page_count_for_file <= 0:
+            problems.append(f"no merged pages: {path}")
+            continue
+        indexed_files += 1
+        subject_stats["books"].add(book_key)
+
+    selected_entries = sorted(
+        page_entries_by_key.values(),
+        key=lambda item: (
+            item.get("subject") or "",
+            item.get("title") or "",
+            int(item.get("section") or 0),
+            item.get("book_key") or "",
+        ),
+    )
+    with gzip.open(tmp_output, "wt", encoding="utf-8", compresslevel=6) as out:
+        for entry in selected_entries:
+            payload = dict(entry)
+            payload.pop("_quality_score", None)
+            out.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+            out.write("\n")
+            pages_written += 1
+            chars_written += len(payload.get("text") or "")
+            subject_stats = stats_by_subject.setdefault(payload["subject"], {"books": set(), "pages": 0, "chars": 0})
+            subject_stats["books"].add(payload["book_key"])
+            subject_stats["pages"] += 1
+            subject_stats["chars"] += len(payload.get("text") or "")
+            books_catalog[payload["book_key"]]["pages"] += 1
 
     built_subjects = set(stats_by_subject)
     missing_subjects = sorted(source_subjects - built_subjects)
@@ -338,9 +527,31 @@ def build_index(source_root: Path, db_path: Path, output_gz: Path, manifest_path
         "source_root": str(source_root),
         "source_files_total": len(source_paths),
         "source_files_indexed": indexed_files,
-        "books": len(books_indexed),
+        "books": len(books_catalog),
         "pages": pages_written,
         "chars": chars_written,
+        "primary_books": sum(1 for item in books_catalog.values() if item.get("has_page_images")),
+        "supplemental_only_books": sum(1 for item in books_catalog.values() if not item.get("has_page_images")),
+        "unresolved_pages": 0,
+        "unresolved_books": 0,
+        "book_catalog": sorted(
+            [
+                {
+                    "book_key": item["book_key"],
+                    "subject": item["subject"],
+                    "title": item["title"],
+                    "base_title": item["base_title"],
+                    "edition": item["edition"],
+                    "content_id": item["content_id"],
+                    "has_page_images": item["has_page_images"],
+                    "source": item["source"],
+                    "source_files": len(item["source_files"]),
+                    "pages": item["pages"],
+                }
+                for item in books_catalog.values()
+            ],
+            key=lambda item: (item["subject"], item["title"], item["book_key"]),
+        ),
         "subjects": subject_manifest,
         "db_path": str(db_path),
         "output": {
@@ -362,10 +573,12 @@ def build_index(source_root: Path, db_path: Path, output_gz: Path, manifest_path
                 "status": "ok",
                 "source_files_total": len(source_paths),
                 "source_files_indexed": indexed_files,
-                "books": len(books_indexed),
+                "books": len(books_catalog),
                 "pages": pages_written,
                 "chars": chars_written,
                 "subjects": {k: v["pages"] for k, v in subject_manifest.items()},
+                "primary_books": sum(1 for item in books_catalog.values() if item.get("has_page_images")),
+                "supplemental_only_books": sum(1 for item in books_catalog.values() if not item.get("has_page_images")),
                 "output_bytes": output_bytes,
                 "output_sha256": output_sha256,
                 "problems": len(problems),
