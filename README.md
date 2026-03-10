@@ -11,8 +11,9 @@
 ## ✨ 核心功能
 
 - 🔍 **跨学科搜索** — 搜索一个概念，按学科分组展示不同教材中的内容
+- 🎯 **精准概念检索** — “晶体的定义” 这类定义型问法会走意图识别、混合召回与重排，不再只按高频词散搜
 - 💡 **自动关联提示** — 检测到概念横跨多学科时，自动提示跨学科联系
-- ✨ **AI 跨学科解读** — 一键调用 Gemini，综合多学科教材内容生成带出处的解读
+- ✨ **AI 教材解读** — 一键调用 Gemini，支持精确问法优先走后端 agent 检索，也保留跨学科综合解读
 - 🗺️ **知识图谱** — D3.js 力导向交互式图谱，可视化 788 个学术概念在 9 学科间的关联网络，支持缩放/拖拽/悬停高亮
 - 📊 **数据洞察** — 726 个精选学术术语的词频分析、学科关联热力图、考试覆盖分析、概念广度排名
 - 📚 **教材下载** — 全部 316 本高中教材 PDF 可从 [jks.bdfz.net](https://jks.bdfz.net/) 下载
@@ -23,6 +24,32 @@
 - 🔗 **相关概念推荐** — 搜索后自动推荐共现频率最高的相关概念，点击即搜
 - 📷 **图片标注** — 搜索结果显示图片数量 badge，展开即可查看教材原图
 - 📖 **教材筛选** — 按学科分组的 316 本教材下拉选择器，精准定位特定教材内容
+
+---
+
+## 🧭 2026-03-10 检索升级复盘与公开约束
+
+### 本轮已完成的关键更新
+
+- 修复“潜热”等教材原词无结果问题：新增页级补充教材索引，当前线上可检索教材扩展到 **118 本**（主库 69 本 + 补充教材 49 本）
+- `/api/search` 升级为 **hybrid + rerank**：词法命中、FAISS 语义召回、补充教材页索引兜底、CrossEncoder 重排共同参与排序
+- 定义型查询单独做意图识别与降噪，例如“晶体的定义”会优先召回“是什么 / 是指 / 称为”类正式定义句，降低“晶体”“的定义”这类高频词噪声
+- AI 搜索改为精确问法优先走后端 precision agent；列表搜索与 AI 卡片分层保留，前者给原文证据，后者给过滤后的答案
+- 前端结果卡新增检索通道标识，区分“精确命中 / 全文命中 / 向量召回 / 备份教材兜底”，便于诊断检索来源与排序行为
+- 生产部署增加补充教材索引同步、reranker 预热与健康闸门；`/api/health` 现在会同时暴露 `supplemental` 与 `reranker` 状态
+
+### 公开运维约束
+
+- 补充教材索引必须按“等价覆盖、不做摘要”重建；上线前 manifest 里的 `unresolved_books` 和 `unresolved_pages` 必须都为 `0`
+- 部署时必须同步：`textbook_mineru_fts.db`、`textbook_chunks.index`、`textbook_chunks.manifest.json`、`supplemental_textbook_pages.jsonl.gz`、`supplemental_textbook_pages.manifest.json`
+- reranker 不能只在代码里启用；生产发布必须预热 `BAAI/bge-reranker-base`，并通过健康检查确认 `reranker.loaded=true`
+- 对定义型、区别型、过程型问法，公开口径应以 hybrid + rerank 为主链；不要再把词法兜底误写成“语义搜索”
+- GitHub 公开文档可以记录可公开的架构、流程和统计，但不要提交 SSH 主机细节、密钥、令牌、私有路径或任何敏感运行信息
+
+### 当前公开已知限制
+
+- 列表搜索已经从纯关键词升级为混合检索，但主体仍是 chunk / page 级证据，不是句级定义抽取
+- 精确问法的 AI 卡片体验通常优于原始结果列表，但 `/api/search` 仍保留可解释、可翻阅的原文检索属性，不以摘要替代证据
 
 ---
 
@@ -57,10 +84,11 @@
 
 | 指标 | 数值 |
 |------|------|
-| 在线索引教材 | **69 本**（当前线上已入库教材语料） |
+| 可检索教材 | **118 本**（主库 **69** 本 + 补充教材 **49** 本） |
 | PDF 下载库 | **316 本**（独立教材下载区） |
 | 学科覆盖 | **9 科**：语文、数学、英语、物理、化学、生物学、历史、地理、思想政治 |
-| 结构化语料 | **21,925 条**（教材 **17,896** + 高考真题 **4,029**） |
+| 结构化语料 | **21,925 条**（主库教材 **17,896** + 高考真题 **4,029**） |
+| 补充教材页索引 | **15,875 页**（来自 **251** 份 OCR 源文件，按页全文匹配） |
 | 高考真题 | **4,029 道**（`2002-2025`，其中 **651** 道含图题） |
 | 学术概念图谱 | **788 个**概念，1,723 条学科映射，83 条跨学科聚合记录 |
 | 精选术语 | **726 个**精选学术术语 |
@@ -122,9 +150,11 @@
     │               ├── NLP/ML 引擎
     │               │   ├── BAAI/bge-m3 ── 多语言语义向量 (1024D)
     │               │   ├── FAISS ── 17,896 条教材向量稠密检索
+    │               │   ├── BAAI/bge-reranker-base ── precision / hybrid 重排
     │               │   └── Jieba ── 中文分词 + 词性标注
     │               ├── 前端 (HTML/CSS/JS + D3.js + KaTeX)
     │               ├── SQLite FTS5 检索库 (56MB)
+    │               ├── 补充教材页索引 (15,875 页 gzip + manifest)
     │               └── 宿主机挂载 data/index + state/cache
     │
     ├── HTTPS → img.rdfzer.com (Cloudflare R2 CDN)
@@ -158,7 +188,9 @@
 /data/index/                    # 宿主机挂载的运行时检索资产
 ├── textbook_mineru_fts.db      # FTS5 索引 + 概念图谱
 ├── textbook_chunks.index       # FAISS 向量索引
-└── textbook_chunks.manifest.json
+├── textbook_chunks.manifest.json
+├── supplemental_textbook_pages.jsonl.gz
+└── supplemental_textbook_pages.manifest.json
 
 /state/cache/                   # 宿主机挂载的运行时缓存
 └── huggingface/
@@ -317,7 +349,7 @@ RUNTIME_ROOT=/root/cross-subject-knowledge ./scripts/deploy_vps.sh
 ### 1. 资源存储隔离
 *   **源代码 (GitHub)**：前端页面、后端 API、Dockerfile、各种配置。**绝对不含**庞大的数据库和图片。
 *   **图片资源 (R2 CDN)**：所有的教材原图、单页截图等，托管在 Cloudflare R2 (`img.rdfzer.com`)，全球加速分发，不消耗部署服务器 (VPS) 的带宽。
-*   **检索数据库 (VPS 本地)**：`textbook_mineru_fts.db`、`textbook_chunks.index` 和 manifest，存放于 VPS 本地 `data/index/`，通过 Docker 挂载提供服务。
+*   **检索数据库 (VPS 本地)**：`textbook_mineru_fts.db`、`textbook_chunks.index`、对应 manifest，以及页级补充教材索引 `supplemental_textbook_pages.jsonl.gz`，存放于 VPS 本地 `data/index/`，通过 Docker 挂载提供服务。
 *   **模型缓存 (VPS 本地)**：Hugging Face、Transformers、sentence-transformers 统一共享 VPS 本地 `state/cache/huggingface/hub/`，不再烘进镜像，也避免重复存两份模型权重。
 
 ### 2. 自动化部署 (GitHub Actions)
@@ -326,15 +358,16 @@ RUNTIME_ROOT=/root/cross-subject-knowledge ./scripts/deploy_vps.sh
 2.  GitHub Actions 自动触发，SSH 连入生产服务器 (VPS: `sun.bdfz.net`)。
 3.  在 VPS 上创建临时的干净 release checkout，避免生产目录里历史热补丁或临时改动阻塞发布。
 4.  在 VPS 上先构建新镜像，再停旧容器，避免“构建失败直接打挂线上”。
-5.  新容器通过 `/api/health` 健康检查后才算部署成功；失败则自动回滚到上一镜像。
-6.  运行时模型缓存保存在宿主机 `state/cache/`，避免每次发版都把 Hugging Face 缓存烘进镜像。
-7.  部署完成后自动清理悬空镜像，只保留最近几份 `pre-*` 回滚镜像，并删除历史 `build-*` tag。
+5.  部署脚本会同步补充教材索引到运行时目录，并预热 `BAAI/bge-reranker-base`，避免首个精确查询才触发冷启动。
+6.  新容器通过 `/api/health` 健康检查后才算部署成功；当前健康闸门要求 DB、FAISS、补充教材索引可用，且在启用 reranker 时确认 `reranker.loaded=true`；失败则自动回滚到上一镜像。
+7.  运行时模型缓存保存在宿主机 `state/cache/`，避免每次发版都把 Hugging Face 缓存烘进镜像。
+8.  部署完成后自动清理悬空镜像，只保留最近几份 `pre-*` 回滚镜像，并删除历史 `build-*` tag。
 
 ### 3. 服务器 (VPS) 迁移指南
 由于大头数据 (4GB+ 图片) 都在云端 CDN，如果未来需要更换服务器提供商，迁移将极其简单轻量：
 1.  **准备环境**：在新 VPS 安装 Git 和 Docker。
 2.  **拉取代码**：`git clone` 本仓库。
-3.  **搬运核心库**：把本地或旧服务器上的两个数据库文件 (`textbook_mineru_fts.db` 和 `textbook_chunks.index`) 复制到新服务器的 `data/` 目录。
+3.  **搬运核心库**：把本地或旧服务器上的运行时检索资产复制到新服务器的 `data/` 目录，包括 `textbook_mineru_fts.db`、`textbook_chunks.index`、`textbook_chunks.manifest.json`、`supplemental_textbook_pages.jsonl.gz`、`supplemental_textbook_pages.manifest.json`。
 4.  **启动**：执行 `docker build` 和 `docker run`（或配置新的 GitHub 部署密钥触发自动流）。
 5.  **切换域名**：在 Cloudflare 中将 `sun.bdfz.net` 的 A 记录指向新 VPS 的 IP。
 
@@ -432,6 +465,8 @@ mkdir -p /root/cross-subject-knowledge/data/index /root/cross-subject-knowledge/
 cp /old-host/data/index/textbook_mineru_fts.db /root/cross-subject-knowledge/data/index/
 cp /old-host/data/index/textbook_chunks.index /root/cross-subject-knowledge/data/index/
 cp /old-host/data/index/textbook_chunks.manifest.json /root/cross-subject-knowledge/data/index/
+cp /old-host/data/index/supplemental_textbook_pages.jsonl.gz /root/cross-subject-knowledge/data/index/
+cp /old-host/data/index/supplemental_textbook_pages.manifest.json /root/cross-subject-knowledge/data/index/
 
 # 4. 运行发布脚本
 cd cross-subject-knowledge
@@ -464,22 +499,44 @@ certbot --nginx -d your-domain.com
 | 组件 | 技术 | 说明 |
 |------|------|------|
 | 中文向量模型 | `BAAI/bge-m3` | 1024D 多语言/长文本嵌入，2.2GB，全面提升语义理解度 |
+| 重排模型 | `BAAI/bge-reranker-base` | CrossEncoder，用于 precision / hybrid 查询最终重排 |
 | 向量检索 | `faiss-cpu` | 17,896 向量 IndexIDMap，70MB |
 | API 缓存 | `cachetools` | TTLCache (5min, maxsize=64) 加速读密集型高频 API |
 | 中文分词 | `jieba` + POS tagging | 启动时自动加载 `curated_keywords` 的 726 个学术术语为高权重用户词典，精准切词 |
 | 自动部署 | GitHub Actions + `deploy_vps.sh` | 干净 release checkout 构建、健康检查、失败回滚 |
 | 概念图谱 | SQLite `concept_map` | 788 个学术概念，跨学科自动发现 |
 | 全文检索 | SQLite FTS5 | Porter 分词器，OR 组合查询 |
-| 评分算法 | 自定义 `_score_result` | IDF 加权词项匹配 + 概念命中 + 同学科加分，阈值 ≥15 |
+| 补充教材兜底 | `supplemental_textbook_pages.jsonl.gz` | 15,875 页全文匹配，覆盖主库缺失的教材原词与并行版本页 |
+| 评分算法 | Hybrid retrieval + custom rerank | 词法命中 + 向量召回 + 补充页索引 + 定义意图重排 |
 
-**关联检索流程** (3 层混合)：
-1. **概念图谱** → `_match_concepts` 从 concept_map 匹配学科核心概念
-2. **IDF 加权 FTS** → `_extract_weighted_terms` Jieba 分词后按 IDF 权重排序，FTS5 搜索
-3. **稠密向量** → `FAISS` 编码查询文本为 1024D 向量，搜索 top-K 近邻 (cosine > 0.55)
+**教材检索流程**（hybrid + rerank）：
+1. **查询意图识别** → 识别定义 / 区别 / 过程等精确问法，生成 precision term plan
+2. **概念图谱 + 词法检索** → `_match_concepts` 与 FTS / LIKE 召回主库 chunk
+3. **稠密向量召回** → `FAISS` 使用 `BAAI/bge-m3` 检索语义相近教材段落
+4. **补充教材页索引兜底** → 直接匹配 `supplemental_textbook_pages.jsonl.gz` 中的页级全文
+5. **CrossEncoder 重排** → `BAAI/bge-reranker-base` 按查询意图重排候选，提升定义句、结论句、关键原文的排序稳定性
 
 ---
 
 ## 📋 更新日志
+
+### 2026-03-10: 补充教材兜底修复 + hybrid rerank 搜索上线
+
+**数据与覆盖**
+- ✅ 重建并上线页级补充教材索引，`251/251` 份 OCR 源文件已入索引，`unresolved_books=0`、`unresolved_pages=0`
+- ✅ 线上可检索教材扩展到 `118` 本（主库 `69` 本 + 补充教材 `49` 本），补充页索引规模 `15,875` 页
+- ✅ 修复 `潜热` 等“教材原词存在但主库缺失”时无法命中的问题，补充教材原文现在能被直接兜底检索
+
+**检索与 AI**
+- ✅ `/api/search` 从词法主导升级为 `lexical + semantic + supplemental + rerank` 的混合主链
+- ✅ 定义型查询新增 precision 模式，`晶体的定义` 这类问法会优先召回正式定义句，而不是把“晶体”和“的定义”拆开散搜
+- ✅ AI 教材解读新增后端 precision agent 路由，精确问法优先走服务端检索和重排，再生成答案
+- ✅ 多学科联系继续保留知识图谱 / GraphRAG 提示层，但主证据链仍以教材原文检索和重排为准
+
+**前端与运维**
+- ✅ 结果卡区分 `精确命中 / 全文命中 / 向量召回 / 备份教材兜底`，方便诊断召回来源
+- ✅ 部署脚本新增补充索引同步、reranker 预热与健康闸门；`/api/health` 现在直接暴露 `supplemental` 和 `reranker` 状态
+- ✅ 前端版本标记更新到 `2026.03.10-r21`
 
 ### 2026-03-05: 页面对齐重建 + 交互链路加固
 
