@@ -109,6 +109,7 @@ reranker = None
 EMBEDDER_NAME = os.getenv("EMBEDDER", "BAAI/bge-m3")  # upgraded from bge-small-zh-v1.5
 RERANKER_NAME = os.getenv("RERANKER", "BAAI/bge-reranker-base").strip() or "BAAI/bge-reranker-base"
 RERANKER_ENABLED = os.getenv("RERANKER_ENABLED", "1").strip().lower() not in {"0", "false", "no"}
+RERANKER_PRELOAD = os.getenv("RERANKER_PRELOAD", "1").strip().lower() not in {"0", "false", "no"}
 RERANKER_MAX_CANDIDATES = max(12, int(os.getenv("RERANKER_MAX_CANDIDATES", "36")))
 RERANKER_FINAL_LIMIT = max(4, int(os.getenv("RERANKER_FINAL_LIMIT", "8")))
 GRAPH_RAG_ENABLED = os.getenv("GRAPH_RAG_ENABLED", "1").strip().lower() not in {"0", "false", "no"}
@@ -117,6 +118,8 @@ faiss_status_reason = None
 faiss_manifest = None
 reranker_status_reason = None
 _reranker_lock = threading.Lock()
+_runtime_warmup_lock = threading.Lock()
+_runtime_warmup_started = False
 # Frontend should stay on ai.bdfz.net, but the current VPS reaches the same Worker more reliably via workers.dev.
 AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "https://apis.bdfz.workers.dev/")
 AI_SERVICE_LABEL = os.getenv("AI_SERVICE_LABEL", "Gemini")
@@ -475,6 +478,27 @@ def _get_reranker():
             reranker_status_reason = str(e)
             print(f"Failed to load reranker: {e}", flush=True)
     return reranker
+
+
+def _warm_runtime_components():
+    if RERANKER_PRELOAD and RERANKER_ENABLED:
+        _get_reranker()
+
+
+def _schedule_runtime_warmup():
+    global _runtime_warmup_started
+    if not (RERANKER_PRELOAD and RERANKER_ENABLED):
+        return
+    with _runtime_warmup_lock:
+        if _runtime_warmup_started:
+            return
+        _runtime_warmup_started = True
+    threading.Thread(target=_warm_runtime_components, name="runtime-model-warmup", daemon=True).start()
+
+
+@app.on_event("startup")
+async def _startup_runtime_warmup():
+    _schedule_runtime_warmup()
 
 if FAISS_AVAILABLE and FAISS_INDEX_PATH.exists():
     try:
@@ -6893,6 +6917,7 @@ def health():
     }
     status["reranker"] = {
         "enabled": RERANKER_ENABLED,
+        "preload": RERANKER_PRELOAD,
         "loaded": reranker is not None,
         "name": RERANKER_NAME,
         "reason": reranker_status_reason,

@@ -10,12 +10,14 @@ const AI_SERVER_CHAT_TIMEOUT_MS = 45000;
 const AI_DIRECT_REQUEST_TIMEOUT_MS = 25000;
 const AI_BROWSER_FALLBACK_DELAY_MS = 8000;
 const IMG_CDN = 'https://img.rdfzer.com';
-const DEFAULT_FRONTEND_VERSION = '2026.03.08-r16';
+const DEFAULT_FRONTEND_VERSION = '2026.03.10-r18';
 const FRONTEND_VERSION_FILE = '/assets/version.json';
 const AI_MEMORY_LIMIT = 12;
+const AI_AUTO_TRIGGER_DELAY_MS = 120;
 const DOWNLOADABLE_LIBRARY_BOOKS = 316;
 let latestStats = null;
 let aiProviderLabel = 'Gemini';
+let aiAutoRequestedKey = '';
 
 // ── AI Chat (Memory + Copy) ───────────────────────────────
 const aiPanel = document.getElementById('ai-panel');
@@ -107,20 +109,211 @@ function responseErrorMessage(response, data, raw, fallbackMessage) {
     return normalizedRaw.slice(0, 180);
 }
 
+const AI_PRECISION_PATTERNS = [
+    /什么是.+/,
+    /.+是什么/,
+    /.+的(?:定义|概念|本质|特点|条件|作用|过程|原因)/,
+    /.+指什么/,
+    /.+(?:有什么)?区别/,
+    /.+和.+的区别/,
+    /.+的(?:例子|实例)/,
+    /.+为什么.+/,
+];
+
+function compactQueryText(text) {
+    return String(text || '').replace(/\s+/g, '');
+}
+
+function trimPrecisionTarget(text) {
+    let target = String(text || '').trim();
+    if (!target) return '';
+    const patterns = [
+        /^请(?:直接)?(?:根据教材)?(?:回答|解释|说明)?/,
+        /^(?:帮我|请你)?(?:只)?(?:在课本中|在教材中)?(?:找|查|说明|解释)?/,
+        /(?:的定义|的概念|的本质)$/,
+        /(?:是什么|指什么|是什么意思)$/,
+    ];
+    patterns.forEach(pattern => {
+        target = target.replace(pattern, '');
+    });
+    target = target.replace(/^什么是/, '');
+    target = target.replace(/[「」“”"'？?。！，,：:；;（）()\[\]{}]+/g, ' ');
+    return target.replace(/\s+/g, ' ').trim();
+}
+
+function inferAIQueryProfile(query, userMessage = '') {
+    const cleanQuery = String(query || '').trim();
+    const cleanMessage = String(userMessage || '').trim();
+    const queryLooksPrecision = AI_PRECISION_PATTERNS.some(pattern => pattern.test(compactQueryText(cleanQuery)));
+    const messageLooksPrecision = AI_PRECISION_PATTERNS.some(pattern => pattern.test(compactQueryText(cleanMessage)));
+    const combined = cleanMessage && (!cleanQuery || (!queryLooksPrecision && messageLooksPrecision)) ? cleanMessage : cleanQuery;
+    const compact = compactQueryText(combined);
+    let intent = 'lookup';
+    let target = cleanQuery;
+
+    const patterns = [
+        ['definition', /^(?<target>.+?)的定义$/],
+        ['definition', /^(?<target>.+?)的概念$/],
+        ['definition', /^(?<target>.+?)是什么$/],
+        ['definition', /^什么是(?<target>.+)$/],
+        ['definition', /^(?<target>.+?)指什么$/],
+        ['comparison', /^(?<target>.+?)(?:有什么)?区别$/],
+        ['comparison', /^(?<target>.+?)和(?<other>.+?)的区别$/],
+        ['example', /^(?<target>.+?)的例子$/],
+        ['reason', /^(?<target>.+?)为什么.+$/],
+        ['process', /^(?<target>.+?)的过程$/],
+    ];
+    for (const [nextIntent, pattern] of patterns) {
+        const matched = compact.match(pattern);
+        if (!matched) continue;
+        intent = nextIntent;
+        if (nextIntent === 'comparison' && matched.groups && matched.groups.other) {
+            target = [trimPrecisionTarget(matched.groups.target || cleanQuery), trimPrecisionTarget(matched.groups.other || '')]
+                .filter(Boolean)
+                .join('和');
+        } else {
+            target = trimPrecisionTarget((matched.groups && matched.groups.target) || cleanQuery);
+        }
+        break;
+    }
+
+    if (intent === 'lookup' && compact.includes('定义')) {
+        intent = 'definition';
+        target = trimPrecisionTarget(compact.replace('定义', ''));
+    } else if (intent === 'lookup' && (compact.includes('什么是') || compact.endsWith('是什么'))) {
+        intent = 'definition';
+        target = trimPrecisionTarget(compact.replace('什么是', '').replace('是什么', ''));
+    } else if (intent === 'lookup' && (compact.includes('区别') || compact.includes('不同'))) {
+        intent = 'comparison';
+        target = trimPrecisionTarget(cleanQuery);
+    } else if (intent === 'lookup' && (compact.includes('例子') || compact.includes('实例'))) {
+        intent = 'example';
+        target = trimPrecisionTarget(cleanQuery);
+    }
+
+    const precisionMode = AI_PRECISION_PATTERNS.some(pattern => pattern.test(compact));
+    return {
+        query: cleanQuery,
+        user_message: userMessage,
+        intent,
+        target: trimPrecisionTarget(target || cleanQuery) || cleanQuery,
+        mode: precisionMode ? 'precision_agent' : 'cross_subject',
+    };
+}
+
+function getCurrentAIScopePayload() {
+    const scope = { scope_subject: '', book_key: '' };
+    if (currentSubjectFilter) {
+        scope.scope_subject = currentSubjectFilter;
+    }
+    const scopeValue = filterScope?.value || '';
+    if (scopeValue.startsWith('book:')) {
+        scope.book_key = scopeValue.slice('book:'.length);
+        scope.scope_subject = '';
+    } else if (scopeValue.startsWith('subject:') && !scope.book_key) {
+        scope.scope_subject = scopeValue.slice('subject:'.length);
+    }
+    return scope;
+}
+
+function getCurrentAISubjectCount() {
+    const counts = currentData?.subject_counts || currentOverviewData?.subject_counts || {};
+    return Object.keys(counts).length;
+}
+
+function hasSearchResults() {
+    return Boolean(currentData && Array.isArray(currentData.groups) && currentData.groups.length);
+}
+
+function getAISourceLabel() {
+    const scope = getCurrentAIScopePayload();
+    if (scope.book_key) return '当前单本教材';
+    if (scope.scope_subject) return `${scope.scope_subject} · 全部教材`;
+    const subjectCount = getCurrentAISubjectCount();
+    return subjectCount >= 2 ? `${subjectCount} 个学科教材` : '教材原文';
+}
+
+function getAIExecutionKey() {
+    const scope = getCurrentAIScopePayload();
+    return [currentQuery, currentSubjectFilter || '', scope.scope_subject || '', scope.book_key || ''].join('|');
+}
+
+function buildAIServerPayload(userMessage, history) {
+    const scope = getCurrentAIScopePayload();
+    return {
+        query: currentQuery,
+        user_message: userMessage,
+        history,
+        ...(scope.scope_subject ? { scope_subject: scope.scope_subject } : {}),
+        ...(scope.book_key ? { book_key: scope.book_key } : {}),
+    };
+}
+
+function describePrecisionIntent(intent) {
+    return {
+        definition: '定义',
+        comparison: '区别',
+        example: '典型例子',
+        reason: '原因',
+        process: '过程',
+    }[intent] || '核心';
+}
+
+function isStructuralFallbackTerm(term, precisionProfile = null) {
+    const compact = compactQueryText(term);
+    if (!compact) return true;
+    const target = compactQueryText(precisionProfile?.target || '');
+    const structuralPatterns = [
+        /^的(?:定义|概念|本质|特点|条件|作用|过程|原因)$/,
+        /^定义$/,
+        /^概念$/,
+        /^本质$/,
+        /^特点$/,
+        /^条件$/,
+        /^作用$/,
+        /^过程$/,
+        /^原因$/,
+        /^什么是$/,
+        /^是什么$/,
+    ];
+    if (structuralPatterns.some(pattern => pattern.test(compact))) return true;
+    if (target && compact !== target && (compact === `${target}的` || compact === `的${target}`)) return true;
+    return false;
+}
+
 function renderAIStarters() {
     if (!aiStarters) return;
-    const subjectCount = Object.keys(currentData?.subject_counts || {}).length;
-    if (!currentQuery || subjectCount < 2) {
+    if (!currentQuery || !hasSearchResults()) {
         aiStarters.innerHTML = '';
         aiStarters.classList.add('hidden');
         return;
     }
-    const starters = [
-        `请先解释「${currentQuery}」在不同学科里的共同核心。`,
-        `「${currentQuery}」在高考里最常见的考法是什么？`,
-        `围绕「${currentQuery}」最容易混淆的概念有哪些？`,
-        `如果我要复习「${currentQuery}」，应该按什么顺序串起来学？`,
-    ];
+    const profile = inferAIQueryProfile(currentQuery);
+    const scope = getCurrentAIScopePayload();
+    const isCrossView = !scope.scope_subject && !scope.book_key && getCurrentAISubjectCount() >= 2 && profile.mode !== 'precision_agent';
+    let starters = [];
+    if (profile.mode === 'precision_agent') {
+        starters = [
+            `请只根据教材原文说明「${profile.target}」的${describePrecisionIntent(profile.intent)}，并给出最相关出处。`,
+            `「${profile.target}」的关键特征是什么？`,
+            `「${profile.target}」最容易和哪些概念混淆？`,
+            `如果要背「${profile.target}」，最短表述是什么？`,
+        ];
+    } else if (isCrossView) {
+        starters = [
+            `请先解释「${currentQuery}」在不同学科里的共同核心。`,
+            `「${currentQuery}」在高考里最常见的考法是什么？`,
+            `围绕「${currentQuery}」最容易混淆的概念有哪些？`,
+            `如果我要复习「${currentQuery}」，应该按什么顺序串起来学？`,
+        ];
+    } else {
+        starters = [
+            `请只根据当前教材结果解释「${currentQuery}」的核心，并给出最相关出处。`,
+            `这组结果里最值得看的原文是哪几页？`,
+            `围绕「${currentQuery}」最容易混淆的概念有哪些？`,
+            `如果只看 3 条教材原文，应该先看哪几条？`,
+        ];
+    }
     aiStarters.innerHTML = starters.map(text => `
         <button class="ai-starter-chip" type="button" data-prompt="${escAttr(text)}">${escHtml(text)}</button>
     `).join('');
@@ -134,11 +327,7 @@ async function fetchAIContext(userMessage, history) {
     const res = await fetchWithTimeout(`${API}/api/chat/context`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            query: currentQuery,
-            user_message: userMessage,
-            history,
-        }),
+        body: JSON.stringify(buildAIServerPayload(userMessage, history)),
     }, AI_CONTEXT_TIMEOUT_MS);
     const { data, raw } = await readJsonLike(res);
     if (!res.ok || !data) {
@@ -196,6 +385,48 @@ function buildClientAIPrompt(userMessage, contextPayload, history) {
     const historyText = (contextPayload.history_text || '').trim()
         || history.map(msg => `${msg.role === 'user' ? '用户' : '助手'}: ${msg.content}`).join('\n')
         || '（无）';
+    const queryProfile = contextPayload.query_profile || inferAIQueryProfile(contextPayload.query || currentQuery, userMessage);
+    const mode = contextPayload.mode || queryProfile.mode;
+
+    if (mode === 'precision_agent') {
+        const rounds = (contextPayload.summary && contextPayload.summary.agent_rounds) || [];
+        const intentLabel = {
+            definition: '定义检索',
+            comparison: '比较检索',
+            example: '例证检索',
+            reason: '因果检索',
+            process: '过程检索',
+        }[queryProfile.intent] || '精准检索';
+        return `你是一位严谨的教材检索助手。当前搜索词是「${contextPayload.query || currentQuery}」，用户当前要解决的是「${queryProfile.target || currentQuery}」的${intentLabel}。
+
+Agent 检索轮次：${rounds.length} 轮
+本轮检索关注词：
+${(contextPayload.search_terms_used || [currentQuery]).join('、')}
+
+检索扩展词：
+${(contextPayload.retrieval_terms_used || contextPayload.search_terms_used || [currentQuery]).join('、')}
+
+术语解析：
+${contextPayload.query_resolution_text || '（无）'}
+
+教材证据：
+${contextPayload.context_text || '（无）'}
+
+历史对话：
+${historyText}
+
+用户本轮问题：
+${userMessage}
+
+请按以下规则回答：
+1. 先直接回答问题本身，不要先空泛铺垫。
+2. 只能根据教材证据作答，每个核心判断尽量附 1 个出处，格式：[学科·书名·p页码]。
+3. 如果用户在问“定义”，先给最短可背诵表述，再补 1-2 个关键特征。
+4. 如果证据不足或检索结果彼此不一致，必须明确写“教材证据不足”。
+5. 忽略低相关结果，不要为了凑字数复述无关内容。
+6. 若用户继续追问，保持连续回答，不重复整段前文。
+7. 总长度尽量控制在 220 字以内。`;
+    }
 
     return `你是一位资深跨学科教育专家。用户当前搜索词是「${contextPayload.query || currentQuery}」。
 
@@ -247,6 +478,14 @@ function toPlainText(value) {
 
 function defaultFollowupPrompts() {
     if (!currentQuery) return [];
+    const profile = inferAIQueryProfile(currentQuery);
+    if (profile.mode === 'precision_agent') {
+        return [
+            `请只根据教材原文，进一步说明「${profile.target}」的关键特征。`,
+            `「${profile.target}」最容易和哪些概念混淆？`,
+            `如果要背「${profile.target}」，最短表述是什么？`,
+        ];
+    }
     return [
         `请用一个关键词概括「${currentQuery}」的核心。`,
         `「${currentQuery}」在高考里最常见的考法是什么？`,
@@ -259,6 +498,7 @@ function buildFallbackContextPayload(userMessage, history) {
     const evidence = [];
     const textbookLines = [];
     const gaokaoLines = [];
+    const queryProfile = inferAIQueryProfile(currentQuery, userMessage);
     let textbookCount = 0;
     let gaokaoCount = 0;
 
@@ -296,8 +536,10 @@ function buildFallbackContextPayload(userMessage, history) {
     const coverageLine = `覆盖 ${Object.keys(currentData?.subject_counts || {}).length} 个学科，教材命中 ${textbookCount} 条，真题例子 ${gaokaoCount} 条`;
 
     return {
+        mode: queryProfile.mode,
         query: currentQuery,
         user_message: userMessage,
+        query_profile: queryProfile,
         search_terms_used: [currentQuery],
         retrieval_terms_used: [currentQuery],
         alias_text: '（无）',
@@ -311,6 +553,7 @@ function buildFallbackContextPayload(userMessage, history) {
             retrieval_terms_used: [currentQuery],
             top_subjects: groups.slice(0, 4).map(group => ({ subject: group.subject, count: group.count || 0 })),
             relation_hint_count: matchedConcepts.length,
+            query_intent: queryProfile.intent,
             gaokao_hit_count: gaokaoCount,
         },
         suggested_questions: defaultFollowupPrompts().filter(prompt => prompt !== userMessage),
@@ -336,6 +579,13 @@ function renderAIContextSummary(summary) {
     if (!summary) return '';
     const searchTerms = summary.search_terms_used || [];
     const retrievalTerms = (summary.retrieval_terms_used || []).filter(term => !searchTerms.includes(term));
+    const intentLabel = {
+        definition: '定义',
+        comparison: '区别',
+        example: '例子',
+        reason: '原因',
+        process: '过程',
+    }[summary.query_intent] || '';
     const tags = [
         ...searchTerms.map(term =>
             `<span class="ai-context-tag search">检索 ${escHtml(term)}</span>`
@@ -343,11 +593,18 @@ function renderAIContextSummary(summary) {
         ...retrievalTerms.slice(0, 4).map(term =>
             `<span class="ai-context-tag retrieval">扩展 ${escHtml(term)}</span>`
         ),
+        intentLabel ? `<span class="ai-context-tag search">${escHtml(intentLabel)}</span>` : '',
         ...(summary.top_subjects || []).map(item =>
             `<span class="ai-context-tag">${escHtml(item.subject)} ${item.count}</span>`
         ),
+        summary.agent_rounds && summary.agent_rounds.length
+            ? `<span class="ai-context-tag retrieval">Agent ${summary.agent_rounds.length} 轮</span>`
+            : '',
         summary.relation_hint_count > 0
             ? `<span class="ai-context-tag relation">关系 ${summary.relation_hint_count}</span>`
+            : '',
+        summary.graph_hint_count > 0
+            ? `<span class="ai-context-tag relation">图谱 ${summary.graph_hint_count}</span>`
             : '',
         summary.gaokao_hit_count > 0
             ? `<span class="ai-context-tag exam">真题 ${summary.gaokao_hit_count}</span>`
@@ -403,7 +660,7 @@ function renderAIConversation() {
             ${msg.role === 'assistant' ? renderAISources(msg.sources) : ''}
             ${msg.role === 'assistant' && index === aiConversation.length - 1 ? renderAIFollowups(msg.followups) : ''}
         </div>
-    `).join('') + `<span class="ai-source">📡 由 ${escHtml(aiProviderLabel)} 生成 · 数据来源：${Object.keys(currentData?.subject_counts || {}).length} 个学科教材</span>`;
+    `).join('') + `<span class="ai-source">📡 由 ${escHtml(aiProviderLabel)} 生成 · 数据来源：${escHtml(getAISourceLabel())}</span>`;
 
     bindOpenPageButtons(aiContent, '.ai-source-chip');
     aiContent.querySelectorAll('.ai-followup-chip').forEach(btn => {
@@ -425,6 +682,7 @@ function setAIBusy(isBusy) {
 
 function resetAIConversation() {
     aiConversation = [];
+    aiAutoRequestedKey = '';
     if (aiContent) aiContent.innerHTML = '';
     if (aiResult) aiResult.classList.add('hidden');
     if (aiFollowupInput) aiFollowupInput.value = '';
@@ -435,7 +693,7 @@ function resetAIConversation() {
 async function sendAIMessage(userMessage) {
     if (!currentData || !currentQuery || aiRequestPending) return;
     const groups = currentData.groups || [];
-    if (groups.length < 2) return;
+    if (!groups.length) return;
     const cleanMessage = (userMessage || '').trim();
     if (!cleanMessage) return;
 
@@ -457,11 +715,7 @@ async function sendAIMessage(userMessage) {
         let usedBrowserFallback = false;
         const contextPromise = fetchAIContext(cleanMessage, history);
 
-        const payload = {
-            query: currentQuery,
-            user_message: cleanMessage,
-            history,
-        };
+        const payload = buildAIServerPayload(cleanMessage, history);
 
         const serverPromise = requestServerChat(payload).then(data => ({
             channel: 'server',
@@ -532,8 +786,32 @@ async function sendAIMessage(userMessage) {
 async function requestAISynthesis() {
     if (!currentData || !currentQuery) return;
     const groups = currentData.groups || [];
-    if (groups.length < 2) return;
-    await sendAIMessage(`请先综合解读「${currentQuery}」，突出跨学科联系，并给出学习建议。`);
+    if (!groups.length) return;
+    const profile = inferAIQueryProfile(currentQuery);
+    const scope = getCurrentAIScopePayload();
+    if (profile.mode === 'precision_agent') {
+        await sendAIMessage(`请只根据教材原文说明「${profile.target}」的${describePrecisionIntent(profile.intent)}，并给出最相关出处。`);
+        return;
+    }
+    if (!scope.scope_subject && !scope.book_key && getCurrentAISubjectCount() >= 2) {
+        await sendAIMessage(`请先综合解读「${currentQuery}」，突出跨学科联系，并给出学习建议。`);
+        return;
+    }
+    await sendAIMessage(`请只根据当前教材结果解释「${currentQuery}」的核心，并给出最相关出处。`);
+}
+
+function maybeAutoTriggerAI() {
+    if (!hasSearchResults() || aiConversation.length || aiRequestPending) return;
+    const profile = inferAIQueryProfile(currentQuery);
+    if (profile.mode !== 'precision_agent') return;
+    const key = getAIExecutionKey();
+    if (aiAutoRequestedKey === key) return;
+    aiAutoRequestedKey = key;
+    setTimeout(() => {
+        if (aiConversation.length || aiRequestPending) return;
+        if (getAIExecutionKey() !== key) return;
+        requestAISynthesis();
+    }, AI_AUTO_TRIGGER_DELAY_MS);
 }
 
 async function requestAIFollowup() {
@@ -861,12 +1139,13 @@ function renderResults(data, filterSubject = null, subjectCountsOverride = null)
 
     renderQueryAnalysis(data.query_analysis, filterSubject);
 
-    // AI panel: show only when 2+ subjects found
     const counts = subjectCountsOverride || data.subject_counts || {};
-    const subjectCount = Object.keys(counts).length;
-    if (subjectCount >= 2 && !filterSubject) {
+
+    // AI panel: available for any non-empty result set; precision queries auto-trigger.
+    if ((data.groups || []).length > 0) {
         aiPanel.classList.remove('hidden');
         renderAIStarters();
+        maybeAutoTriggerAI();
     } else {
         aiPanel.classList.add('hidden');
         if (aiStarters) {
@@ -985,13 +1264,21 @@ function renderQueryAnalysis(analysis, filterSubject = null) {
 
     const conceptTerms = Array.isArray(analysis.concept_terms) ? analysis.concept_terms : [];
     const fallbackTerms = Array.isArray(analysis.fallback_terms) ? analysis.fallback_terms : [];
+    const precisionProfile = inferAIQueryProfile(analysis.query || currentQuery);
     const chips = [];
+
+    if (precisionProfile.mode === 'precision_agent' && precisionProfile.target) {
+        chips.push(`<span class="query-chip concept">${escHtml(precisionProfile.target)} · ${escHtml(describePrecisionIntent(precisionProfile.intent))}</span>`);
+    }
 
     conceptTerms.slice(0, 4).forEach(item => {
         const matchLabel = item.match_type === 'alias' ? '概念归并' : '标准术语';
         chips.push(`<span class="query-chip concept">${escHtml(item.term)} · ${escHtml(matchLabel)}</span>`);
     });
-    fallbackTerms.slice(0, 4).forEach(item => {
+    fallbackTerms
+        .filter(item => !isStructuralFallbackTerm(item.term, precisionProfile))
+        .slice(0, 4)
+        .forEach(item => {
         const hitLabel = [item.textbook_hits ? `主库 ${item.textbook_hits}` : '', item.supplemental_hits ? `备份 ${item.supplemental_hits}` : '']
             .filter(Boolean)
             .join(' / ');
@@ -1002,13 +1289,16 @@ function renderQueryAnalysis(analysis, filterSubject = null) {
     const fallbackFlag = analysis.used_supplemental_fallback
         ? '<span class="query-analysis-flag">当前结果含备份教材解析兜底</span>'
         : '';
+    const summaryText = precisionProfile.mode === 'precision_agent'
+        ? `已识别为${describePrecisionIntent(precisionProfile.intent)}型问题，AI 将优先围绕「${precisionProfile.target || analysis.display_term || analysis.query || currentQuery}」做精准检索。`
+        : (analysis.summary || '');
 
     queryAnalysisEl.innerHTML = `
         <div class="query-analysis-header">
             <span class="query-analysis-title">术语解析</span>
             ${scopeLine}
         </div>
-        <div class="query-analysis-summary">${escHtml(analysis.summary || '')}</div>
+        <div class="query-analysis-summary">${escHtml(summaryText)}</div>
         ${chips.length ? `<div class="query-analysis-chips">${chips.join('')}</div>` : ''}
         ${fallbackFlag}
     `;

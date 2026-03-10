@@ -6,12 +6,15 @@ RUNTIME_ROOT="${RUNTIME_ROOT:-/root/cross-subject-knowledge}"
 CONTAINER_NAME="textbook-knowledge"
 REPO_NAME="textbook-knowledge"
 EMBEDDER_NAME="${EMBEDDER_NAME:-BAAI/bge-m3}"
+RERANKER_NAME="${RERANKER_NAME:-BAAI/bge-reranker-base}"
+RERANKER_ENABLED="${RERANKER_ENABLED:-1}"
 HOST_HF_CACHE_ROOT="${RUNTIME_ROOT}/state/cache/huggingface"
 HOST_HF_HUB_CACHE="${HOST_HF_CACHE_ROOT}/hub"
 HOST_LEGACY_ST_CACHE="${RUNTIME_ROOT}/state/cache/sentence_transformers"
 CONTAINER_HF_CACHE_ROOT="/state/cache/huggingface"
 CONTAINER_HF_HUB_CACHE="/state/cache/huggingface/hub"
 EMBEDDER_CACHE_KEY="models--${EMBEDDER_NAME//\//--}"
+RERANKER_CACHE_KEY="models--${RERANKER_NAME//\//--}"
 SUPPLEMENTAL_INDEX_SRC="${SOURCE_ROOT}/backend/supplemental_textbook_pages.jsonl.gz"
 SUPPLEMENTAL_MANIFEST_SRC="${SOURCE_ROOT}/backend/supplemental_textbook_pages.manifest.json"
 SUPPLEMENTAL_INDEX_DST="${RUNTIME_ROOT}/data/index/supplemental_textbook_pages.jsonl.gz"
@@ -56,8 +59,16 @@ build_tag="${REPO_NAME}:build-${commit_sha}-${build_stamp}"
 backup_tag="${REPO_NAME}:pre-${build_stamp}"
 rollback_image=""
 
+env_true() {
+  case "${1:-}" in
+    0|false|FALSE|False|no|NO|No) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 host_cache_has_model() {
-  find "${HOST_HF_HUB_CACHE}/${EMBEDDER_CACHE_KEY}" -type f | grep -q .
+  local cache_key="${1:?cache_key_required}"
+  find "${HOST_HF_HUB_CACHE}/${cache_key}" -type f | grep -q .
 }
 
 migrate_legacy_st_cache() {
@@ -68,7 +79,7 @@ migrate_legacy_st_cache() {
 }
 
 prune_legacy_st_cache() {
-  if [ -d "${HOST_LEGACY_ST_CACHE}/${EMBEDDER_CACHE_KEY}" ] && host_cache_has_model; then
+  if [ -d "${HOST_LEGACY_ST_CACHE}/${EMBEDDER_CACHE_KEY}" ] && host_cache_has_model "${EMBEDDER_CACHE_KEY}"; then
     echo "=== pruning duplicate legacy sentence-transformers cache ==="
     rm -rf "${HOST_LEGACY_ST_CACHE:?}/${EMBEDDER_CACHE_KEY}"
   fi
@@ -81,6 +92,7 @@ prune_legacy_st_cache() {
 health_json_ok() {
   python3 - <<'PY'
 import json
+import os
 import sys
 
 try:
@@ -97,8 +109,19 @@ ok = (
     and bool((payload.get("model") or {}).get("ok"))
     and bool(supplemental.get("ok"))
 )
+if os.getenv("HEALTH_REQUIRE_RERANKER", "0").strip().lower() not in {"0", "false", "no"}:
+    reranker = payload.get("reranker") or {}
+    ok = ok and (not bool(reranker.get("enabled")) or bool(reranker.get("loaded")))
 sys.exit(0 if ok else 1)
 PY
+}
+
+warm_precision_agent() {
+  curl -sf --max-time 120 \
+    -H 'Content-Type: application/json' \
+    -X POST \
+    -d '{"query":"晶体的定义","user_message":"请只根据教材原文说明「晶体」的定义，并给出最相关出处。","history":[]}' \
+    http://127.0.0.1:8080/api/chat/context >/tmp/textbook_precision_warmup.json
 }
 
 echo "=== deploy start $(date -u '+%Y-%m-%d %H:%M:%S UTC') commit=${commit_sha} ==="
@@ -117,14 +140,14 @@ docker build --pull -t "${build_tag}" -t "${REPO_NAME}:latest" .
 
 migrate_legacy_st_cache
 
-if ! host_cache_has_model; then
+if ! host_cache_has_model "${EMBEDDER_CACHE_KEY}"; then
   echo "=== bootstrapping host model cache ==="
   if docker ps -a --format '{{.Names}}' | grep -qx "${CONTAINER_NAME}"; then
     docker cp "${CONTAINER_NAME}:/root/.cache/huggingface/." "${HOST_HF_CACHE_ROOT}/" >/dev/null 2>&1 || true
   fi
 fi
 
-if ! host_cache_has_model; then
+if ! host_cache_has_model "${EMBEDDER_CACHE_KEY}"; then
   echo "=== warming model cache with ${EMBEDDER_NAME} ==="
   docker run --rm \
     -e HF_HOME="${CONTAINER_HF_CACHE_ROOT}" \
@@ -134,6 +157,18 @@ if ! host_cache_has_model; then
     -v "${RUNTIME_ROOT}/state:/state" \
     "${build_tag}" \
     python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${EMBEDDER_NAME}')"
+fi
+
+if env_true "${RERANKER_ENABLED}" && ! host_cache_has_model "${RERANKER_CACHE_KEY}"; then
+  echo "=== warming reranker cache with ${RERANKER_NAME} ==="
+  docker run --rm \
+    -e HF_HOME="${CONTAINER_HF_CACHE_ROOT}" \
+    -e HF_HUB_CACHE="${CONTAINER_HF_HUB_CACHE}" \
+    -e SENTENCE_TRANSFORMERS_HOME="${CONTAINER_HF_HUB_CACHE}" \
+    -e TRANSFORMERS_CACHE="${CONTAINER_HF_HUB_CACHE}" \
+    -v "${RUNTIME_ROOT}/state:/state" \
+    "${build_tag}" \
+    python -c "from sentence_transformers import CrossEncoder; CrossEncoder('${RERANKER_NAME}')"
 fi
 
 docker stop "${CONTAINER_NAME}" >/dev/null 2>&1 || true
@@ -146,6 +181,10 @@ docker run -d \
   -e PROJECT_ROOT=/app \
   -e DATA_ROOT=/data \
   -e STATE_ROOT=/state \
+  -e EMBEDDER="${EMBEDDER_NAME}" \
+  -e RERANKER="${RERANKER_NAME}" \
+  -e RERANKER_ENABLED="${RERANKER_ENABLED}" \
+  -e RERANKER_PRELOAD=1 \
   -e HF_HOME="${CONTAINER_HF_CACHE_ROOT}" \
   -e HF_HUB_CACHE="${CONTAINER_HF_HUB_CACHE}" \
   -e SENTENCE_TRANSFORMERS_HOME="${CONTAINER_HF_HUB_CACHE}" \
@@ -155,12 +194,25 @@ docker run -d \
   "${build_tag}" >/dev/null
 
 healthy="false"
+warmed_precision="false"
 for _ in $(seq 1 24); do
   status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${CONTAINER_NAME}" 2>/dev/null || echo "missing")"
   if [ "${status}" = "healthy" ] || [ "${status}" = "running" ]; then
-    if curl -sf http://127.0.0.1:8080/api/health >/tmp/textbook_health.json && health_json_ok; then
-      healthy="true"
-      break
+    if env_true "${RERANKER_ENABLED}" && [ "${warmed_precision}" != "true" ]; then
+      if warm_precision_agent; then
+        warmed_precision="true"
+      fi
+    fi
+    if curl -sf http://127.0.0.1:8080/api/health >/tmp/textbook_health.json; then
+      if env_true "${RERANKER_ENABLED}"; then
+        if [ "${warmed_precision}" = "true" ] && HEALTH_REQUIRE_RERANKER=1 health_json_ok; then
+          healthy="true"
+          break
+        fi
+      elif health_json_ok; then
+        healthy="true"
+        break
+      fi
     fi
   fi
   sleep 5
@@ -180,6 +232,10 @@ if [ "${healthy}" != "true" ]; then
       -e PROJECT_ROOT=/app \
       -e DATA_ROOT=/data \
       -e STATE_ROOT=/state \
+      -e EMBEDDER="${EMBEDDER_NAME}" \
+      -e RERANKER="${RERANKER_NAME}" \
+      -e RERANKER_ENABLED="${RERANKER_ENABLED}" \
+      -e RERANKER_PRELOAD=1 \
       -e HF_HOME="${CONTAINER_HF_CACHE_ROOT}" \
       -e HF_HUB_CACHE="${CONTAINER_HF_HUB_CACHE}" \
       -e SENTENCE_TRANSFORMERS_HOME="${CONTAINER_HF_HUB_CACHE}" \

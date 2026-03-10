@@ -39,6 +39,14 @@ def main() -> int:
         _resolve_data_asset(data_root, "textbook_mineru_fts.db"),
         _resolve_data_asset(data_root, "textbook_chunks.index"),
     ]
+    supplemental_required = os.getenv("SUPPLEMENTAL_REQUIRED", "1").strip().lower() not in {"0", "false", "no"}
+    if supplemental_required:
+        required_files.extend(
+            [
+                _resolve_data_asset(data_root, "supplemental_textbook_pages.jsonl.gz"),
+                _resolve_data_asset(data_root, "supplemental_textbook_pages.manifest.json"),
+            ]
+        )
 
     missing = [str(p) for p in required_files if not p.exists()]
     if missing:
