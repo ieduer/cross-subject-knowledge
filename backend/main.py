@@ -61,9 +61,12 @@ BUNDLED_XUCI_SINGLE_CHAR_INDEX_PATH = Path(__file__).with_name("xuci_single_char
 FRONTEND = Path(__file__).parent.parent / "frontend"
 FAISS_INDEX_PATH = _resolve_data_asset("textbook_chunks.index")
 FAISS_MANIFEST_PATH = _resolve_data_asset("textbook_chunks.manifest.json")
+SUPPLEMENTAL_TEXTBOOK_ROOT = DATA_ROOT / "mineru_output_backup"
 SQLITE_BUSY_TIMEOUT_MS = max(1000, int(os.getenv("SQLITE_BUSY_TIMEOUT_MS", "5000")))
 SQLITE_CONNECT_TIMEOUT_SEC = max(1.0, SQLITE_BUSY_TIMEOUT_MS / 1000.0)
 FAISS_SCORE_THRESHOLD = max(0.0, min(1.0, float(os.getenv("FAISS_SCORE_THRESHOLD", "0.62"))))
+QUERY_TERM_PLAN_LIMIT = max(4, int(os.getenv("QUERY_TERM_PLAN_LIMIT", "8")))
+SUPPLEMENTAL_FALLBACK_LIMIT = max(20, int(os.getenv("SUPPLEMENTAL_FALLBACK_LIMIT", "180")))
 
 def _parse_csv_env(name: str, default: str) -> list[str]:
     raw = os.getenv(name, default)
@@ -844,6 +847,673 @@ def _merge_ranked_rows(*row_groups, sort: str = "relevance") -> list[dict]:
     return merged
 
 
+def _normalize_lookup_title(title: str | None) -> str:
+    normalized = unicodedata.normalize("NFKC", title or "")
+    normalized = normalized.replace("_content_list", "")
+    normalized = normalized.replace("（", "(").replace("）", ")")
+    normalized = normalized.replace("·", "")
+    normalized = re.sub(r"_智慧中小学_[0-9a-f\-]{36}$", "", normalized, flags=re.IGNORECASE)
+    normalized = normalized.replace("_智慧中小学", "")
+    normalized = normalized.replace("_", "")
+    normalized = re.sub(r"\s+", "", normalized)
+    return normalized.strip()
+
+
+def _parse_subject_from_title(title: str | None) -> str:
+    normalized = unicodedata.normalize("NFKC", title or "")
+    for subject_name in SUBJECT_META:
+        if subject_name in normalized:
+            return subject_name
+    if "习近平新时代中国特色社会主义思想学生读本" in normalized:
+        return "思想政治"
+    return ""
+
+
+def _parse_content_id_from_text(text: str | None) -> str:
+    match = re.search(r"([0-9a-f]{8}-[0-9a-f\-]{27})", text or "", re.IGNORECASE)
+    return match.group(1) if match else ""
+
+
+@functools.lru_cache(maxsize=1)
+def _load_textbook_registry() -> dict:
+    con = get_db()
+    try:
+        rows = con.execute(
+            """
+            SELECT DISTINCT content_id, title, book_key, subject
+            FROM chunks
+            WHERE source = 'mineru' OR source IS NULL
+            """
+        ).fetchall()
+        page_rows = con.execute(
+            """
+            SELECT DISTINCT book_key, section, logical_page
+            FROM chunks
+            WHERE (source = 'mineru' OR source IS NULL)
+              AND book_key IS NOT NULL
+            """
+        ).fetchall()
+    finally:
+        con.close()
+
+    by_content_id = {}
+    by_title_subject = {}
+    by_title = {}
+    page_lookup = {}
+
+    for row in rows:
+        item = {
+            "content_id": row["content_id"],
+            "title": row["title"],
+            "book_key": row["book_key"],
+            "subject": row["subject"],
+        }
+        content_id = str(row["content_id"] or "").strip()
+        title_key = _normalize_lookup_title(row["title"])
+        subject_name = str(row["subject"] or "").strip()
+        if content_id and content_id not in by_content_id:
+            by_content_id[content_id] = item
+        if title_key and subject_name and (title_key, subject_name) not in by_title_subject:
+            by_title_subject[(title_key, subject_name)] = item
+        if title_key and title_key not in by_title:
+            by_title[title_key] = item
+
+    for row in page_rows:
+        book_key = str(row["book_key"] or "").strip()
+        if not book_key:
+            continue
+        try:
+            section = int(row["section"])
+        except Exception:
+            continue
+        logical_page = row["logical_page"]
+        if logical_page is None:
+            logical_page = section
+        page_lookup[(book_key, section)] = int(logical_page)
+
+    return {
+        "by_content_id": by_content_id,
+        "by_title_subject": by_title_subject,
+        "by_title": by_title,
+        "page_lookup": page_lookup,
+    }
+
+
+def _resolve_supplemental_book_meta(path: Path) -> dict:
+    registry = _load_textbook_registry()
+    raw_title = path.stem
+    display_title = raw_title
+    display_title = re.sub(r"_content_list$", "", display_title)
+    display_title = re.sub(r"_智慧中小学_[0-9a-f\-]{36}$", "", display_title, flags=re.IGNORECASE)
+    display_title = re.sub(r"^高中_[^_]+_", "", display_title)
+    display_title = display_title.replace("_", " ").strip()
+
+    content_id = _parse_content_id_from_text(str(path))
+    subject_name = _parse_subject_from_title(display_title)
+    matched = registry["by_content_id"].get(content_id)
+    if not matched:
+        title_key = _normalize_lookup_title(display_title)
+        matched = registry["by_title_subject"].get((title_key, subject_name)) or registry["by_title"].get(title_key)
+
+    if matched:
+        return {
+            "content_id": matched.get("content_id") or content_id,
+            "title": matched.get("title") or display_title,
+            "book_key": matched.get("book_key"),
+            "subject": matched.get("subject") or subject_name,
+        }
+    return {
+        "content_id": content_id or None,
+        "title": display_title,
+        "book_key": None,
+        "subject": subject_name,
+    }
+
+
+def _merge_supplemental_page_blocks(blocks: list[str]) -> str:
+    merged = []
+    seen = set()
+    for raw in blocks:
+        text = _normalize_text_line(raw)
+        if len(text) < 2:
+            continue
+        key = text.casefold()
+        if merged and (text == merged[-1] or text in merged[-1]):
+            continue
+        if key in seen and len(text) < 32:
+            continue
+        seen.add(key)
+        merged.append(text)
+    return "\n".join(merged)
+
+
+@functools.lru_cache(maxsize=1)
+def _load_supplemental_textbook_pages() -> tuple[dict, ...]:
+    if not SUPPLEMENTAL_TEXTBOOK_ROOT.exists():
+        return tuple()
+
+    page_entries = []
+    registry = _load_textbook_registry()
+    for path in sorted(SUPPLEMENTAL_TEXTBOOK_ROOT.rglob("*_content_list.json")):
+        lowered = str(path).lower()
+        if "test_" in lowered or "/test" in lowered:
+            continue
+        meta = _resolve_supplemental_book_meta(path)
+        if not meta.get("subject"):
+            continue
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+        except Exception:
+            continue
+        if not isinstance(payload, list):
+            continue
+
+        blocks_by_page = defaultdict(list)
+        for item in payload:
+            if not isinstance(item, dict) or item.get("type") != "text":
+                continue
+            try:
+                page_idx = int(item.get("page_idx"))
+            except Exception:
+                continue
+            if page_idx < 0:
+                continue
+            text = _normalize_text_line(item.get("text"))
+            if len(text) < 2:
+                continue
+            blocks_by_page[page_idx].append(text)
+
+        for page_num, blocks in blocks_by_page.items():
+            merged_text = _merge_supplemental_page_blocks(blocks)
+            if len(merged_text) < 20:
+                continue
+            book_key = meta.get("book_key")
+            logical_page = registry["page_lookup"].get((book_key, page_num)) if book_key else None
+            page_entries.append(
+                {
+                    "id": f"supp:{hashlib.md5(f'{path}:{page_num}'.encode('utf-8')).hexdigest()[:16]}",
+                    "content_id": meta.get("content_id"),
+                    "subject": meta.get("subject"),
+                    "title": meta.get("title"),
+                    "book_key": book_key,
+                    "section": int(page_num),
+                    "logical_page": int(logical_page) if logical_page is not None else int(page_num),
+                    "text": merged_text,
+                    "normalized_text": _compact_query_text(merged_text),
+                    "path": str(path),
+                }
+            )
+
+    page_entries.sort(
+        key=lambda item: (
+            item.get("subject") or "",
+            item.get("title") or "",
+            int(item.get("section") or 0),
+        )
+    )
+    return tuple(page_entries)
+
+
+def _count_textbook_term_hits(
+    con: sqlite3.Connection,
+    term: str,
+    *,
+    scope_subject: str | None = None,
+    book_key: str | None = None,
+) -> int:
+    clean_term = _compact_query_text(term)
+    if not clean_term:
+        return 0
+    where_parts = ["(source = 'mineru' OR source IS NULL)", "text LIKE ?"]
+    params = [f"%{clean_term}%"]
+    if book_key:
+        where_parts.append("book_key = ?")
+        params.append(book_key)
+    elif scope_subject:
+        where_parts.append("subject = ?")
+        params.append(scope_subject)
+    try:
+        row = con.execute(
+            f"SELECT COUNT(*) AS cnt FROM chunks WHERE {' AND '.join(where_parts)}",
+            params,
+        ).fetchone()
+        return int(row["cnt"] or 0) if row else 0
+    except Exception:
+        return 0
+
+
+def _count_supplemental_term_hits(
+    term: str,
+    *,
+    scope_subject: str | None = None,
+    book_key: str | None = None,
+    cap: int = 24,
+) -> int:
+    compact_term = _compact_query_text(term)
+    if not compact_term:
+        return 0
+    hits = 0
+    for entry in _load_supplemental_textbook_pages():
+        if book_key and entry.get("book_key") != book_key:
+            continue
+        if scope_subject and entry.get("subject") != scope_subject:
+            continue
+        if compact_term in entry.get("normalized_text", ""):
+            hits += 1
+            if hits >= cap:
+                break
+    return hits
+
+
+def _derive_query_candidate_terms(query: str, *, limit: int = 18) -> list[str]:
+    compact = _compact_query_text(query)
+    if not compact:
+        return []
+
+    candidates = []
+    seen = set()
+
+    def add_term(value: str):
+        term = _compact_query_text(value)
+        if len(term) < 2:
+            return
+        if term in seen:
+            return
+        seen.add(term)
+        candidates.append(term)
+
+    add_term(compact)
+
+    token_candidates = []
+    try:
+        import jieba  # type: ignore
+
+        token_candidates = [token.strip() for token in jieba.cut(compact) if token and token.strip()]
+    except Exception:
+        token_candidates = []
+
+    if len(token_candidates) >= 2:
+        for window in range(min(4, len(token_candidates)), 0, -1):
+            for start in range(0, len(token_candidates) - window + 1):
+                add_term("".join(token_candidates[start:start + window]))
+    elif _contains_chinese(compact) and len(compact) >= 4:
+        max_len = min(8, len(compact))
+        min_len = 2 if len(compact) <= 4 else 3
+        for length in range(max_len, min_len - 1, -1):
+            for start in range(0, len(compact) - length + 1):
+                add_term(compact[start:start + length])
+
+    return candidates[:limit]
+
+
+def _analyze_search_query(
+    con: sqlite3.Connection,
+    query: str,
+    *,
+    scope_subject: str | None = None,
+    book_key: str | None = None,
+) -> dict:
+    clean_q = _compact_query_text(query)
+    if not clean_q:
+        return {
+            "query": query,
+            "mode": "invalid",
+            "summary": "检索词无效。",
+            "concept_terms": [],
+            "fallback_terms": [],
+            "retrieval_terms": [],
+            "display_term": "",
+            "used_supplemental_fallback": False,
+        }
+
+    concept_matches = []
+    catalog = _get_concept_catalog(_db_cache_token())
+    normalized_query, query_phrase_set = _build_text_match_context(clean_q)
+    for concept, subjects, _has_chinese in catalog:
+        if scope_subject and subjects and scope_subject not in subjects:
+            continue
+        if concept == clean_q:
+            score = 300 + len(concept)
+            match_type = "exact"
+        elif concept in clean_q:
+            score = 220 + len(concept)
+            match_type = "contained"
+        elif clean_q in concept:
+            score = 200 + len(clean_q)
+            match_type = "expanded"
+        elif _concept_matches_text(concept, normalized_query, query_phrase_set):
+            score = 180 + len(concept)
+            match_type = "phrase"
+        else:
+            continue
+        concept_matches.append(
+            {
+                "term": concept,
+                "match_type": match_type,
+                "subjects": sorted(subjects.keys()),
+                "source": "concept_map",
+                "score": score,
+            }
+        )
+
+    try:
+        synonym_rows = con.execute(
+            """
+            SELECT term, synonyms
+            FROM ai_synonyms
+            WHERE term = ? OR term LIKE ? OR synonyms LIKE ?
+            LIMIT 24
+            """,
+            (clean_q, f"%{clean_q}%", f"%{clean_q}%"),
+        ).fetchall()
+    except Exception:
+        synonym_rows = []
+
+    alias_matches = []
+    for row in synonym_rows:
+        term = _compact_query_text(row["term"])
+        if not term:
+            continue
+        record = _load_json_object(row["synonyms"])
+        aliases = _collect_synonym_aliases(record, limit=8)
+        matched_aliases = []
+        for alias in aliases:
+            alias_clean = _compact_query_text(alias)
+            if not alias_clean:
+                continue
+            if alias_clean == clean_q or alias_clean in clean_q or clean_q in alias_clean:
+                matched_aliases.append(alias)
+        if term == clean_q or matched_aliases:
+            alias_matches.append(
+                {
+                    "term": row["term"],
+                    "match_type": "alias" if matched_aliases else "term",
+                    "aliases": matched_aliases[:4],
+                    "source": "ai_synonyms",
+                    "score": 260 if term == clean_q else 210 + len(matched_aliases) * 10,
+                }
+            )
+
+    concept_matches.sort(key=lambda item: (-item["score"], -len(item["term"]), item["term"]))
+    alias_matches.sort(key=lambda item: (-item["score"], -len(item["term"]), item["term"]))
+
+    fallback_scored = []
+    for term in _derive_query_candidate_terms(clean_q):
+        textbook_hits = _count_textbook_term_hits(
+            con,
+            term,
+            scope_subject=scope_subject,
+            book_key=book_key,
+        )
+        supplemental_hits = _count_supplemental_term_hits(
+            term,
+            scope_subject=scope_subject,
+            book_key=book_key,
+        )
+        if textbook_hits <= 0 and supplemental_hits <= 0:
+            continue
+        total_hits = textbook_hits + supplemental_hits
+        score = 0
+        if term == clean_q:
+            score += 240
+        if term in clean_q:
+            score += len(term) * 24 + 40
+            if clean_q.startswith(term):
+                score += 45
+            if clean_q.endswith(term):
+                score += 65
+            if len(term) >= 4:
+                score += 30
+        else:
+            score += len(term) * 12
+        score += min(total_hits, 6) * 10
+        if supplemental_hits > 0 and textbook_hits <= 0:
+            score += 22
+        if 0 < total_hits <= 4:
+            score += (5 - total_hits) * 8
+        if total_hits > 12:
+            score -= min(60, (total_hits - 12) * 2)
+        fallback_scored.append(
+            {
+                "term": term,
+                "textbook_hits": textbook_hits,
+                "supplemental_hits": supplemental_hits,
+                "score": score,
+            }
+        )
+
+    fallback_scored.sort(
+        key=lambda item: (
+            -item["score"],
+            -(item["textbook_hits"] + item["supplemental_hits"]),
+            -len(item["term"]),
+            item["term"],
+        )
+    )
+
+    retrieval_terms = []
+    seen_terms = set()
+
+    def add_retrieval_term(term: str):
+        compact_term = _compact_query_text(term)
+        if len(compact_term) < 2 or compact_term in seen_terms:
+            return
+        seen_terms.add(compact_term)
+        retrieval_terms.append(compact_term)
+
+    for item in concept_matches[:4]:
+        add_retrieval_term(item["term"])
+    for item in alias_matches[:4]:
+        add_retrieval_term(item["term"])
+        for alias in item.get("aliases", [])[:3]:
+            add_retrieval_term(alias)
+    for item in fallback_scored[:QUERY_TERM_PLAN_LIMIT]:
+        add_retrieval_term(item["term"])
+    add_retrieval_term(clean_q)
+
+    concept_terms = concept_matches[:4] + alias_matches[:4]
+    fallback_terms = fallback_scored[:QUERY_TERM_PLAN_LIMIT]
+    used_supplemental_fallback = (
+        bool(fallback_terms)
+        and not any(item.get("textbook_hits", 0) > 0 for item in fallback_terms)
+        and any(item.get("supplemental_hits", 0) > 0 for item in fallback_terms)
+    )
+
+    if concept_matches:
+        summary = f"已按标准概念术语优先检索：{'、'.join(item['term'] for item in concept_matches[:3])}"
+        mode = "concept"
+        display_term = concept_matches[0]["term"]
+    elif alias_matches:
+        summary = f"已按概念别名归并检索：{'、'.join(item['term'] for item in alias_matches[:3])}"
+        mode = "alias"
+        display_term = alias_matches[0]["term"]
+    elif fallback_terms:
+        fallback_label = "、".join(item["term"] for item in fallback_terms[:3])
+        if used_supplemental_fallback:
+            summary = f"标准术语库未直接命中，已按备份教材原文兜底检索：{fallback_label}"
+        else:
+            summary = f"标准术语库未直接命中，已按教材原文短语兜底检索：{fallback_label}"
+        mode = "fallback"
+        display_term = fallback_terms[0]["term"]
+    else:
+        summary = f"未识别出标准概念术语，已按原检索词直接检索：{clean_q}"
+        mode = "direct"
+        display_term = clean_q
+
+    return {
+        "query": query,
+        "mode": mode,
+        "summary": summary,
+        "concept_terms": concept_terms,
+        "fallback_terms": fallback_terms,
+        "retrieval_terms": retrieval_terms[:QUERY_TERM_PLAN_LIMIT],
+        "display_term": display_term,
+        "used_supplemental_fallback": used_supplemental_fallback,
+    }
+
+
+def _build_search_term_plan(query_analysis: dict) -> list[dict]:
+    plan = []
+    seen = set()
+
+    def add_item(term: str, basis: str):
+        compact_term = _compact_query_text(term)
+        if len(compact_term) < 2 or compact_term in seen:
+            return
+        seen.add(compact_term)
+        plan.append({"term": compact_term, "basis": basis})
+
+    for item in query_analysis.get("concept_terms", []):
+        add_item(item.get("term", ""), item.get("match_type") or "concept")
+        for alias in item.get("aliases", [])[:3]:
+            add_item(alias, "alias")
+    for item in query_analysis.get("fallback_terms", [])[:QUERY_TERM_PLAN_LIMIT]:
+        add_item(item.get("term", ""), "fallback")
+    add_item(query_analysis.get("query", ""), "query")
+    return plan[:QUERY_TERM_PLAN_LIMIT]
+
+
+def _search_chunks_by_term(
+    con: sqlite3.Connection,
+    term: str,
+    *,
+    where_extra: str,
+    filter_params: list,
+    candidate_limit: int,
+    sort: str,
+) -> list[dict]:
+    clean_term = _clean_query_text(term)
+    if not clean_term:
+        return []
+
+    like_params = [clean_term, f"%{clean_term}%"] + filter_params + [candidate_limit]
+    like_rows = con.execute(
+        f"""
+        SELECT c.id, c.content_id, c.subject, c.title, c.book_key, c.section, c.logical_page,
+               SUBSTR(c.text, MAX(1, INSTR(c.text, ?)-30), 160) AS snippet,
+               c.text, c.source, c.year, c.category,
+               -100.0 AS rank
+        FROM chunks c
+        WHERE c.text LIKE ? {where_extra}
+        LIMIT ?
+        """,
+        like_params,
+    ).fetchall()
+    like_ranked = []
+    for row in like_rows:
+        data = dict(row)
+        data["snippet"] = data["snippet"].replace(clean_term, f"<mark>{clean_term}</mark>")
+        data["match_channel"] = "exact"
+        like_ranked.append(data)
+
+    fts_params = [clean_term] + filter_params + [candidate_limit]
+    order_clause = "ORDER BY rank"
+    if sort == "images":
+        order_clause = "ORDER BY (LENGTH(c.text) - LENGTH(REPLACE(c.text, '![', ''))) DESC, rank"
+
+    try:
+        fts_rows = con.execute(
+            f"""
+            SELECT c.id, c.content_id, c.subject, c.title, c.book_key, c.section, c.logical_page,
+                   snippet(chunks_fts, 0, '<mark>', '</mark>', '…', 40) AS snippet,
+                   c.text, c.source, c.year, c.category,
+                   f.rank AS rank
+            FROM chunks c
+            JOIN chunks_fts f ON c.id = f.rowid
+            WHERE chunks_fts MATCH ? {where_extra}
+            {order_clause}
+            LIMIT ?
+            """,
+            fts_params,
+        ).fetchall()
+    except Exception:
+        fts_rows = []
+
+    fts_ranked = []
+    for row in fts_rows:
+        data = dict(row)
+        data["match_channel"] = "fts"
+        fts_ranked.append(data)
+    return _merge_ranked_rows(like_ranked, fts_ranked, sort=sort)
+
+
+def _search_supplemental_textbook_pages(
+    query: str,
+    plan: list[dict],
+    *,
+    scope_subject: str | None = None,
+    book_key: str | None = None,
+    limit: int = 80,
+) -> list[dict]:
+    compact_query = _compact_query_text(query)
+    if not compact_query:
+        return []
+
+    results = []
+    char_terms = _unique_query_characters(compact_query)
+    for entry in _load_supplemental_textbook_pages():
+        if book_key and entry.get("book_key") != book_key:
+            continue
+        if scope_subject and entry.get("subject") != scope_subject:
+            continue
+
+        matched = None
+        for priority, item in enumerate(plan):
+            compact_term = _compact_query_text(item.get("term"))
+            if not compact_term:
+                continue
+            hit_count = entry["normalized_text"].count(compact_term)
+            if hit_count <= 0:
+                continue
+            score = 420 - priority * 24 + min(90, hit_count * 18) + min(24, len(compact_term) * 3)
+            matched = {
+                "term": compact_term,
+                "basis": item.get("basis") or "fallback",
+                "score": score,
+                "hit_count": hit_count,
+            }
+            break
+
+        if not matched and char_terms:
+            char_hits = sum(1 for ch in char_terms if ch in entry["normalized_text"])
+            if char_hits >= min(2, len(char_terms)) or (len(char_terms) == 1 and char_hits == 1):
+                matched = {
+                    "term": compact_query,
+                    "basis": "character_fallback",
+                    "score": 120 + char_hits * 10,
+                    "hit_count": char_hits,
+                }
+
+        if not matched:
+            continue
+
+        results.append(
+            {
+                "id": entry["id"],
+                "content_id": entry.get("content_id"),
+                "subject": entry["subject"],
+                "title": entry["title"],
+                "book_key": entry.get("book_key"),
+                "section": entry["section"],
+                "logical_page": entry.get("logical_page"),
+                "snippet": _build_context_snippet(entry["text"], matched["term"]),
+                "text": entry["text"],
+                "source": "mineru",
+                "year": None,
+                "category": None,
+                "rank": -matched["score"],
+                "match_channel": "supplemental",
+                "match_basis": matched["basis"],
+                "matched_term": matched["term"],
+                "retrieval_source": "supplemental",
+            }
+        )
+
+    results.sort(key=lambda item: (item["rank"], item["subject"], item["title"], item["section"]))
+    return results[:limit]
+
+
 @functools.lru_cache(maxsize=1)
 def _get_concept_catalog(db_token: tuple[str, int, int]) -> tuple[tuple[str, dict, bool], ...]:
     if db_token[1] < 0:
@@ -1487,7 +2157,13 @@ def _build_chat_context_payload(con, query: str, user_message: str, history: lis
     if not clean_q:
         raise HTTPException(400, "Invalid query")
 
-    search_terms = _derive_chat_search_terms(query, user_message)
+    query_analysis = _analyze_search_query(con, query)
+    search_terms = list(
+        dict.fromkeys(
+            (query_analysis.get("retrieval_terms") or [])
+            + _derive_chat_search_terms(query, user_message)
+        )
+    )
     retrieval_terms, alias_hints = _expand_chat_search_terms(con, search_terms)
     relation_hints = _fetch_ai_relation_hints(con, search_terms, limit=4)
 
@@ -1618,6 +2294,8 @@ def _build_chat_context_payload(con, query: str, user_message: str, history: lis
         "alias_text": "\n".join(alias_lines),
         "relation_hints": relation_hints,
         "relation_text": "\n".join(relation_lines),
+        "query_analysis": query_analysis,
+        "query_resolution_text": query_analysis.get("summary") or "",
         "summary": summary,
         "suggested_questions": [
             f"请先解释「{query}」在不同学科里的共同核心。",
@@ -1647,6 +2325,9 @@ def _build_chat_prompt(query: str, user_message: str, context_payload: dict, his
 
 本轮检索关注词：
 { "、".join(context_payload.get("search_terms_used") or [query]) }
+
+术语解析：
+{context_payload.get('query_resolution_text') or '（无）'}
 
 检索扩展词（含别名）：
 { "、".join(context_payload.get("retrieval_terms_used") or context_payload.get("search_terms_used") or [query]) }
@@ -2843,6 +3524,7 @@ def _build_dict_status_payload() -> dict:
 def search(
     q: str = Query(..., min_length=1, max_length=200),
     subject: Optional[str] = Query(None),
+    scope_subject: Optional[str] = Query(None, description="Restrict textbook search to one subject across all books"),
     book_key: Optional[str] = Query(None),
     source: Optional[str] = Query(None, description="Filter by source: textbook, gaokao, or all"),
     sort: str = Query("relevance"),
@@ -2850,15 +3532,13 @@ def search(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    """Full-text search with cross-subject grouping, sorting, and filtering."""
+    """Full-text search with concept-first parsing and full-textbook fallback."""
     con = get_db()
     try:
-        # Clean query for FTS5
-        clean_q = re.sub(r'[^\w\u4e00-\u9fff\s]', '', q).strip()
+        clean_q = _clean_query_text(q)
         if not clean_q:
             raise HTTPException(400, "Invalid query")
 
-        # Build WHERE filters shared by both queries
         where_extra = ""
         filter_params = []
         if subject:
@@ -2867,85 +3547,87 @@ def search(
         if book_key:
             where_extra += " AND c.book_key = ?"
             filter_params.append(book_key)
+        elif scope_subject:
+            where_extra += " AND (c.source = 'mineru' OR c.source IS NULL) AND c.subject = ?"
+            filter_params.append(scope_subject)
         if source == 'textbook':
-            where_extra += " AND c.source = 'mineru'"
+            where_extra += " AND (c.source = 'mineru' OR c.source IS NULL)"
         elif source == 'gaokao':
             where_extra += " AND c.source = 'gaokao'"
 
         candidate_limit = _candidate_window_limit(limit, offset, multiplier=2, minimum=max(24, limit * 2), cap=600)
+        query_analysis = _analyze_search_query(
+            con,
+            q,
+            scope_subject=scope_subject or subject,
+            book_key=book_key,
+        )
+        search_plan = _build_search_term_plan(query_analysis)
 
-        # 1. Exact Substring Match (LIKE)
-        # Guarantees we NEVER miss a direct textual match due to FTS5 tokenization issues
-        like_params = [clean_q, f"%{clean_q}%"] + filter_params + [candidate_limit]
-        like_rows = con.execute(f"""
-            SELECT c.id, c.content_id, c.subject, c.title, c.book_key, c.section, c.logical_page,
-                   SUBSTR(c.text, MAX(1, INSTR(c.text, ?)-30), 120) as snippet,
-                   c.text, c.source, c.year, c.category,
-                   -100.0 as rank
-            FROM chunks c
-            WHERE c.text LIKE ? {where_extra}
-            LIMIT ?
-        """, like_params).fetchall()
-        like_ranked = []
-        for row in like_rows:
-            d = dict(row)
-            d["snippet"] = d["snippet"].replace(clean_q, f"<mark>{clean_q}</mark>")
-            d["match_channel"] = "exact"
-            like_ranked.append(d)
+        all_rows = []
+        seen_ids = set()
+        for priority, item in enumerate(search_plan):
+            rows_for_term = _search_chunks_by_term(
+                con,
+                item["term"],
+                where_extra=where_extra,
+                filter_params=filter_params,
+                candidate_limit=candidate_limit,
+                sort=sort,
+            )
+            for row in rows_for_term:
+                row_id = row.get("id")
+                if row_id in seen_ids:
+                    continue
+                seen_ids.add(row_id)
+                row["matched_term"] = item["term"]
+                row["match_basis"] = item["basis"]
+                row["retrieval_source"] = "primary"
+                row["rank"] = float(row.get("rank", 0)) + priority * 0.001
+                all_rows.append(row)
 
-        # 2. Fuzzy/Keyword Match (FTS5)
-        # Handles multiple keywords, spaces, etc.
-        fts_params = [clean_q] + filter_params + [candidate_limit]
-        
-        # Order clause
-        order_clause = "ORDER BY rank"
-        if sort == "images":
-            order_clause = "ORDER BY (LENGTH(c.text) - LENGTH(REPLACE(c.text, '![', ''))) DESC, rank"
+        supplemental_gap_terms = [
+            item
+            for item in (query_analysis.get("fallback_terms") or [])[:QUERY_TERM_PLAN_LIMIT]
+            if int(item.get("supplemental_hits") or 0) > 0 and int(item.get("textbook_hits") or 0) <= 0
+        ]
+        supplemental_needed = source != "gaokao" and (
+            not all_rows
+            or bool(supplemental_gap_terms)
+            or bool(query_analysis.get("used_supplemental_fallback"))
+        )
+        if supplemental_needed:
+            supplemental_rows = _search_supplemental_textbook_pages(
+                q,
+                search_plan,
+                scope_subject=scope_subject or subject,
+                book_key=book_key,
+                limit=max(SUPPLEMENTAL_FALLBACK_LIMIT, candidate_limit),
+            )
+            for row in supplemental_rows:
+                row_id = row.get("id")
+                if row_id in seen_ids:
+                    continue
+                seen_ids.add(row_id)
+                all_rows.append(row)
 
-        try:
-            fts_rows = con.execute(f"""
-                SELECT c.id, c.content_id, c.subject, c.title, c.book_key, c.section, c.logical_page,
-                       snippet(chunks_fts, 0, '<mark>', '</mark>', '…', 40) as snippet,
-                       c.text, c.source, c.year, c.category,
-                       f.rank as rank
-                FROM chunks c
-                JOIN chunks_fts f ON c.id = f.rowid
-                WHERE chunks_fts MATCH ? {where_extra}
-                {order_clause}
-                LIMIT ?
-            """, fts_params).fetchall()
-        except Exception:
-            fts_rows = []
+        all_rows = _merge_ranked_rows(all_rows, sort=sort)
 
-        fts_ranked = []
-        for row in fts_rows:
-            d = dict(row)
-            d["match_channel"] = "fts"
-            fts_ranked.append(d)
-
-        # 3. Merge, then apply filters and pagination globally.
-        all_rows = _merge_ranked_rows(like_ranked, fts_ranked, sort=sort)
-
-        # Optional: filter to only results with images
         if has_images:
-            all_rows = [r for r in all_rows if '![' in (r['text'] or '')]
+            all_rows = [r for r in all_rows if '![' in (r.get('text') or '')]
         rows = all_rows[offset: offset + limit]
 
-        # Group by subject
         by_subject = {}
         for r in rows:
             s = r["subject"]
             if s not in by_subject:
                 meta = SUBJECT_META.get(s, {"icon": "📚", "color": "#95a5a6"})
                 by_subject[s] = {"subject": s, **meta, "results": [], "count": 0}
-            # Count images in this chunk
             text = r["text"] or ""
             img_count = text.count('![')
-            # Page image URL from R2
             bk = r["book_key"]
-            short_key = _book_key_to_short.get(bk, "")
             page_num = r["section"] or 0
-            page_url = f"{IMG_CDN}/pages/{short_key}/p{page_num}.webp" if short_key else None
+            page_url = _book_page_url(bk, page_num)
             bm_info = _book_map.get(bk, {})
             result_item = {
                 "id": r["id"],
@@ -2957,6 +3639,9 @@ def search(
                 "image_count": img_count,
                 "source": r["source"] or "mineru",
                 "match_channel": r.get("match_channel", "fts"),
+                "match_basis": r.get("match_basis", "query"),
+                "matched_term": r.get("matched_term") or clean_q,
+                "retrieval_source": r.get("retrieval_source", "primary"),
                 "page_url": page_url,
                 "page_num": page_num,
                 "total_pages": bm_info.get("pages", 0),
@@ -2976,35 +3661,44 @@ def search(
             by_subject[s]["results"].append(result_item)
             by_subject[s]["count"] += 1
 
-        subject_counts = _compute_search_subject_counts(
-            con,
-            clean_q,
-            where_extra,
-            filter_params,
-            has_images=has_images,
-        )
-        total = sum(subject_counts.values())
+        subject_counts = dict(Counter(row["subject"] for row in all_rows))
+        total = len(all_rows)
 
-        # Cross-subject hint
         cross_subjects = [s for s in subject_counts if subject_counts[s] > 0]
         hint = None
         if len(cross_subjects) >= 2:
             names = "、".join(cross_subjects[:4])
             hint = f"💡 「{q}」横跨 {len(cross_subjects)} 个学科（{names}），它们从不同角度描述了同一概念！"
 
-        # Sort groups by cross-subject count if requested
         groups = list(by_subject.values())
-        if sort == "cross":
+        if sort == "cross" or sort == "images":
             groups.sort(key=lambda g: g["count"], reverse=True)
 
-        # Log the search query
-        log_search(q, subject=subject, book_key=book_key, source=source, result_count=total)
+        scope_label = "全部教材"
+        if book_key:
+            scope_label = "单本教材"
+        elif scope_subject:
+            scope_label = f"{scope_subject}·全部教材"
+
+        log_search(
+            q,
+            subject=subject or scope_subject,
+            book_key=book_key,
+            source=source or ("textbook" if book_key or scope_subject else None),
+            result_count=total,
+        )
 
         return {
             "query": q,
             "total": total,
             "subject_counts": subject_counts,
             "cross_hint": hint,
+            "query_analysis": {
+                **query_analysis,
+                "scope_label": scope_label,
+                "search_plan": search_plan,
+                "supplemental_index_enabled": SUPPLEMENTAL_TEXTBOOK_ROOT.exists(),
+            },
             "groups": groups,
         }
     finally:

@@ -1408,6 +1408,68 @@ body {
     height: 16px;
 }
 
+/* ── Query Analysis ──────────────────────────────────────── */
+.query-analysis {
+    margin: 0 0 16px;
+    padding: 14px 16px;
+    border-radius: var(--radius);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: linear-gradient(135deg, rgba(108, 92, 231, 0.14), rgba(46, 204, 113, 0.08));
+}
+
+.query-analysis-header {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.query-analysis-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+}
+
+.query-analysis-scope,
+.query-analysis-flag {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.query-analysis-summary {
+    color: var(--text-dim);
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.query-analysis-chips {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+}
+
+.query-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.query-chip.concept {
+    color: #d8c3ff;
+    background: rgba(108, 92, 231, 0.22);
+}
+
+.query-chip.fallback {
+    color: #b9f7db;
+    background: rgba(46, 204, 113, 0.18);
+}
+
 /* ── Related Concepts Bar ────────────────────────────────── */
 .related-bar {
     display: flex;
@@ -1481,6 +1543,11 @@ body {
     background: rgba(116, 185, 255, 0.13);
 }
 
+.match-channel.supplemental {
+    color: #b9f7db;
+    background: rgba(46, 204, 113, 0.18);
+}
+
 .result-trace {
     display: flex;
     gap: 8px;
@@ -1535,6 +1602,11 @@ body {
 .evidence-chip.neutral {
     color: #d1d7e0;
     background: rgba(255, 255, 255, 0.08);
+}
+
+.evidence-chip.supplemental {
+    color: #b9f7db;
+    background: rgba(46, 204, 113, 0.16);
 }
 
 .relation-path {

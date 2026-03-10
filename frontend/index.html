@@ -54,15 +54,15 @@
                 <div class="search-box">
                     <span class="search-icon">🔍</span>
                     <input type="text" id="search-input" placeholder="搜索概念，如：蛋白质、勾股定理、丝绸之路…" autocomplete="off">
-                    <button id="advanced-toggle" class="advanced-toggle" title="高级搜索">⚙</button>
+                    <button id="advanced-toggle" class="advanced-toggle active" title="高级搜索">⚙</button>
                     <button id="search-btn" class="search-submit">搜索</button>
                 </div>
                 <!-- Advanced Search Panel -->
-                <div id="advanced-panel" class="advanced-panel hidden">
+                <div id="advanced-panel" class="advanced-panel">
                     <div class="filter-row">
                         <div class="filter-group">
-                            <label>📚 教材</label>
-                            <select id="filter-book">
+                            <label>📚 检索范围</label>
+                            <select id="filter-scope">
                                 <option value="">全部教材</option>
                             </select>
                         </div>
@@ -99,6 +99,9 @@
 
             <!-- Cross hint -->
             <div id="cross-hint" class="cross-hint hidden"></div>
+
+            <!-- Query analysis -->
+            <div id="query-analysis" class="query-analysis hidden"></div>
 
             <!-- Related concepts -->
             <div id="related-bar" class="related-bar hidden"></div>

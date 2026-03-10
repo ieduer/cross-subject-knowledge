@@ -600,7 +600,7 @@ document.querySelectorAll('.nav-btn[data-view]').forEach(btn => {
 // ── Advanced Search Panel ─────────────────────────────────
 const advToggle = document.getElementById('advanced-toggle');
 const advPanel = document.getElementById('advanced-panel');
-const filterBook = document.getElementById('filter-book');
+const filterScope = document.getElementById('filter-scope');
 const filterSort = document.getElementById('filter-sort');
 const filterImages = document.getElementById('filter-images');
 
@@ -616,17 +616,28 @@ async function loadBooks() {
     try {
         const res = await fetch(`${API}/api/books`);
         const subjects = await res.json();
-        filterBook.innerHTML = '<option value="">全部教材</option>';
+        filterScope.innerHTML = '<option value="">全部教材</option>';
+
+        const subjectGroup = document.createElement('optgroup');
+        subjectGroup.label = '按学科检索';
+        subjects.forEach(subj => {
+            const subjectOption = document.createElement('option');
+            subjectOption.value = `subject:${subj.subject}`;
+            subjectOption.textContent = `${subj.icon} ${subj.subject} · 全部教材`;
+            subjectGroup.appendChild(subjectOption);
+        });
+        filterScope.appendChild(subjectGroup);
+
         subjects.forEach(subj => {
             const optgroup = document.createElement('optgroup');
-            optgroup.label = `${subj.icon} ${subj.subject}`;
+            optgroup.label = `${subj.icon} ${subj.subject} · 单本教材`;
             subj.books.forEach(b => {
                 const opt = document.createElement('option');
-                opt.value = b.book_key;
+                opt.value = `book:${b.book_key}`;
                 opt.textContent = b.title;
                 optgroup.appendChild(opt);
             });
-            filterBook.appendChild(optgroup);
+            filterScope.appendChild(optgroup);
         });
         booksLoaded = true;
     } catch (e) { /* silent */ }
@@ -637,7 +648,7 @@ loadBooks();
 
 // Re-search when filters change
 filterSort.addEventListener('change', () => { if (currentQuery) doSearch(currentQuery); });
-filterBook.addEventListener('change', () => { if (currentQuery) doSearch(currentQuery); });
+filterScope.addEventListener('change', () => { if (currentQuery) doSearch(currentQuery); });
 filterImages.addEventListener('change', () => { if (currentQuery) doSearch(currentQuery); });
 
 // ── Search ────────────────────────────────────────────────
@@ -645,6 +656,7 @@ const searchInput = document.getElementById('search-input');
 const searchBtn = document.getElementById('search-btn');
 const resultsEl = document.getElementById('results');
 const crossHintEl = document.getElementById('cross-hint');
+const queryAnalysisEl = document.getElementById('query-analysis');
 const subjectTabsEl = document.getElementById('subject-tabs');
 const relatedBarEl = document.getElementById('related-bar');
 
@@ -749,6 +761,7 @@ async function doSearch(q, { subject = null } = {}) {
 
     resultsEl.innerHTML = '<div class="loading">搜索中…</div>';
     crossHintEl.classList.add('hidden');
+    queryAnalysisEl.classList.add('hidden');
     subjectTabsEl.classList.add('hidden');
     relatedBarEl.classList.add('hidden');
 
@@ -756,8 +769,12 @@ async function doSearch(q, { subject = null } = {}) {
     const params = new URLSearchParams({ q, limit: 100 });
     if (currentSubjectFilter) params.set('subject', currentSubjectFilter);
 
-    const bookKey = filterBook.value;
-    if (bookKey) params.set('book_key', bookKey);
+    const scopeValue = filterScope.value;
+    if (scopeValue.startsWith('subject:')) {
+        params.set('scope_subject', scopeValue.slice('subject:'.length));
+    } else if (scopeValue.startsWith('book:')) {
+        params.set('book_key', scopeValue.slice('book:'.length));
+    }
 
     const sort = filterSort.value;
     if (sort && sort !== 'relevance') params.set('sort', sort);
@@ -842,6 +859,8 @@ function renderResults(data, filterSubject = null, subjectCountsOverride = null)
         crossHintEl.classList.add('hidden');
     }
 
+    renderQueryAnalysis(data.query_analysis, filterSubject);
+
     // AI panel: show only when 2+ subjects found
     const counts = subjectCountsOverride || data.subject_counts || {};
     const subjectCount = Object.keys(counts).length;
@@ -916,7 +935,7 @@ function renderResults(data, filterSubject = null, subjectCountsOverride = null)
                     <div class="result-meta">
                         <span class="result-title">${escHtml(r.title)} · §${r.section}</span>
                         ${r.source === 'gaokao' ? '<span class="source-badge gaokao">📝 真题</span>' : '<span class="source-badge textbook">📚 教材</span>'}
-                        ${r.match_channel === 'exact' ? '<span class="match-channel exact">🎯 精确命中</span>' : '<span class="match-channel fts">🧠 语义召回</span>'}
+                        ${renderMatchChannelBadge(r)}
                         ${r.image_count > 0 ? `<span class="img-badge">📷 ${r.image_count}</span>` : ''}
                         ${r.page_url ? `<span class="page-badge" title="第 ${r.page_num} 页 / 共 ${r.total_pages} 页">📄 p${r.logical_page ?? r.page_num}</span>` : ''}
                     </div>
@@ -948,9 +967,59 @@ function getSubjectIcon(s) {
     return map[s] || '📚';
 }
 
+function renderMatchChannelBadge(result) {
+    if (result.retrieval_source === 'supplemental' || result.match_channel === 'supplemental') {
+        return '<span class="match-channel supplemental">🧩 备份教材兜底</span>';
+    }
+    if (result.match_channel === 'exact') {
+        return '<span class="match-channel exact">🎯 精确命中</span>';
+    }
+    return '<span class="match-channel fts">🧠 语义召回</span>';
+}
+
+function renderQueryAnalysis(analysis, filterSubject = null) {
+    if (!queryAnalysisEl || filterSubject || !analysis) {
+        if (queryAnalysisEl) queryAnalysisEl.classList.add('hidden');
+        return;
+    }
+
+    const conceptTerms = Array.isArray(analysis.concept_terms) ? analysis.concept_terms : [];
+    const fallbackTerms = Array.isArray(analysis.fallback_terms) ? analysis.fallback_terms : [];
+    const chips = [];
+
+    conceptTerms.slice(0, 4).forEach(item => {
+        const matchLabel = item.match_type === 'alias' ? '概念归并' : '标准术语';
+        chips.push(`<span class="query-chip concept">${escHtml(item.term)} · ${escHtml(matchLabel)}</span>`);
+    });
+    fallbackTerms.slice(0, 4).forEach(item => {
+        const hitLabel = [item.textbook_hits ? `主库 ${item.textbook_hits}` : '', item.supplemental_hits ? `备份 ${item.supplemental_hits}` : '']
+            .filter(Boolean)
+            .join(' / ');
+        chips.push(`<span class="query-chip fallback">${escHtml(item.term)}${hitLabel ? ` · ${escHtml(hitLabel)}` : ''}</span>`);
+    });
+
+    const scopeLine = analysis.scope_label ? `<span class="query-analysis-scope">范围：${escHtml(analysis.scope_label)}</span>` : '';
+    const fallbackFlag = analysis.used_supplemental_fallback
+        ? '<span class="query-analysis-flag">当前结果含备份教材解析兜底</span>'
+        : '';
+
+    queryAnalysisEl.innerHTML = `
+        <div class="query-analysis-header">
+            <span class="query-analysis-title">术语解析</span>
+            ${scopeLine}
+        </div>
+        <div class="query-analysis-summary">${escHtml(analysis.summary || '')}</div>
+        ${chips.length ? `<div class="query-analysis-chips">${chips.join('')}</div>` : ''}
+        ${fallbackFlag}
+    `;
+    queryAnalysisEl.classList.remove('hidden');
+}
+
 function renderEvidenceTrace(result, subject, subjectBreadth, query) {
     const evidenceChips = [];
-    if (result.match_channel === 'exact') {
+    if (result.retrieval_source === 'supplemental' || result.match_channel === 'supplemental') {
+        evidenceChips.push('<span class="evidence-chip supplemental">备份教材页</span>');
+    } else if (result.match_channel === 'exact') {
         evidenceChips.push('<span class="evidence-chip strong">原文精确命中</span>');
     } else {
         evidenceChips.push('<span class="evidence-chip semantic">FTS / 语义召回</span>');
@@ -967,11 +1036,19 @@ function renderEvidenceTrace(result, subject, subjectBreadth, query) {
             `<span class="evidence-chip exam">${escHtml([result.year, result.category].filter(Boolean).join(' · ') || '高考真题')}</span>`
         );
     } else {
-        evidenceChips.push('<span class="evidence-chip textbook">教材原文</span>');
+        evidenceChips.push(
+            result.retrieval_source === 'supplemental'
+                ? '<span class="evidence-chip textbook">教材原文兜底</span>'
+                : '<span class="evidence-chip textbook">教材原文</span>'
+        );
     }
 
     if (result.image_count > 0) {
         evidenceChips.push(`<span class="evidence-chip media">含 ${result.image_count} 张图</span>`);
+    }
+
+    if (result.matched_term) {
+        evidenceChips.push(`<span class="evidence-chip neutral">术语：${escHtml(result.matched_term)}</span>`);
     }
 
     return `
