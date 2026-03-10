@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.03.10-r21",
+  "frontend_refactor_version": "2026.03.10-r22",
   "updated_at": "2026-03-10",
   "history": [
+    {
+      "version": "2026.03.10-r22",
+      "date": "2026-03-10",
+      "summary": "aligned frontend versioning with the corrected supplemental textbook rollout, including the expanded visible book catalog and supplemental vector-backed retrieval release"
+    },
     {
       "version": "2026.03.10-r21",
       "date": "2026-03-10",

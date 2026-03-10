@@ -928,7 +928,7 @@ async function loadBooks() {
             subj.books.forEach(b => {
                 const opt = document.createElement('option');
                 opt.value = `book:${b.book_key}`;
-                opt.textContent = b.title;
+                opt.textContent = b.display_title || b.title;
                 optgroup.appendChild(opt);
             });
             filterScope.appendChild(optgroup);

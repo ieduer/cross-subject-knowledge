@@ -2,6 +2,8 @@
 
 This document records the current runtime, data, and deployment boundaries of the textbook project.
 
+Before any data rebuild, deploy, rollback, or search-debugging pass, read [data_layer_lineage_memory.md](./data_layer_lineage_memory.md) first. That file is the canonical long-term memory for data lineage, count meanings, runtime asset boundaries, and release rules.
+
 ## Machine roles
 
 - Local development machine: code editing, data inspection, lightweight validation
@@ -33,8 +35,9 @@ As of 2026-03-10:
 - Textbook chunks: `17896`
 - Gaokao chunks: `4029`
 - FAISS vectors: `17896`
-- Searchable textbooks: `118` (`69` primary books + `49` supplemental-only books)
-- Supplemental textbook pages: `15875` from `251` indexed OCR source files
+- Searchable textbooks: `193` (`69` primary books + `124` supplemental-only visible books)
+- Supplemental textbook pages: `22844` from `251` indexed OCR source files
+- Supplemental vectors: `22844`
 - Embedder: `BAAI/bge-m3`
 - Reranker: `BAAI/bge-reranker-base`
 - Production image size: about `2.07 GB`

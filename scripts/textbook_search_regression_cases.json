@@ -2,11 +2,12 @@
   {
     "name": "latent_heat_geo",
     "query": "潜热",
-    "scope_subject": "地理",
     "top_k": 5,
     "require_precision_mode": false,
     "expect_subjects": ["地理"],
-    "expect_any_substrings": ["潜热", "海洋再通过潜热"]
+    "expect_any_substrings": ["潜热", "海洋再通过潜热"],
+    "reject_subjects": ["化学"],
+    "reject_any_substrings": ["潜在风险", "纳米科技", "潜水艇"]
   },
   {
     "name": "surface_evaporation_latent_heat",
@@ -40,5 +41,22 @@
     "require_precision_mode": true,
     "expect_subjects": ["思想政治"],
     "expect_any_substrings": ["解放生产力", "发展生产力", "社会主义的本质"]
+  },
+  {
+    "name": "polarity_overview",
+    "query": "极性",
+    "top_k": 5,
+    "require_precision_mode": false,
+    "expect_subjects": ["化学"],
+    "expect_any_substrings": ["分子的极性", "极性分子", "极性键"],
+    "reject_subjects": ["思想政治", "历史", "英语"]
+  },
+  {
+    "name": "polar_bond",
+    "query": "极性键",
+    "top_k": 5,
+    "require_precision_mode": false,
+    "expect_subjects": ["化学"],
+    "expect_any_substrings": ["极性共价键", "简称极性键", "非极性键"]
   }
 ]

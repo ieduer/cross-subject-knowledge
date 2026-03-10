@@ -21,6 +21,7 @@ SUPPLEMENTAL_INDEX_DST="${RUNTIME_ROOT}/data/index/supplemental_textbook_pages.j
 SUPPLEMENTAL_MANIFEST_DST="${RUNTIME_ROOT}/data/index/supplemental_textbook_pages.manifest.json"
 SUPPLEMENTAL_VECTOR_INDEX_SRC="${RUNTIME_ROOT}/data/index/supplemental_textbook_pages.index"
 SUPPLEMENTAL_VECTOR_MANIFEST_SRC="${RUNTIME_ROOT}/data/index/supplemental_textbook_pages.vector.manifest.json"
+SUPPLEMENTAL_VECTOR_BUNDLED="0"
 if [ -f "${SOURCE_ROOT}/backend/supplemental_textbook_pages.index" ]; then
   SUPPLEMENTAL_VECTOR_INDEX_SRC="${SOURCE_ROOT}/backend/supplemental_textbook_pages.index"
 fi
@@ -65,6 +66,7 @@ install -m 0644 "${SUPPLEMENTAL_MANIFEST_SRC}" "${SUPPLEMENTAL_MANIFEST_DST}"
 if [ -f "${SUPPLEMENTAL_VECTOR_INDEX_SRC}" ] && [ -f "${SUPPLEMENTAL_VECTOR_MANIFEST_SRC}" ]; then
   install -m 0644 "${SUPPLEMENTAL_VECTOR_INDEX_SRC}" "${SUPPLEMENTAL_VECTOR_INDEX_DST}"
   install -m 0644 "${SUPPLEMENTAL_VECTOR_MANIFEST_SRC}" "${SUPPLEMENTAL_VECTOR_MANIFEST_DST}"
+  SUPPLEMENTAL_VECTOR_BUNDLED="1"
 fi
 
 commit_sha="$(git rev-parse --short HEAD)"
@@ -222,11 +224,11 @@ for _ in $(seq 1 24); do
     fi
     if curl -sf http://127.0.0.1:8080/api/health >/tmp/textbook_health.json; then
       if env_true "${RERANKER_ENABLED}"; then
-        if [ "${warmed_precision}" = "true" ] && HEALTH_REQUIRE_RERANKER=1 health_json_ok; then
+        if [ "${warmed_precision}" = "true" ] && HEALTH_REQUIRE_RERANKER=1 HEALTH_REQUIRE_SUPPLEMENTAL_VECTOR="${SUPPLEMENTAL_VECTOR_BUNDLED}" health_json_ok; then
           healthy="true"
           break
         fi
-      elif health_json_ok; then
+      elif HEALTH_REQUIRE_SUPPLEMENTAL_VECTOR="${SUPPLEMENTAL_VECTOR_BUNDLED}" health_json_ok; then
         healthy="true"
         break
       fi

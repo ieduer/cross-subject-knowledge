@@ -39,7 +39,9 @@ def evaluate_case(case: dict) -> dict:
     top_k = max(1, int(case.get("top_k") or 5))
     require_precision_mode = bool(case.get("require_precision_mode"))
     expected_subjects = {str(item).strip() for item in (case.get("expect_subjects") or []) if str(item).strip()}
+    reject_subjects = {str(item).strip() for item in (case.get("reject_subjects") or []) if str(item).strip()}
     expected_fragments = [str(item).strip() for item in (case.get("expect_any_substrings") or []) if str(item).strip()]
+    rejected_fragments = [str(item).strip() for item in (case.get("reject_any_substrings") or []) if str(item).strip()]
 
     con = backend.get_db()
     try:
@@ -82,11 +84,23 @@ def evaluate_case(case: dict) -> dict:
             for blob in evidence_blobs
         )
 
+    reject_subjects_ok = True
+    if reject_subjects:
+        reject_subjects_ok = all(subject not in reject_subjects for subject in top_subjects if subject)
+
+    reject_fragments_ok = True
+    if rejected_fragments:
+        reject_fragments_ok = all(
+            fragment not in blob
+            for fragment in rejected_fragments
+            for blob in evidence_blobs
+        )
+
     precision_ok = True
     if require_precision_mode:
         precision_ok = bool(meta.get("precision_mode"))
 
-    passed = bool(top_rows) and subject_ok and fragment_ok and precision_ok
+    passed = bool(top_rows) and subject_ok and fragment_ok and reject_subjects_ok and reject_fragments_ok and precision_ok
     return {
         "name": case.get("name") or query,
         "query": query,
@@ -101,6 +115,8 @@ def evaluate_case(case: dict) -> dict:
             "has_results": bool(top_rows),
             "subject_ok": subject_ok,
             "fragment_ok": fragment_ok,
+            "reject_subjects_ok": reject_subjects_ok,
+            "reject_fragments_ok": reject_fragments_ok,
             "precision_ok": precision_ok,
         },
     }

@@ -1089,10 +1089,14 @@ def _candidate_window_limit(limit: int, offset: int = 0, *, multiplier: int = 2,
     return min(cap, max(minimum, (offset + limit) * multiplier))
 
 
+def _stable_sort_id(value) -> str:
+    return str(value or "")
+
+
 def _ranked_row_sort_key(item: dict, sort: str = "relevance") -> tuple:
     if sort == "images":
-        return (-((item.get("text") or "").count("![")), item.get("rank", 0), item.get("id", 0))
-    return (item.get("rank", 0), item.get("id", 0))
+        return (-((item.get("text") or "").count("![")), item.get("rank", 0), _stable_sort_id(item.get("id")))
+    return (item.get("rank", 0), _stable_sort_id(item.get("id")))
 
 
 def _merge_ranked_rows(*row_groups, sort: str = "relevance") -> list[dict]:
@@ -1183,19 +1187,29 @@ def _with_edition(base_title: str, edition: str) -> str:
 def _match_registry_candidate(candidates, edition_hint: str) -> dict | None:
     if not candidates:
         return None
-    if len(candidates) == 1:
-        return dict(candidates[0])
-    if edition_hint:
-        matched = [
-            item
-            for item in candidates
-            if edition_hint == str(item.get("edition") or "").strip()
-            or edition_hint in str(item.get("display_title") or "")
-            or edition_hint in str(item.get("title") or "")
-            or edition_hint in str(item.get("book_key") or "")
-        ]
+    normalized_hint = str(edition_hint or "").strip()
+
+    def candidate_matches(item: dict) -> bool:
+        if not normalized_hint:
+            return True
+        return (
+            normalized_hint == str(item.get("edition") or "").strip()
+            or normalized_hint in str(item.get("display_title") or "")
+            or normalized_hint in str(item.get("title") or "")
+            or normalized_hint in str(item.get("book_key") or "")
+        )
+
+    if normalized_hint:
+        matched = [item for item in candidates if candidate_matches(item)]
         if len(matched) == 1:
             return dict(matched[0])
+        return None
+
+    unique_book_keys = {str(item.get("book_key") or "").strip() for item in candidates if str(item.get("book_key") or "").strip()}
+    if len(unique_book_keys) == 1 and candidates:
+        return dict(candidates[0])
+    if len(candidates) == 1:
+        return dict(candidates[0])
     return None
 
 
@@ -1323,6 +1337,8 @@ def _resolve_supplemental_book_meta(path: Path, payload: list[dict] | None = Non
     text_probe = _build_text_probe(payload or [])
     edition_hint = _detect_edition_label(display_title, path, text_probe)
     matched = registry["by_content_id"].get(content_id)
+    if matched and edition_hint and not _match_registry_candidate((matched,), edition_hint):
+        matched = None
     if not matched:
         title_key = _normalize_lookup_title(display_title)
         matched = _match_registry_candidate(
@@ -1653,6 +1669,39 @@ def _count_supplemental_term_hits(
             if hits >= cap:
                 break
     return hits
+
+
+def _supplemental_whole_term_hit(query_text: str, candidate: dict) -> bool:
+    compact_query = _compact_query_text(query_text)
+    reference = _compact_query_text(
+        "\n".join(
+            part for part in (
+                candidate.get("matched_term") or "",
+                candidate.get("snippet") or "",
+                candidate.get("text") or "",
+            ) if part
+        )
+    )
+    if not reference:
+        return False
+    if compact_query and len(compact_query) >= 2 and compact_query in reference:
+        return True
+    matched_term = _compact_query_text(candidate.get("matched_term") or "")
+    return len(matched_term) >= 2 and matched_term in reference
+
+
+def _supplemental_candidate_passes_guardrails(query_text: str, candidate: dict) -> bool:
+    if candidate.get("retrieval_source") != "supplemental":
+        return True
+    # Users search for concept-bearing terms, not arbitrary character overlap.
+    if candidate.get("match_basis") == "character_fallback":
+        return False
+    if _supplemental_whole_term_hit(query_text, candidate):
+        return True
+    return (
+        candidate.get("snippet_source") == "sentence"
+        and float(candidate.get("evidence_score") or candidate.get("evidence_bonus") or 0.0) >= 18.0
+    )
 
 
 def _derive_query_candidate_terms(query: str, *, limit: int = 18) -> list[str]:
@@ -2004,6 +2053,8 @@ def _collect_legacy_search_rows(
             row_id = row.get("id")
             if row_id in local_seen:
                 continue
+            if not _supplemental_candidate_passes_guardrails(query, row):
+                continue
             local_seen.add(row_id)
             rows.append(row)
 
@@ -2087,7 +2138,6 @@ def _search_supplemental_textbook_pages(
         return []
 
     results = []
-    char_terms = _unique_query_characters(compact_query)
     for entry in _load_supplemental_textbook_pages():
         if book_key and entry.get("book_key") != book_key:
             continue
@@ -2110,16 +2160,6 @@ def _search_supplemental_textbook_pages(
                 "hit_count": hit_count,
             }
             break
-
-        if not matched and char_terms:
-            char_hits = sum(1 for ch in char_terms if ch in entry["normalized_text"])
-            if char_hits >= min(2, len(char_terms)) or (len(char_terms) == 1 and char_hits == 1):
-                matched = {
-                    "term": compact_query,
-                    "basis": "character_fallback",
-                    "score": 120 + char_hits * 10,
-                    "hit_count": char_hits,
-                }
 
         if not matched:
             continue
@@ -3325,9 +3365,12 @@ def _rerank_precision_candidates(query_text: str, query_profile: dict, candidate
         key=lambda item: (
             -item.get("pre_rerank_score", 0.0),
             -len(item.get("matched_term") or ""),
-            item.get("id", 0),
+            _stable_sort_id(item.get("id")),
         )
     )
+    prepared = [item for item in prepared if _supplemental_candidate_passes_guardrails(query_text, item)]
+    if not prepared:
+        return []
 
     rerank_model = _get_reranker()
     rerank_scores = [0.0] * len(prepared)
@@ -3373,7 +3416,7 @@ def _rerank_precision_candidates(query_text: str, query_profile: dict, candidate
             -item.get("final_score", 0.0),
             -item.get("rerank_score", 0.0),
             -len(item.get("matched_term") or ""),
-            item.get("id", 0),
+            _stable_sort_id(item.get("id")),
         )
     )
     return reranked
@@ -3732,7 +3775,7 @@ def _collect_hybrid_search_rows(
             -item.get("base_score", 0.0),
             -item.get("semantic_score", 0.0),
             -len(item.get("matched_term") or ""),
-            item.get("id", 0),
+            _stable_sort_id(item.get("id")),
         )
     )
     reranked = _rerank_precision_candidates(query, query_profile, candidates)
@@ -5813,6 +5856,7 @@ def search(
                     "subjects": int(len((_load_supplemental_manifest() or {}).get("subjects") or {})),
                     "source_files_total": int((_load_supplemental_manifest() or {}).get("source_files_total") or 0),
                     "source_files_indexed": int((_load_supplemental_manifest() or {}).get("source_files_indexed") or 0),
+                    "edition_conflicts": int((_load_supplemental_manifest() or {}).get("edition_conflicts") or 0),
                 },
             },
             "groups": groups,
@@ -6137,6 +6181,20 @@ def books():
                 "has_page_images": bool(item.get("has_page_images")),
             })
         for payload in by_subject.values():
+            title_counts = Counter(str(item.get("title") or "").strip() for item in payload["books"] if str(item.get("title") or "").strip())
+            for item in payload["books"]:
+                title = str(item.get("title") or "").strip()
+                edition = str(item.get("edition") or "").strip()
+                extras = []
+                if edition and edition not in title:
+                    extras.append(edition)
+                if not item.get("has_page_images"):
+                    extras.append("补充教材")
+                if title and title_counts.get(title, 0) > 1 and not edition:
+                    marker = str(item.get("book_key") or "").strip()[-4:]
+                    if marker:
+                        extras.append(f"#{marker}")
+                item["display_title"] = f"{title}（{' · '.join(extras)}）" if title and extras else title
             payload["books"].sort(key=lambda item: (item.get("title") or "", item.get("book_key") or ""))
         return list(by_subject.values())
     finally:
@@ -7798,11 +7856,13 @@ def health():
     supplemental_source_is_index = supplemental_source["source"] != "directory"
     supplemental_unresolved_pages = int((supplemental_manifest or {}).get("unresolved_pages") or 0)
     supplemental_unresolved_books = int((supplemental_manifest or {}).get("unresolved_books") or 0)
+    supplemental_edition_conflicts = int((supplemental_manifest or {}).get("edition_conflicts") or 0)
     supplemental_ok = bool(supplemental_source["available"]) and (
         not supplemental_source_is_index or (
             supplemental_has_manifest
             and supplemental_unresolved_pages == 0
             and supplemental_unresolved_books == 0
+            and supplemental_edition_conflicts == 0
         )
     )
     # DB check
@@ -7877,6 +7937,7 @@ def health():
             "subjects": len(supplemental_manifest.get("subjects") or {}),
             "unresolved_books": supplemental_unresolved_books,
             "unresolved_pages": supplemental_unresolved_pages,
+            "edition_conflicts": supplemental_edition_conflicts,
             "output_sha256": (supplemental_manifest.get("output") or {}).get("sha256"),
         },
     }

@@ -245,19 +245,29 @@ def _with_edition(base_title: str, edition: str) -> str:
 def _match_registry_candidate(candidates, edition_hint: str) -> dict | None:
     if not candidates:
         return None
-    if len(candidates) == 1:
-        return dict(candidates[0])
-    if edition_hint:
-        matched = [
-            item
-            for item in candidates
-            if edition_hint == str(item.get("edition") or "").strip()
-            or edition_hint in str(item.get("display_title") or "")
-            or edition_hint in str(item.get("title") or "")
-            or edition_hint in str(item.get("book_key") or "")
-        ]
+    normalized_hint = str(edition_hint or "").strip()
+
+    def candidate_matches(item: dict) -> bool:
+        if not normalized_hint:
+            return True
+        return (
+            normalized_hint == str(item.get("edition") or "").strip()
+            or normalized_hint in str(item.get("display_title") or "")
+            or normalized_hint in str(item.get("title") or "")
+            or normalized_hint in str(item.get("book_key") or "")
+        )
+
+    if normalized_hint:
+        matched = [item for item in candidates if candidate_matches(item)]
         if len(matched) == 1:
             return dict(matched[0])
+        return None
+
+    unique_book_keys = {str(item.get("book_key") or "").strip() for item in candidates if str(item.get("book_key") or "").strip()}
+    if len(unique_book_keys) == 1 and candidates:
+        return dict(candidates[0])
+    if len(candidates) == 1:
+        return dict(candidates[0])
     return None
 
 
@@ -286,6 +296,8 @@ def _resolve_supplemental_book_meta(path: Path, registry: dict, payload: list[di
     text_probe = _build_text_probe(payload or [])
     edition_hint = _detect_edition_label(display_title, path, text_probe)
     matched = registry["by_content_id"].get(content_id)
+    if matched and edition_hint and not _match_registry_candidate((matched,), edition_hint):
+        matched = None
     if not matched:
         title_key = _normalize_lookup_title(display_title)
         matched = _match_registry_candidate(
@@ -363,6 +375,7 @@ def build_index(source_root: Path, db_path: Path, output_gz: Path, manifest_path
     problems: list[str] = []
     books_catalog: dict[str, dict] = {}
     page_entries_by_key: dict[tuple[str, int], dict] = {}
+    edition_conflicts: list[dict] = []
     pages_written = 0
     chars_written = 0
     indexed_files = 0
@@ -436,6 +449,24 @@ def build_index(source_root: Path, db_path: Path, output_gz: Path, manifest_path
                 "pages": 0,
             },
         )
+        existing_edition = str(catalog.get("edition") or "").strip()
+        incoming_edition = str(meta.get("edition") or "").strip()
+        if existing_edition and incoming_edition and existing_edition != incoming_edition:
+            edition_conflicts.append(
+                {
+                    "book_key": book_key,
+                    "subject": subject,
+                    "title": title,
+                    "existing_edition": existing_edition,
+                    "incoming_edition": incoming_edition,
+                    "path": str(path.relative_to(source_root.parent)),
+                }
+            )
+            problems.append(
+                f"edition conflict for {book_key}: {existing_edition} vs {incoming_edition} ({path.relative_to(source_root.parent)})"
+            )
+        elif not existing_edition and incoming_edition:
+            catalog["edition"] = incoming_edition
         catalog["source_files"].add(str(path.relative_to(source_root.parent)))
 
         for page_num in sorted(blocks_by_page):
@@ -520,6 +551,34 @@ def build_index(source_root: Path, db_path: Path, output_gz: Path, manifest_path
         }
         for subject, stats in sorted(stats_by_subject.items())
     }
+    content_id_missing_books = sum(1 for item in books_catalog.values() if not item.get("content_id"))
+    blank_title_groups = []
+    blank_title_buckets: dict[tuple[str, str], list[dict]] = {}
+    for item in books_catalog.values():
+        edition = (item.get("edition") or "").strip()
+        if edition:
+            continue
+        key = (item.get("subject") or "", item.get("base_title") or item.get("title") or "")
+        blank_title_buckets.setdefault(key, []).append(item)
+    for (subject, base_title), items in sorted(blank_title_buckets.items()):
+        if len(items) <= 1:
+            continue
+        blank_title_groups.append(
+            {
+                "subject": subject,
+                "base_title": base_title,
+                "books": [
+                    {
+                        "book_key": item.get("book_key"),
+                        "content_id": item.get("content_id"),
+                        "source": item.get("source"),
+                        "source_files": len(item.get("source_files") or []),
+                        "pages": item.get("pages"),
+                    }
+                    for item in sorted(items, key=lambda row: (row.get("book_key") or ""))
+                ],
+            }
+        )
     manifest = {
         "schema_version": 1,
         "built_at": datetime.now(timezone.utc).isoformat(),
@@ -532,8 +591,13 @@ def build_index(source_root: Path, db_path: Path, output_gz: Path, manifest_path
         "chars": chars_written,
         "primary_books": sum(1 for item in books_catalog.values() if item.get("has_page_images")),
         "supplemental_only_books": sum(1 for item in books_catalog.values() if not item.get("has_page_images")),
+        "content_id_missing_books": content_id_missing_books,
         "unresolved_pages": 0,
         "unresolved_books": 0,
+        "edition_conflicts": len(edition_conflicts),
+        "edition_conflict_samples": edition_conflicts[:20],
+        "blank_title_duplicate_groups": len(blank_title_groups),
+        "blank_title_duplicate_samples": blank_title_groups[:20],
         "book_catalog": sorted(
             [
                 {
