@@ -1747,6 +1747,90 @@ def _build_search_term_plan(query_analysis: dict) -> list[dict]:
     return plan[:QUERY_TERM_PLAN_LIMIT]
 
 
+def _build_textbook_search_filters(
+    *,
+    scope_subject: str | None = None,
+    book_key: str | None = None,
+) -> tuple[str, list]:
+    where_extra = " AND (c.source = 'mineru' OR c.source IS NULL)"
+    filter_params: list = []
+    if scope_subject:
+        where_extra += " AND c.subject = ?"
+        filter_params.append(scope_subject)
+    if book_key:
+        where_extra += " AND c.book_key = ?"
+        filter_params.append(book_key)
+    return where_extra, filter_params
+
+
+def _collect_legacy_search_rows(
+    con: sqlite3.Connection,
+    query: str,
+    query_analysis: dict,
+    search_plan: list[dict],
+    *,
+    where_extra: str,
+    filter_params: list,
+    candidate_limit: int,
+    sort: str,
+    scope_subject: str | None = None,
+    book_key: str | None = None,
+    source: str | None = None,
+    include_supplemental: bool = True,
+    seen_ids: set | None = None,
+    rank_shift: float = 0.0,
+) -> list[dict]:
+    rows = []
+    local_seen = seen_ids if seen_ids is not None else set()
+    for priority, item in enumerate(search_plan):
+        rows_for_term = _search_chunks_by_term(
+            con,
+            item["term"],
+            where_extra=where_extra,
+            filter_params=filter_params,
+            candidate_limit=candidate_limit,
+            sort=sort,
+        )
+        for row in rows_for_term:
+            row_id = row.get("id")
+            if row_id in local_seen:
+                continue
+            local_seen.add(row_id)
+            merged = dict(row)
+            merged["matched_term"] = item["term"]
+            merged["match_basis"] = item["basis"]
+            merged["retrieval_source"] = "primary"
+            merged["rank"] = float(merged.get("rank", 0)) + priority * 0.001 + rank_shift
+            rows.append(merged)
+
+    supplemental_gap_terms = [
+        item
+        for item in (query_analysis.get("fallback_terms") or [])[:QUERY_TERM_PLAN_LIMIT]
+        if int(item.get("supplemental_hits") or 0) > 0 and int(item.get("textbook_hits") or 0) <= 0
+    ]
+    supplemental_needed = include_supplemental and source != "gaokao" and (
+        not rows
+        or bool(supplemental_gap_terms)
+        or bool(query_analysis.get("used_supplemental_fallback"))
+    )
+    if supplemental_needed:
+        supplemental_rows = _search_supplemental_textbook_pages(
+            query,
+            search_plan,
+            scope_subject=scope_subject,
+            book_key=book_key,
+            limit=max(SUPPLEMENTAL_FALLBACK_LIMIT, candidate_limit),
+        )
+        for row in supplemental_rows:
+            row_id = row.get("id")
+            if row_id in local_seen:
+                continue
+            local_seen.add(row_id)
+            rows.append(row)
+
+    return rows
+
+
 def _search_chunks_by_term(
     con: sqlite3.Connection,
     term: str,
@@ -3085,6 +3169,190 @@ def _collect_precision_candidates(
         )
 
     return list(bucket.values()), search_terms
+
+
+def _build_hybrid_search_term_plan(query_analysis: dict, query_profile: dict) -> list[dict]:
+    plan = []
+    seen = set()
+    target = query_profile.get("target") or query_analysis.get("display_term") or query_analysis.get("query") or ""
+    precision_mode = bool(query_profile.get("precision_mode"))
+
+    def add_item(term: str, basis: str):
+        clean = _clean_query_text(term)
+        compact = _compact_query_text(clean)
+        if len(compact) < 2 or compact in seen:
+            return
+        if precision_mode and _is_low_signal_precision_term(clean, target):
+            return
+        seen.add(compact)
+        plan.append({"term": clean, "basis": basis})
+
+    if precision_mode:
+        for round_index, basis in ((0, "precision_query"), (1, "precision_followup")):
+            for term in _build_precision_search_terms(query_profile, query_analysis, round_index=round_index):
+                add_item(term, basis)
+    else:
+        for item in _build_search_term_plan(query_analysis):
+            add_item(item.get("term", ""), item.get("basis") or "query")
+        display_term = query_analysis.get("display_term") or ""
+        if display_term:
+            add_item(display_term, "display_term")
+
+    add_item(query_analysis.get("query", ""), "query")
+    return plan[: max(QUERY_TERM_PLAN_LIMIT + 4, 12)]
+
+
+def _hybrid_search_basis_bonus(basis: str) -> float:
+    return {
+        "exact": 54.0,
+        "concept": 50.0,
+        "contained": 46.0,
+        "phrase": 44.0,
+        "alias": 40.0,
+        "expanded": 34.0,
+        "precision_query": 58.0,
+        "precision_followup": 42.0,
+        "display_term": 30.0,
+        "fallback": 24.0,
+        "query": 18.0,
+    }.get(basis, 20.0)
+
+
+def _hybrid_search_channel_bonus(channel: str) -> float:
+    return {
+        "exact": 44.0,
+        "fts": 24.0,
+        "semantic": 18.0,
+        "supplemental": 16.0,
+    }.get(channel, 12.0)
+
+
+def _build_search_semantic_queries(query: str, query_analysis: dict, query_profile: dict) -> list[str]:
+    queries = []
+    seen = set()
+
+    def add_query(value: str):
+        clean = _clean_query_text(value)
+        compact = _compact_query_text(clean)
+        if len(compact) < 2 or compact in seen:
+            return
+        seen.add(compact)
+        queries.append(clean)
+
+    add_query(query)
+    add_query(query_profile.get("target") or "")
+    add_query(query_analysis.get("display_term") or "")
+
+    if query_profile.get("precision_mode") and query_profile.get("intent") == "definition":
+        target = query_profile.get("target") or query
+        for value in (f"{target}是什么", f"什么是{target}", f"{target}是"):
+            add_query(value)
+
+    return queries[:4]
+
+
+def _collect_hybrid_search_rows(
+    con: sqlite3.Connection,
+    query: str,
+    query_analysis: dict,
+    *,
+    scope_subject: str | None = None,
+    book_key: str | None = None,
+    candidate_limit: int = 80,
+) -> tuple[list[dict], dict]:
+    query_profile = _build_precision_query_profile(query, query)
+    term_plan = _build_hybrid_search_term_plan(query_analysis, query_profile)
+    textbook_where_extra, textbook_filter_params = _build_textbook_search_filters(
+        scope_subject=scope_subject,
+        book_key=book_key,
+    )
+    lexical_limit = max(8, min(24, math.ceil(candidate_limit / max(1, min(len(term_plan), 4)))))
+    supplemental_limit = max(12, min(SUPPLEMENTAL_FALLBACK_LIMIT, math.ceil(candidate_limit / 2)))
+    bucket: dict[int | str, dict] = {}
+
+    for priority, item in enumerate(term_plan):
+        rows = _search_chunks_by_term(
+            con,
+            item["term"],
+            where_extra=textbook_where_extra,
+            filter_params=textbook_filter_params,
+            candidate_limit=lexical_limit,
+            sort="relevance",
+        )
+        for row in rows[:lexical_limit]:
+            channel = row.get("match_channel") or "fts"
+            base_score = 168.0 - priority * 10.0
+            base_score += _hybrid_search_basis_bonus(item.get("basis") or "query")
+            base_score += _hybrid_search_channel_bonus(channel)
+            _append_precision_candidate(
+                bucket,
+                dict(row),
+                base_score=base_score,
+                matched_term=item["term"],
+                match_basis=item.get("basis") or "query",
+                match_channel=channel,
+                retrieval_source="primary",
+            )
+
+    semantic_queries = _build_search_semantic_queries(query, query_analysis, query_profile)
+    for semantic_priority, semantic_query in enumerate(semantic_queries):
+        for row in _search_textbook_semantic_candidates(
+            con,
+            semantic_query,
+            scope_subject=scope_subject,
+            book_key=book_key,
+            limit=max(8, min(18, math.ceil(candidate_limit / 3))),
+        ):
+            _append_precision_candidate(
+                bucket,
+                row,
+                base_score=164.0 - semantic_priority * 12.0,
+                matched_term=semantic_query,
+                match_basis="semantic_query",
+                match_channel="semantic",
+                retrieval_source="primary",
+            )
+
+    supplemental_rows = _search_supplemental_textbook_pages(
+        query_profile.get("target") or query,
+        term_plan,
+        scope_subject=scope_subject,
+        book_key=book_key,
+        limit=supplemental_limit,
+    )
+    for index, row in enumerate(supplemental_rows):
+        _append_precision_candidate(
+            bucket,
+            row,
+            base_score=176.0 - index * 5.0,
+            matched_term=row.get("matched_term") or (query_profile.get("target") or query),
+            match_basis=row.get("match_basis") or "fallback",
+            match_channel=row.get("match_channel") or "supplemental",
+            retrieval_source="supplemental",
+        )
+
+    candidates = list(bucket.values())
+    candidates.sort(
+        key=lambda item: (
+            -item.get("base_score", 0.0),
+            -item.get("semantic_score", 0.0),
+            -len(item.get("matched_term") or ""),
+            item.get("id", 0),
+        )
+    )
+    reranked = _rerank_precision_candidates(query, query_profile, candidates)
+    for item in reranked:
+        item["rank"] = -float(item.get("final_score", item.get("base_score", 0.0)))
+
+    return reranked, {
+        "mode": "hybrid_rerank",
+        "precision_mode": bool(query_profile.get("precision_mode")),
+        "query_intent": query_profile.get("intent") or "lookup",
+        "candidate_count": len(candidates),
+        "term_plan": term_plan,
+        "semantic_queries": semantic_queries,
+        "reranker_loaded": bool(reranker),
+    }
 
 
 def _build_precision_followups(query_profile: dict) -> list[str]:
@@ -4774,55 +5042,65 @@ def search(
             book_key=book_key,
         )
         search_plan = _build_search_term_plan(query_analysis)
+        textbook_scope_subject = scope_subject or subject
+        use_hybrid_search = (
+            source != "gaokao"
+            and sort == "relevance"
+            and not has_images
+            and len(_compact_query_text(clean_q)) >= 2
+        )
 
-        all_rows = []
-        seen_ids = set()
-        for priority, item in enumerate(search_plan):
-            rows_for_term = _search_chunks_by_term(
+        hybrid_meta = None
+        if use_hybrid_search:
+            hybrid_rows, hybrid_meta = _collect_hybrid_search_rows(
                 con,
-                item["term"],
+                q,
+                query_analysis,
+                scope_subject=textbook_scope_subject,
+                book_key=book_key,
+                candidate_limit=candidate_limit,
+            )
+            all_rows = list(hybrid_rows)
+            seen_ids = {row.get("id") for row in all_rows if row.get("id") is not None}
+            include_gaokao = not book_key and not scope_subject and source != "textbook"
+            if include_gaokao:
+                gaokao_where_extra = " AND c.source = 'gaokao'"
+                gaokao_filter_params = []
+                if subject:
+                    gaokao_where_extra += " AND c.subject = ?"
+                    gaokao_filter_params.append(subject)
+                gaokao_rows = _collect_legacy_search_rows(
+                    con,
+                    q,
+                    query_analysis,
+                    search_plan,
+                    where_extra=gaokao_where_extra,
+                    filter_params=gaokao_filter_params,
+                    candidate_limit=max(12, min(60, math.ceil(candidate_limit / 2))),
+                    sort=sort,
+                    source="gaokao",
+                    include_supplemental=False,
+                    seen_ids=seen_ids,
+                    rank_shift=40.0,
+                )
+                all_rows = _merge_ranked_rows(all_rows, gaokao_rows, sort=sort)
+            else:
+                all_rows = _merge_ranked_rows(all_rows, sort=sort)
+        else:
+            all_rows = _collect_legacy_search_rows(
+                con,
+                q,
+                query_analysis,
+                search_plan,
                 where_extra=where_extra,
                 filter_params=filter_params,
                 candidate_limit=candidate_limit,
                 sort=sort,
-            )
-            for row in rows_for_term:
-                row_id = row.get("id")
-                if row_id in seen_ids:
-                    continue
-                seen_ids.add(row_id)
-                row["matched_term"] = item["term"]
-                row["match_basis"] = item["basis"]
-                row["retrieval_source"] = "primary"
-                row["rank"] = float(row.get("rank", 0)) + priority * 0.001
-                all_rows.append(row)
-
-        supplemental_gap_terms = [
-            item
-            for item in (query_analysis.get("fallback_terms") or [])[:QUERY_TERM_PLAN_LIMIT]
-            if int(item.get("supplemental_hits") or 0) > 0 and int(item.get("textbook_hits") or 0) <= 0
-        ]
-        supplemental_needed = source != "gaokao" and (
-            not all_rows
-            or bool(supplemental_gap_terms)
-            or bool(query_analysis.get("used_supplemental_fallback"))
-        )
-        if supplemental_needed:
-            supplemental_rows = _search_supplemental_textbook_pages(
-                q,
-                search_plan,
-                scope_subject=scope_subject or subject,
+                scope_subject=textbook_scope_subject,
                 book_key=book_key,
-                limit=max(SUPPLEMENTAL_FALLBACK_LIMIT, candidate_limit),
+                source=source,
             )
-            for row in supplemental_rows:
-                row_id = row.get("id")
-                if row_id in seen_ids:
-                    continue
-                seen_ids.add(row_id)
-                all_rows.append(row)
-
-        all_rows = _merge_ranked_rows(all_rows, sort=sort)
+            all_rows = _merge_ranked_rows(all_rows, sort=sort)
 
         if has_images:
             all_rows = [r for r in all_rows if '![' in (r.get('text') or '')]
@@ -4907,7 +5185,13 @@ def search(
             "query_analysis": {
                 **query_analysis,
                 "scope_label": scope_label,
-                "search_plan": search_plan,
+                "search_plan": hybrid_meta["term_plan"] if hybrid_meta else search_plan,
+                "search_mode": hybrid_meta["mode"] if hybrid_meta else "lexical",
+                "precision_query": hybrid_meta["precision_mode"] if hybrid_meta else _is_precision_query(q),
+                "query_intent": hybrid_meta["query_intent"] if hybrid_meta else None,
+                "hybrid_candidate_count": hybrid_meta["candidate_count"] if hybrid_meta else 0,
+                "semantic_queries": hybrid_meta["semantic_queries"] if hybrid_meta else [],
+                "reranker_loaded": hybrid_meta["reranker_loaded"] if hybrid_meta else bool(reranker),
                 "supplemental_index_enabled": _get_supplemental_source_info()["available"],
                 "supplemental_index_source": _get_supplemental_source_info()["source"],
                 "supplemental_manifest": {
