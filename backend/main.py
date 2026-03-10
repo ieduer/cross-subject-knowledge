@@ -2730,6 +2730,20 @@ def _build_precision_query_profile(query: str, user_message: str = "") -> dict:
     }
 
 
+def _is_low_signal_precision_term(term: str, target: str = "") -> bool:
+    compact = _compact_query_text(term)
+    target_compact = _compact_query_text(target)
+    if len(compact) < 2:
+        return True
+    if compact in {"定义", "概念", "本质", "特点", "条件", "作用", "过程", "原因", "什么是", "是什么"}:
+        return True
+    if re.fullmatch(r"的(?:定义|概念|本质|特点|条件|作用|过程|原因)", compact):
+        return True
+    if target_compact and compact in {f"{target_compact}的", f"的{target_compact}", f"是{target_compact}"}:
+        return True
+    return False
+
+
 def _build_precision_search_terms(query_profile: dict, query_analysis: dict, *, round_index: int = 0) -> list[str]:
     terms = []
     seen = set()
@@ -2749,13 +2763,6 @@ def _build_precision_search_terms(query_profile: dict, query_analysis: dict, *, 
     add_term(query)
     add_term(target)
 
-    for item in (query_analysis.get("concept_terms") or [])[:4]:
-        add_term(item.get("term") or "")
-        for alias in item.get("aliases", [])[:2]:
-            add_term(alias)
-    for term in (query_analysis.get("retrieval_terms") or [])[:6]:
-        add_term(term)
-
     if intent == "definition":
         if round_index == 0:
             for term in (
@@ -2764,6 +2771,8 @@ def _build_precision_search_terms(query_profile: dict, query_analysis: dict, *, 
                 f"什么是{target}",
                 f"{target}是",
                 f"{target}概念",
+                f"称为{target}",
+                f"才能称为{target}",
             ):
                 add_term(term)
         else:
@@ -2772,6 +2781,7 @@ def _build_precision_search_terms(query_profile: dict, query_analysis: dict, *, 
                 f"{target}通常指",
                 f"{target}称为",
                 f"{target}叫做",
+                f"什么样的物质才能称为{target}",
             ):
                 add_term(term)
     elif intent == "comparison":
@@ -2789,6 +2799,15 @@ def _build_precision_search_terms(query_profile: dict, query_analysis: dict, *, 
     elif intent == "process":
         add_term(f"{target}过程")
         add_term(f"{target}步骤")
+
+    for item in (query_analysis.get("concept_terms") or [])[:4]:
+        add_term(item.get("term") or "")
+        for alias in item.get("aliases", [])[:2]:
+            add_term(alias)
+    for term in (query_analysis.get("retrieval_terms") or [])[:6]:
+        if _is_low_signal_precision_term(term, target):
+            continue
+        add_term(term)
 
     return terms[:12]
 
@@ -2914,6 +2933,9 @@ def _definition_intent_bonus(query_profile: dict, candidate: dict) -> float:
         f"{target}称为",
         f"{target}叫做",
         f"什么是{target}",
+        f"称为{target}",
+        f"才能称为{target}",
+        f"什么样的物质才能称为{target}",
         f"{target}概念",
     )
     for pattern in patterns:
