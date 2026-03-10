@@ -3171,6 +3171,16 @@ body {
     box-shadow: 0 4px 12px rgba(108, 92, 231, 0.2);
 }
 
+.view-page-note {
+    background: rgba(255, 184, 108, 0.12);
+    border: 1px solid rgba(255, 184, 108, 0.28);
+    color: #ffcf85;
+    padding: 8px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    cursor: default;
+}
+
 /* ══════════════════════════════════════════════════════════
    Rich Text: Tables & Paragraphs
    ══════════════════════════════════════════════════════════ */

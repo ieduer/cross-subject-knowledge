@@ -221,8 +221,8 @@ Use this ledger before every upload, sync, or rollback. Do not transfer a runtim
 | `data/index/textbook_mineru_fts.db` | main runtime DB | `58892288` | `5a92fff4f33c4891a7b6916ce26eda69b413c8a3f852e1b8687c70e75fa45c71` |
 | `data/index/textbook_chunks.index` | primary FAISS index | `73445274` | `2c5a5aa221c6e42ae0e3ca6e841c1a8dbe7b40fba606d5cf2345e59eccde0331` |
 | `data/index/textbook_chunks.manifest.json` | primary FAISS manifest | `891` | `394d69870d116106fdcf7a5f17af9aa0275139340c41a8b029bb7a43f1664155` |
-| `platform/backend/supplemental_textbook_pages.jsonl.gz` | bundled supplemental page source | `10999530` | `9e288399e6ba42ae175e5d4036d004bc8cbec559bdeff50da29cefe1cbaa86da` |
-| `platform/backend/supplemental_textbook_pages.manifest.json` | bundled supplemental page manifest | `54549` | `1a987b4623456212ca55bc3f374803c2cc1f86109787228b391c9a6c48972235` |
+| `platform/backend/supplemental_textbook_pages.jsonl.gz` | bundled supplemental page source | `14764385` | `1c4633dd1609a43c868e96a6e0e39a75331361d1656873b079155d009b3cf8a3` |
+| `platform/backend/supplemental_textbook_pages.manifest.json` | bundled supplemental page manifest | `82653` | `b44d8d9ec2ecc3871954a4a0a4c0f410818d5882e02f69d4ac95ba1a742653de` |
 | `data/index/supplemental_textbook_pages.index` | supplemental FAISS index | `93569069` | `09f9d414918d6a27fb2b58712665816105666e669e3f84d8f3ee13010d71e67d` |
 | `data/index/supplemental_textbook_pages.vector.manifest.json` | supplemental FAISS manifest | `721` | `62a58b9edc12ea9b4b2d85e083897b2ef75c5ed4e54f083f70e3d55ed22928e5` |
 | `platform/frontend/assets/pages/book_map.json` | page-image identity map | `29919` | `fe0e3d85ee4819e11fcd03fc2f983adb7271b7a578db53220dd6244cdb27d30e` |
@@ -834,6 +834,7 @@ This means:
 
 - the VPS deploy does not see arbitrary local files unless they are committed to the repo or copied to the runtime host by a separate step
 - a locally built supplemental vector under local `data/index/` will not magically appear on the VPS
+- docs-only pushes are now expected to be filtered by workflow `paths-ignore`; release pushes that should touch production must include runtime-affecting files
 
 ### Mandatory asset groups
 

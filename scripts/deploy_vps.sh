@@ -61,11 +61,20 @@ if [ ! -f "${RUNTIME_ROOT}/data/index/textbook_chunks.index" ]; then
   exit 1
 fi
 
-install -m 0644 "${SUPPLEMENTAL_INDEX_SRC}" "${SUPPLEMENTAL_INDEX_DST}"
-install -m 0644 "${SUPPLEMENTAL_MANIFEST_SRC}" "${SUPPLEMENTAL_MANIFEST_DST}"
+install_if_distinct() {
+  local src="${1:?src_required}"
+  local dst="${2:?dst_required}"
+  if [ -e "${src}" ] && [ -e "${dst}" ] && [ "$(readlink -f "${src}")" = "$(readlink -f "${dst}")" ]; then
+    return 0
+  fi
+  install -m 0644 "${src}" "${dst}"
+}
+
+install_if_distinct "${SUPPLEMENTAL_INDEX_SRC}" "${SUPPLEMENTAL_INDEX_DST}"
+install_if_distinct "${SUPPLEMENTAL_MANIFEST_SRC}" "${SUPPLEMENTAL_MANIFEST_DST}"
 if [ -f "${SUPPLEMENTAL_VECTOR_INDEX_SRC}" ] && [ -f "${SUPPLEMENTAL_VECTOR_MANIFEST_SRC}" ]; then
-  install -m 0644 "${SUPPLEMENTAL_VECTOR_INDEX_SRC}" "${SUPPLEMENTAL_VECTOR_INDEX_DST}"
-  install -m 0644 "${SUPPLEMENTAL_VECTOR_MANIFEST_SRC}" "${SUPPLEMENTAL_VECTOR_MANIFEST_DST}"
+  install_if_distinct "${SUPPLEMENTAL_VECTOR_INDEX_SRC}" "${SUPPLEMENTAL_VECTOR_INDEX_DST}"
+  install_if_distinct "${SUPPLEMENTAL_VECTOR_MANIFEST_SRC}" "${SUPPLEMENTAL_VECTOR_MANIFEST_DST}"
   SUPPLEMENTAL_VECTOR_BUNDLED="1"
 fi
 

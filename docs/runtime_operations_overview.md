@@ -97,6 +97,8 @@ Large artifact transport is not hardcoded to a single path. For assets larger th
 
 Choose the faster and more reliable path for that session, then verify remote size and SHA256 before cutover.
 
+Docs-only pushes should not reach this deploy path. The workflow is expected to ignore `README.md` and `docs/**` changes so GitHub documentation sync does not mutate production.
+
 ## Operational watchpoints
 
 - Disk pressure now mainly comes from host-side model cache and rollback images, not from the SQLite/FAISS runtime assets

@@ -1241,7 +1241,11 @@ function renderResults(data, filterSubject = null, subjectCountsOverride = null)
                         <button class="view-page-btn" onclick="event.stopPropagation(); openPageViewer('${escAttr(r.book_key)}', ${r.page_num}, ${r.total_pages})">
                             📖 查看原文
                         </button>
-                    </div>` : ''}
+                    </div>` : (String(r.book_key || '').startsWith('suppbook:') ? `<div class="result-actions">
+                        <span class="view-page-note" title="该结果来自补充教材 OCR，当前没有对应的页图映射，因此不能打开页图原文。">
+                            📄 补充教材暂无页图
+                        </span>
+                    </div>` : '')}
                 </div>
             `).join('')}
         </div>
