@@ -21,6 +21,8 @@ Production runtime depends on host-mounted directories instead of baking data in
 - `/root/cross-subject-knowledge/data/index/textbook_chunks.manifest.json`
 - `/root/cross-subject-knowledge/data/index/supplemental_textbook_pages.jsonl.gz`
 - `/root/cross-subject-knowledge/data/index/supplemental_textbook_pages.manifest.json`
+- `/root/cross-subject-knowledge/data/index/supplemental_textbook_pages.index`
+- `/root/cross-subject-knowledge/data/index/supplemental_textbook_pages.vector.manifest.json`
 - `/root/cross-subject-knowledge/state/cache/huggingface/hub`
 - `/root/cross-subject-knowledge/state/logs`
 - `/root/cross-subject-knowledge/state/batch`
@@ -81,12 +83,19 @@ Current production deploy is:
 1. Push to GitHub `main`
 2. GitHub Actions creates a clean temporary checkout on the VPS
 3. `scripts/deploy_vps.sh` builds a new CPU-only image
-4. Runtime search assets, including the supplemental textbook index and manifest, are synced into `data/index/`
+4. Runtime search assets, including the supplemental textbook page source, manifests, and supplemental vector files, are synced into `data/index/`
 5. Host model cache is reused or warmed before cutover; reranker cache is also prewarmed when enabled
 6. Old container is replaced only after image build succeeds
 7. `/api/health` must pass or the script rolls back to the previous image
 8. When reranker is required for this rollout, health gating also checks `reranker.loaded=true`
 9. Dangling images are pruned; only recent rollback tags are retained and old `build-*` tags are removed
+
+Large artifact transport is not hardcoded to a single path. For assets larger than about `50M`, benchmark the current-session route first:
+
+- direct workstation -> VPS over SSH / `scp` / `rsync`
+- workstation -> R2, then VPS -> `curl`
+
+Choose the faster and more reliable path for that session, then verify remote size and SHA256 before cutover.
 
 ## Operational watchpoints
 

@@ -25,7 +25,7 @@
 - ⚙️ **高级搜索面板** — 按教材筛选、按排序方式切换（相关度 / 跨学科数 / 含图优先）
 - 🔗 **相关概念推荐** — 搜索后自动推荐共现频率最高的相关概念，点击即搜
 - 📷 **图片标注** — 搜索结果显示图片数量 badge，展开即可查看教材原图
-- 📖 **教材筛选** — 按学科分组的 316 本教材下拉选择器，精准定位特定教材内容
+- 📖 **教材筛选** — 按学科分组的 193 本可检索教材下拉选择器，精准定位特定教材内容
 
 ---
 
@@ -43,9 +43,10 @@
 ### 公开运维约束
 
 - 补充教材索引必须按“等价覆盖、不做摘要”重建；上线前 manifest 里的 `unresolved_books` 和 `unresolved_pages` 必须都为 `0`
-- 部署时必须同步：`textbook_mineru_fts.db`、`textbook_chunks.index`、`textbook_chunks.manifest.json`、`supplemental_textbook_pages.jsonl.gz`、`supplemental_textbook_pages.manifest.json`
+- 部署时必须同步：`textbook_mineru_fts.db`、`textbook_chunks.index`、`textbook_chunks.manifest.json`、`supplemental_textbook_pages.jsonl.gz`、`supplemental_textbook_pages.manifest.json`、`supplemental_textbook_pages.index`、`supplemental_textbook_pages.vector.manifest.json`
 - reranker 不能只在代码里启用；生产发布必须预热 `BAAI/bge-reranker-base`，并通过健康检查确认 `reranker.loaded=true`
 - 对定义型、区别型、过程型问法，公开口径应以 hybrid + rerank 为主链；不要再把词法兜底误写成“语义搜索”
+- 大体积运行时资产不要写死走某一条链路；每次发布前都要先实测“工作站直传 VPS”和“工作站 -> R2 -> VPS curl”两条路径，再选当次更稳更快的方案
 - GitHub 公开文档可以记录可公开的架构、流程和统计，但不要提交 SSH 主机细节、密钥、令牌、私有路径或任何敏感运行信息
 
 ### 当前公开已知限制
@@ -157,7 +158,8 @@
     │               │   └── Jieba ── 中文分词 + 词性标注
     │               ├── 前端 (HTML/CSS/JS + D3.js + KaTeX)
     │               ├── SQLite FTS5 检索库 (56MB)
-    │               ├── 补充教材页索引 (15,875 页 gzip + manifest)
+    │               ├── 补充教材页索引 (22,844 页 gzip + manifest)
+    │               ├── 补充教材向量 (22,844 条，FAISS)
     │               └── 宿主机挂载 data/index + state/cache
     │
     ├── HTTPS → img.rdfzer.com (Cloudflare R2 CDN)
@@ -193,7 +195,9 @@
 ├── textbook_chunks.index       # FAISS 向量索引
 ├── textbook_chunks.manifest.json
 ├── supplemental_textbook_pages.jsonl.gz
-└── supplemental_textbook_pages.manifest.json
+├── supplemental_textbook_pages.manifest.json
+├── supplemental_textbook_pages.index
+└── supplemental_textbook_pages.vector.manifest.json
 
 /state/cache/                   # 宿主机挂载的运行时缓存
 └── huggingface/
@@ -352,7 +356,7 @@ RUNTIME_ROOT=/root/cross-subject-knowledge ./scripts/deploy_vps.sh
 ### 1. 资源存储隔离
 *   **源代码 (GitHub)**：前端页面、后端 API、Dockerfile、各种配置。**绝对不含**庞大的数据库和图片。
 *   **图片资源 (R2 CDN)**：所有的教材原图、单页截图等，托管在 Cloudflare R2 (`img.rdfzer.com`)，全球加速分发，不消耗部署服务器 (VPS) 的带宽。
-*   **检索数据库 (VPS 本地)**：`textbook_mineru_fts.db`、`textbook_chunks.index`、对应 manifest，以及页级补充教材索引 `supplemental_textbook_pages.jsonl.gz`，存放于 VPS 本地 `data/index/`，通过 Docker 挂载提供服务。
+*   **检索数据库 (VPS 本地)**：`textbook_mineru_fts.db`、`textbook_chunks.index`、对应 manifest，以及页级补充教材索引 `supplemental_textbook_pages.jsonl.gz` 和补充向量 `supplemental_textbook_pages.index`，存放于 VPS 本地 `data/index/`，通过 Docker 挂载提供服务。
 *   **模型缓存 (VPS 本地)**：Hugging Face、Transformers、sentence-transformers 统一共享 VPS 本地 `state/cache/huggingface/hub/`，不再烘进镜像，也避免重复存两份模型权重。
 
 ### 2. 自动化部署 (GitHub Actions)
@@ -361,7 +365,7 @@ RUNTIME_ROOT=/root/cross-subject-knowledge ./scripts/deploy_vps.sh
 2.  GitHub Actions 自动触发，SSH 连入生产服务器 (VPS: `sun.bdfz.net`)。
 3.  在 VPS 上创建临时的干净 release checkout，避免生产目录里历史热补丁或临时改动阻塞发布。
 4.  在 VPS 上先构建新镜像，再停旧容器，避免“构建失败直接打挂线上”。
-5.  部署脚本会同步补充教材索引到运行时目录，并预热 `BAAI/bge-reranker-base`，避免首个精确查询才触发冷启动。
+5.  部署脚本会同步补充教材索引与补充向量到运行时目录，并预热 `BAAI/bge-reranker-base`，避免首个精确查询才触发冷启动。
 6.  新容器通过 `/api/health` 健康检查后才算部署成功；当前健康闸门要求 DB、FAISS、补充教材索引可用，且在启用 reranker 时确认 `reranker.loaded=true`；失败则自动回滚到上一镜像。
 7.  运行时模型缓存保存在宿主机 `state/cache/`，避免每次发版都把 Hugging Face 缓存烘进镜像。
 8.  部署完成后自动清理悬空镜像，只保留最近几份 `pre-*` 回滚镜像，并删除历史 `build-*` tag。
@@ -370,7 +374,7 @@ RUNTIME_ROOT=/root/cross-subject-knowledge ./scripts/deploy_vps.sh
 由于大头数据 (4GB+ 图片) 都在云端 CDN，如果未来需要更换服务器提供商，迁移将极其简单轻量：
 1.  **准备环境**：在新 VPS 安装 Git 和 Docker。
 2.  **拉取代码**：`git clone` 本仓库。
-3.  **搬运核心库**：把本地或旧服务器上的运行时检索资产复制到新服务器的 `data/` 目录，包括 `textbook_mineru_fts.db`、`textbook_chunks.index`、`textbook_chunks.manifest.json`、`supplemental_textbook_pages.jsonl.gz`、`supplemental_textbook_pages.manifest.json`。
+3.  **搬运核心库**：把本地或旧服务器上的运行时检索资产复制到新服务器的 `data/` 目录，包括 `textbook_mineru_fts.db`、`textbook_chunks.index`、`textbook_chunks.manifest.json`、`supplemental_textbook_pages.jsonl.gz`、`supplemental_textbook_pages.manifest.json`、`supplemental_textbook_pages.index`、`supplemental_textbook_pages.vector.manifest.json`。
 4.  **启动**：执行 `docker build` 和 `docker run`（或配置新的 GitHub 部署密钥触发自动流）。
 5.  **切换域名**：在 Cloudflare 中将 `sun.bdfz.net` 的 A 记录指向新 VPS 的 IP。
 
@@ -470,6 +474,8 @@ cp /old-host/data/index/textbook_chunks.index /root/cross-subject-knowledge/data
 cp /old-host/data/index/textbook_chunks.manifest.json /root/cross-subject-knowledge/data/index/
 cp /old-host/data/index/supplemental_textbook_pages.jsonl.gz /root/cross-subject-knowledge/data/index/
 cp /old-host/data/index/supplemental_textbook_pages.manifest.json /root/cross-subject-knowledge/data/index/
+cp /old-host/data/index/supplemental_textbook_pages.index /root/cross-subject-knowledge/data/index/
+cp /old-host/data/index/supplemental_textbook_pages.vector.manifest.json /root/cross-subject-knowledge/data/index/
 
 # 4. 运行发布脚本
 cd cross-subject-knowledge
@@ -509,7 +515,8 @@ certbot --nginx -d your-domain.com
 | 自动部署 | GitHub Actions + `deploy_vps.sh` | 干净 release checkout 构建、健康检查、失败回滚 |
 | 概念图谱 | SQLite `concept_map` | 788 个学术概念，跨学科自动发现 |
 | 全文检索 | SQLite FTS5 | Porter 分词器，OR 组合查询 |
-| 补充教材兜底 | `supplemental_textbook_pages.jsonl.gz` | 15,875 页全文匹配，覆盖主库缺失的教材原词与并行版本页 |
+| 补充教材兜底 | `supplemental_textbook_pages.jsonl.gz` | 22,844 页全文匹配，覆盖主库缺失的教材原词与并行版本页 |
+| 补充教材向量 | `supplemental_textbook_pages.index` | 22,844 条 `BAAI/bge-m3` 补充页向量，参与 hybrid semantic recall |
 | 评分算法 | Hybrid retrieval + custom rerank | 词法命中 + 向量召回 + 补充页索引 + 定义意图重排 |
 
 **教材检索流程**（hybrid + rerank）：

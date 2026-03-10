@@ -49,9 +49,9 @@ As of 2026-03-10:
 | --- | --- | --- | --- |
 | Main DB | `textbook_mineru_fts.db`, `21925` rows | same DB file currently in local `data/index/` | Runtime startup auto-syncs only this DB |
 | Main dense vectors | `17896` vectors, loaded | same local primary FAISS | Physical DB filter is `source != 'gaokao'`, not `source='textbook'` |
-| Supplemental page index | `books=112`, `primary_books=63`, `supplemental_only_books=49`, `pages=15875` | corrected rebuild: `books=176`, `primary_books=52`, `supplemental_only_books=124`, `pages=22844` | Production is still on the old supplemental build |
-| Supplemental vectors | not loaded on production | final rebuild in progress locally and must be verified | Local build must be explicitly transported; GitHub deploy does not pull it automatically |
-| Frontend version marker | `2026.03.10-r21` | local code has newer behavior but version files are not yet bumped for this data round | Must be synchronized before release |
+| Supplemental page index | corrected build loaded: `books=176`, `primary_books=52`, `supplemental_only_books=124`, `pages=22844` | same corrected rebuild is present locally | Production and local are now aligned for supplemental page-index source data |
+| Supplemental vectors | loaded on production: `22844` vectors, manifest present, health `loaded=true` | same local rebuild verified against the current supplemental page source | These assets still must be explicitly transported; GitHub deploy does not pull them automatically from local `data/index/` |
+| Frontend version marker | `2026.03.10-r22` | local code matches `r22` on the deployed release branch | Frontend marker and backend behavior were re-aligned in this rollout |
 
 Never mix production current counts with local rebuilt counts in release notes or debugging conclusions.
 
@@ -92,6 +92,28 @@ Never mix production current counts with local rebuilt counts in release notes o
   - `/Users/ylsuen/textbook_ai_migration/.venv-vector`
   - reason: isolate heavy sentence-transformers build execution on macOS and avoid the earlier local crash path
 
+### Local network environment
+
+- The primary workstation runs `sing-box.app` with TUN mode enabled.
+- Current confirmed route checks on 2026-03-10:
+  - `route -n get github.com` -> `interface: utun8`
+  - `route -n get 23.19.231.173` -> `interface: utun8`
+- Practical consequence:
+  - large uploads and deploy traffic from the workstation are expected to traverse the sing-box TUN path
+  - when a transfer is unexpectedly slow, verify route first before assuming application-layer failure
+  - do not hardcode one artifact path forever; benchmark the available paths for the current session before choosing
+  - candidate paths for large runtime artifacts:
+    - direct workstation -> VPS over SSH / `scp` / `rsync`
+    - workstation -> R2, then VPS -> `curl`
+  - current measured outcome on 2026-03-10:
+    - direct SSH upload to VPS over `utun8` was slower and less stable
+    - `R2 -> VPS curl` was the more reliable choice for this rollout
+- Route and process retrieval points:
+  - `ps -axo pid,etime,command | rg 'sing-box|singbox|tun'`
+  - `ifconfig | rg -n 'utun|tun'`
+  - `route -n get github.com`
+  - `route -n get 23.19.231.173`
+
 ### Production runtime environment
 
 - base image: `python:3.13-slim`
@@ -105,6 +127,7 @@ Never mix production current counts with local rebuilt counts in release notes o
 ### Environment rule
 
 Do not assume that a local artifact exists on the VPS just because local code can see it. Local `data/index/` and production `/data/index/` are different asset stores.
+Also do not assume that an upload problem is a code problem before confirming whether the transfer path is using the expected sing-box TUN route.
 
 ## Identity model
 
@@ -186,6 +209,49 @@ Other data directories that matter operationally:
 - `data/gaokao_exam_images`
 - `data/_img_tmp`
   - temporary page-image working tree
+
+## Canonical runtime asset ledger
+
+Use this ledger before every upload, sync, or rollback. Do not transfer a runtime asset until its path, size, and SHA256 have been matched against this table or intentionally refreshed.
+
+### Local canonical release artifacts
+
+| Relative path | Role | Size (bytes) | SHA256 |
+| --- | --- | ---: | --- |
+| `data/index/textbook_mineru_fts.db` | main runtime DB | `58892288` | `5a92fff4f33c4891a7b6916ce26eda69b413c8a3f852e1b8687c70e75fa45c71` |
+| `data/index/textbook_chunks.index` | primary FAISS index | `73445274` | `2c5a5aa221c6e42ae0e3ca6e841c1a8dbe7b40fba606d5cf2345e59eccde0331` |
+| `data/index/textbook_chunks.manifest.json` | primary FAISS manifest | `891` | `394d69870d116106fdcf7a5f17af9aa0275139340c41a8b029bb7a43f1664155` |
+| `platform/backend/supplemental_textbook_pages.jsonl.gz` | bundled supplemental page source | `10999530` | `9e288399e6ba42ae175e5d4036d004bc8cbec559bdeff50da29cefe1cbaa86da` |
+| `platform/backend/supplemental_textbook_pages.manifest.json` | bundled supplemental page manifest | `54549` | `1a987b4623456212ca55bc3f374803c2cc1f86109787228b391c9a6c48972235` |
+| `data/index/supplemental_textbook_pages.index` | supplemental FAISS index | `93569069` | `09f9d414918d6a27fb2b58712665816105666e669e3f84d8f3ee13010d71e67d` |
+| `data/index/supplemental_textbook_pages.vector.manifest.json` | supplemental FAISS manifest | `721` | `62a58b9edc12ea9b4b2d85e083897b2ef75c5ed4e54f083f70e3d55ed22928e5` |
+| `platform/frontend/assets/pages/book_map.json` | page-image identity map | `29919` | `fe0e3d85ee4819e11fcd03fc2f983adb7271b7a578db53220dd6244cdb27d30e` |
+| `platform/backend/textbook_version_manifest.json` | version-label manifest | `5219` | `91eba20de2114795b6e5c3f9609e131898a666942fdf74ceaf2c1e4184192a83` |
+| `platform/frontend/assets/version.json` | public frontend version ledger | `5132` | `463f0cd945371401e99d8b0c82625f281ccf9b8d90a1c174a6bf7709dcf8bac2` |
+
+### Production runtime destinations
+
+These are the runtime destinations that must match the intended release artifact set:
+
+- `/root/cross-subject-knowledge/data/index/textbook_mineru_fts.db`
+- `/root/cross-subject-knowledge/data/index/textbook_chunks.index`
+- `/root/cross-subject-knowledge/data/index/textbook_chunks.manifest.json`
+- `/root/cross-subject-knowledge/data/index/supplemental_textbook_pages.jsonl.gz`
+- `/root/cross-subject-knowledge/data/index/supplemental_textbook_pages.manifest.json`
+- `/root/cross-subject-knowledge/data/index/supplemental_textbook_pages.index`
+- `/root/cross-subject-knowledge/data/index/supplemental_textbook_pages.vector.manifest.json`
+
+### Artifact verification rule
+
+Before any transfer:
+
+1. confirm the exact source path you are about to copy
+2. compute its size and SHA256
+3. compare that output to this ledger or to a deliberately updated replacement ledger
+4. only then copy it to R2 or directly to the VPS
+5. after the remote copy completes, recompute remote size and SHA256 before cutover
+
+This rule exists because a Git checkout, a local build output, and a repo-bundled fallback file may have the same filename while representing different release states.
 
 ## Current corpus counts and relationships
 
@@ -741,10 +807,10 @@ Important `/api/health` fields to check:
 Current production VPS facts already confirmed:
 
 - root filesystem: `99G` total, about `42G` available
-- `/root/cross-subject-knowledge/data/index`: about `140M`
+- `/root/cross-subject-knowledge/data/index`: about `244M`
 - `/root/cross-subject-knowledge/state/cache/huggingface/hub`: about `5.4G`
 - `/var/lib/docker`: about `2.7G`
-- memory: `5.8Gi`, available about `3.5Gi`
+- memory: `5.8Gi`, available about `3.3Gi`
 - swap: `0`
 
 Implications:
@@ -853,6 +919,7 @@ Check live:
 2. `/assets/version.json`
 3. `/api/books`
 4. search regression queries on live production
+5. if any large artifact was shipped separately, confirm the remote size and SHA256 against the intended release source before restart
 
 At minimum, compare production current against local pending for:
 
@@ -870,12 +937,16 @@ Check:
 
 1. `.github/workflows/deploy.yml`
 2. `platform/scripts/deploy_vps.sh`
-3. source and destination paths for:
+3. benchmark the current-session transfer options for artifacts larger than about `50M`
+   - direct workstation -> VPS over SSH / `scp` / `rsync`
+   - workstation -> R2, then VPS -> `curl`
+   - choose based on the current network route and measured throughput; do not hardcode `R2` forever
+4. source and destination paths for:
    - supplemental page index
    - supplemental page manifest
    - supplemental vector index
    - supplemental vector manifest
-4. whether the changed asset is:
+5. whether the changed asset is:
    - committed into the repo checkout
    - copied separately to the VPS runtime root
    - or not transported at all
@@ -943,6 +1014,7 @@ After release, check live:
 3. `/api/books`
 4. representative `/api/page-image` result
 5. representative AI chat path if AI behavior changed
+6. `supplemental_vectors.loaded=true` if the release expects supplemental semantic recall
 
 ### D. Search regression checks
 
