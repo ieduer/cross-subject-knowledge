@@ -47,6 +47,14 @@ def main() -> int:
                 _resolve_data_asset(data_root, "supplemental_textbook_pages.manifest.json"),
             ]
         )
+    supplemental_vector_required = os.getenv("SUPPLEMENTAL_VECTOR_REQUIRED", "0").strip().lower() not in {"0", "false", "no"}
+    if supplemental_vector_required:
+        required_files.extend(
+            [
+                _resolve_data_asset(data_root, "supplemental_textbook_pages.index"),
+                _resolve_data_asset(data_root, "supplemental_textbook_pages.vector.manifest.json"),
+            ]
+        )
 
     missing = [str(p) for p in required_files if not p.exists()]
     if missing:

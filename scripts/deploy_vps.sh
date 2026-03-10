@@ -19,6 +19,16 @@ SUPPLEMENTAL_INDEX_SRC="${SOURCE_ROOT}/backend/supplemental_textbook_pages.jsonl
 SUPPLEMENTAL_MANIFEST_SRC="${SOURCE_ROOT}/backend/supplemental_textbook_pages.manifest.json"
 SUPPLEMENTAL_INDEX_DST="${RUNTIME_ROOT}/data/index/supplemental_textbook_pages.jsonl.gz"
 SUPPLEMENTAL_MANIFEST_DST="${RUNTIME_ROOT}/data/index/supplemental_textbook_pages.manifest.json"
+SUPPLEMENTAL_VECTOR_INDEX_SRC="${RUNTIME_ROOT}/data/index/supplemental_textbook_pages.index"
+SUPPLEMENTAL_VECTOR_MANIFEST_SRC="${RUNTIME_ROOT}/data/index/supplemental_textbook_pages.vector.manifest.json"
+if [ -f "${SOURCE_ROOT}/backend/supplemental_textbook_pages.index" ]; then
+  SUPPLEMENTAL_VECTOR_INDEX_SRC="${SOURCE_ROOT}/backend/supplemental_textbook_pages.index"
+fi
+if [ -f "${SOURCE_ROOT}/backend/supplemental_textbook_pages.vector.manifest.json" ]; then
+  SUPPLEMENTAL_VECTOR_MANIFEST_SRC="${SOURCE_ROOT}/backend/supplemental_textbook_pages.vector.manifest.json"
+fi
+SUPPLEMENTAL_VECTOR_INDEX_DST="${RUNTIME_ROOT}/data/index/supplemental_textbook_pages.index"
+SUPPLEMENTAL_VECTOR_MANIFEST_DST="${RUNTIME_ROOT}/data/index/supplemental_textbook_pages.vector.manifest.json"
 
 cd "$SOURCE_ROOT"
 
@@ -52,6 +62,10 @@ fi
 
 install -m 0644 "${SUPPLEMENTAL_INDEX_SRC}" "${SUPPLEMENTAL_INDEX_DST}"
 install -m 0644 "${SUPPLEMENTAL_MANIFEST_SRC}" "${SUPPLEMENTAL_MANIFEST_DST}"
+if [ -f "${SUPPLEMENTAL_VECTOR_INDEX_SRC}" ] && [ -f "${SUPPLEMENTAL_VECTOR_MANIFEST_SRC}" ]; then
+  install -m 0644 "${SUPPLEMENTAL_VECTOR_INDEX_SRC}" "${SUPPLEMENTAL_VECTOR_INDEX_DST}"
+  install -m 0644 "${SUPPLEMENTAL_VECTOR_MANIFEST_SRC}" "${SUPPLEMENTAL_VECTOR_MANIFEST_DST}"
+fi
 
 commit_sha="$(git rev-parse --short HEAD)"
 build_stamp="$(date +%Y%m%d_%H%M%S)"
@@ -112,6 +126,9 @@ ok = (
 if os.getenv("HEALTH_REQUIRE_RERANKER", "0").strip().lower() not in {"0", "false", "no"}:
     reranker = payload.get("reranker") or {}
     ok = ok and (not bool(reranker.get("enabled")) or bool(reranker.get("loaded")))
+if os.getenv("HEALTH_REQUIRE_SUPPLEMENTAL_VECTOR", "0").strip().lower() not in {"0", "false", "no"}:
+    supplemental_vectors = payload.get("supplemental_vectors") or {}
+    ok = ok and (not bool(supplemental_vectors.get("enabled")) or bool(supplemental_vectors.get("loaded")))
 sys.exit(0 if ok else 1)
 PY
 }

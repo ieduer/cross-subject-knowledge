@@ -117,6 +117,7 @@ const AI_PRECISION_PATTERNS = [
     /.+是什么/,
     /.+的(?:定义|概念|本质|特点|条件|作用|过程|原因)/,
     /.+指什么/,
+    /.+(?:定律|定理|法则|原理|公式)$/,
     /.+(?:有什么)?区别/,
     /.+和.+的区别/,
     /.+的(?:例子|实例)/,
@@ -186,6 +187,9 @@ function inferAIQueryProfile(query, userMessage = '') {
     } else if (intent === 'lookup' && (compact.includes('什么是') || compact.endsWith('是什么'))) {
         intent = 'definition';
         target = trimPrecisionTarget(compact.replace('什么是', '').replace('是什么', ''));
+    } else if (intent === 'lookup' && /(?:定律|定理|法则|原理|公式)$/.test(compact)) {
+        intent = 'definition';
+        target = trimPrecisionTarget(cleanQuery);
     } else if (intent === 'lookup' && (compact.includes('区别') || compact.includes('不同'))) {
         intent = 'comparison';
         target = trimPrecisionTarget(cleanQuery);
@@ -1341,6 +1345,10 @@ function renderEvidenceTrace(result, subject, subjectBreadth, query) {
         evidenceChips.push(`<span class="evidence-chip page">可回原页 p${result.logical_page ?? result.page_num}</span>`);
     } else {
         evidenceChips.push('<span class="evidence-chip neutral">仅片段证据</span>');
+    }
+
+    if (result.snippet_source === 'sentence') {
+        evidenceChips.push('<span class="evidence-chip strong">句级证据</span>');
     }
 
     if (result.source === 'gaokao') {

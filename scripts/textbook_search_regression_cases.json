@@ -1,0 +1,44 @@
+[
+  {
+    "name": "latent_heat_geo",
+    "query": "潜热",
+    "scope_subject": "地理",
+    "top_k": 5,
+    "require_precision_mode": false,
+    "expect_subjects": ["地理"],
+    "expect_any_substrings": ["潜热", "海洋再通过潜热"]
+  },
+  {
+    "name": "surface_evaporation_latent_heat",
+    "query": "海面蒸发潜热",
+    "scope_subject": "地理",
+    "top_k": 5,
+    "require_precision_mode": false,
+    "expect_subjects": ["地理"],
+    "expect_any_substrings": ["蒸发潜热", "海面蒸发", "潜热"]
+  },
+  {
+    "name": "crystal_definition",
+    "query": "晶体的定义",
+    "top_k": 3,
+    "require_precision_mode": true,
+    "expect_subjects": ["化学"],
+    "expect_any_substrings": ["称为晶体", "晶体是", "什么样的物质才能称为晶体"]
+  },
+  {
+    "name": "newton_first_law",
+    "query": "牛顿第一定律",
+    "top_k": 5,
+    "require_precision_mode": false,
+    "expect_subjects": ["物理"],
+    "expect_any_substrings": ["匀速直线运动状态", "静止状态", "牛顿第一定律"]
+  },
+  {
+    "name": "essence_of_socialism",
+    "query": "社会主义的本质",
+    "top_k": 5,
+    "require_precision_mode": true,
+    "expect_subjects": ["思想政治"],
+    "expect_any_substrings": ["解放生产力", "发展生产力", "社会主义的本质"]
+  }
+]

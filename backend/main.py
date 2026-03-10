@@ -19,6 +19,15 @@ try:
 except ImportError:
     _cache = {}  # fallback: simple dict (never expires, but resets on restart)
 
+
+def _make_runtime_cache(maxsize: int, ttl: int):
+    if "TTLCache" in globals():
+        try:
+            return TTLCache(maxsize=maxsize, ttl=ttl)
+        except Exception:
+            return {}
+    return {}
+
 try:
     import faiss
     import numpy as np
@@ -65,15 +74,34 @@ SUPPLEMENTAL_TEXTBOOK_ROOT = DATA_ROOT / "mineru_output_backup"
 SUPPLEMENTAL_TEXTBOOK_INDEX_GZ_PATH = _resolve_data_asset("supplemental_textbook_pages.jsonl.gz")
 SUPPLEMENTAL_TEXTBOOK_INDEX_PATH = _resolve_data_asset("supplemental_textbook_pages.jsonl")
 SUPPLEMENTAL_TEXTBOOK_MANIFEST_PATH = _resolve_data_asset("supplemental_textbook_pages.manifest.json")
+SUPPLEMENTAL_VECTOR_INDEX_PATH = _resolve_data_asset("supplemental_textbook_pages.index")
+SUPPLEMENTAL_VECTOR_MANIFEST_PATH = _resolve_data_asset("supplemental_textbook_pages.vector.manifest.json")
 BUNDLED_SUPPLEMENTAL_TEXTBOOK_INDEX_GZ_PATH = Path(__file__).with_name("supplemental_textbook_pages.jsonl.gz")
 BUNDLED_SUPPLEMENTAL_TEXTBOOK_INDEX_PATH = Path(__file__).with_name("supplemental_textbook_pages.jsonl")
 BUNDLED_SUPPLEMENTAL_TEXTBOOK_MANIFEST_PATH = Path(__file__).with_name("supplemental_textbook_pages.manifest.json")
+BUNDLED_SUPPLEMENTAL_VECTOR_INDEX_PATH = Path(__file__).with_name("supplemental_textbook_pages.index")
+BUNDLED_SUPPLEMENTAL_VECTOR_MANIFEST_PATH = Path(__file__).with_name("supplemental_textbook_pages.vector.manifest.json")
 SUPPLEMENTAL_REQUIRED = os.getenv("SUPPLEMENTAL_REQUIRED", "1").strip().lower() not in {"0", "false", "no"}
 SQLITE_BUSY_TIMEOUT_MS = max(1000, int(os.getenv("SQLITE_BUSY_TIMEOUT_MS", "5000")))
 SQLITE_CONNECT_TIMEOUT_SEC = max(1.0, SQLITE_BUSY_TIMEOUT_MS / 1000.0)
 FAISS_SCORE_THRESHOLD = max(0.0, min(1.0, float(os.getenv("FAISS_SCORE_THRESHOLD", "0.62"))))
+SUPPLEMENTAL_VECTOR_ENABLED = os.getenv("SUPPLEMENTAL_VECTOR_ENABLED", "1").strip().lower() not in {"0", "false", "no"}
+SUPPLEMENTAL_VECTOR_SCORE_THRESHOLD = max(
+    0.0,
+    min(1.0, float(os.getenv("SUPPLEMENTAL_VECTOR_SCORE_THRESHOLD", "0.58"))),
+)
 QUERY_TERM_PLAN_LIMIT = max(4, int(os.getenv("QUERY_TERM_PLAN_LIMIT", "8")))
 SUPPLEMENTAL_FALLBACK_LIMIT = max(20, int(os.getenv("SUPPLEMENTAL_FALLBACK_LIMIT", "180")))
+SEMANTIC_QUERY_CACHE = _make_runtime_cache(
+    max(64, int(os.getenv("SEMANTIC_QUERY_CACHE_MAXSIZE", "256"))),
+    max(60, int(os.getenv("SEMANTIC_QUERY_CACHE_TTL_SEC", "1800"))),
+)
+EVIDENCE_SPAN_CACHE = _make_runtime_cache(
+    max(256, int(os.getenv("EVIDENCE_SPAN_CACHE_MAXSIZE", "4096"))),
+    max(300, int(os.getenv("EVIDENCE_SPAN_CACHE_TTL_SEC", "3600"))),
+)
+EVIDENCE_MAX_SPAN_CHARS = max(80, int(os.getenv("EVIDENCE_MAX_SPAN_CHARS", "190")))
+EVIDENCE_MAX_SEGMENTS = max(24, int(os.getenv("EVIDENCE_MAX_SEGMENTS", "120")))
 
 def _parse_csv_env(name: str, default: str) -> list[str]:
     raw = os.getenv(name, default)
@@ -104,6 +132,7 @@ app.add_middleware(
 
 # ── Global AI Models ──────────────────────────────────────────────────
 faiss_index = None
+supplemental_faiss_index = None
 embedder = None
 reranker = None
 EMBEDDER_NAME = os.getenv("EMBEDDER", "BAAI/bge-m3")  # upgraded from bge-small-zh-v1.5
@@ -116,6 +145,8 @@ GRAPH_RAG_ENABLED = os.getenv("GRAPH_RAG_ENABLED", "1").strip().lower() not in {
 GRAPH_RAG_MAX_RELATIONS = max(2, int(os.getenv("GRAPH_RAG_MAX_RELATIONS", "6")))
 faiss_status_reason = None
 faiss_manifest = None
+supplemental_faiss_status_reason = None
+supplemental_faiss_manifest = None
 reranker_status_reason = None
 _reranker_lock = threading.Lock()
 _runtime_warmup_lock = threading.Lock()
@@ -400,6 +431,104 @@ def _validate_faiss_manifest(index_obj, expected_rows: Optional[int], manifest: 
     return issues
 
 
+def _compute_supplemental_vector_source_fingerprint(text_limit: int) -> tuple[Optional[int], Optional[str]]:
+    source_candidates = (
+        (SUPPLEMENTAL_TEXTBOOK_INDEX_GZ_PATH, gzip.open),
+        (SUPPLEMENTAL_TEXTBOOK_INDEX_PATH, open),
+        (BUNDLED_SUPPLEMENTAL_TEXTBOOK_INDEX_GZ_PATH, gzip.open),
+        (BUNDLED_SUPPLEMENTAL_TEXTBOOK_INDEX_PATH, open),
+    )
+    source_path = None
+    opener = None
+    for candidate_path, candidate_opener in source_candidates:
+        if candidate_path.exists():
+            source_path = candidate_path
+            opener = candidate_opener
+            break
+    if source_path is None or opener is None:
+        return None, None
+
+    try:
+        h = hashlib.sha256()
+        count = 0
+        with opener(source_path, "rt", encoding="utf-8") as fh:
+            for raw_line in fh:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except Exception:
+                    continue
+                payload = json.dumps(
+                    [str(item.get("id") or ""), str(item.get("text") or "")[:text_limit]],
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                h.update(payload.encode("utf-8"))
+                h.update(b"\n")
+                count += 1
+        return count, h.hexdigest()
+    except Exception:
+        return None, None
+
+
+def _load_supplemental_vector_manifest() -> Optional[dict]:
+    for path in (SUPPLEMENTAL_VECTOR_MANIFEST_PATH, BUNDLED_SUPPLEMENTAL_VECTOR_MANIFEST_PATH):
+        if not path.exists():
+            continue
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"Failed to read supplemental vector manifest {path}: {e}", flush=True)
+            return None
+    return None
+
+
+def _get_supplemental_vector_source_info() -> dict:
+    if SUPPLEMENTAL_VECTOR_INDEX_PATH.exists():
+        return {"available": True, "source": "runtime_index", "path": SUPPLEMENTAL_VECTOR_INDEX_PATH}
+    if BUNDLED_SUPPLEMENTAL_VECTOR_INDEX_PATH.exists():
+        return {"available": True, "source": "bundled_index", "path": BUNDLED_SUPPLEMENTAL_VECTOR_INDEX_PATH}
+    return {"available": False, "source": "missing", "path": None}
+
+
+def _validate_supplemental_vector_manifest(index_obj, manifest: Optional[dict]) -> list[str]:
+    issues = []
+    if manifest is None:
+        issues.append("missing_manifest")
+        return issues
+
+    manifest_model = (manifest.get("model") or {}).get("name")
+    if manifest_model != EMBEDDER_NAME:
+        issues.append(f"manifest_model={manifest_model!r} runtime_model={EMBEDDER_NAME!r}")
+
+    manifest_dim = (manifest.get("index") or {}).get("dimension")
+    if manifest_dim != index_obj.d:
+        issues.append(f"manifest_dim={manifest_dim} index_dim={index_obj.d}")
+
+    manifest_rows = (manifest.get("index") or {}).get("vector_rows")
+    if manifest_rows != index_obj.ntotal:
+        issues.append(f"manifest_rows={manifest_rows} index_rows={index_obj.ntotal}")
+
+    vector_source = manifest.get("vector_source") or {}
+    manifest_source_rows = vector_source.get("row_count")
+    if manifest_source_rows != index_obj.ntotal:
+        issues.append(f"manifest_source_rows={manifest_source_rows} index_rows={index_obj.ntotal}")
+
+    manifest_text_limit = int((manifest.get("model") or {}).get("text_limit_chars") or 512)
+    current_rows, current_fingerprint = _compute_supplemental_vector_source_fingerprint(manifest_text_limit)
+    if current_rows is None or current_fingerprint is None:
+        issues.append("vector_source_fingerprint_unavailable")
+    else:
+        if current_rows != index_obj.ntotal:
+            issues.append(f"current_source_rows={current_rows} index_rows={index_obj.ntotal}")
+        manifest_fingerprint = vector_source.get("fingerprint_sha256")
+        if manifest_fingerprint != current_fingerprint:
+            issues.append("vector_source_fingerprint_mismatch")
+    return issues
+
+
 def _has_local_sentence_transformer_snapshot(model_name: str) -> bool:
     direct_path = Path(model_name).expanduser()
     if direct_path.exists():
@@ -480,6 +609,22 @@ def _get_reranker():
     return reranker
 
 
+def _cached_query_embedding(query_text: str):
+    clean_query = _clean_query_text(query_text)[:512]
+    if not clean_query or not embedder or not FAISS_AVAILABLE:
+        return None
+    cache_key = (EMBEDDER_NAME, clean_query)
+    cached = SEMANTIC_QUERY_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        query_vec = embedder.encode([clean_query], normalize_embeddings=True).astype("float32")
+    except Exception:
+        return None
+    SEMANTIC_QUERY_CACHE[cache_key] = query_vec
+    return query_vec
+
+
 def _warm_runtime_components():
     if RERANKER_PRELOAD and RERANKER_ENABLED:
         _get_reranker()
@@ -529,6 +674,40 @@ elif not FAISS_AVAILABLE:
     faiss_status_reason = "faiss_dependencies_unavailable"
 elif not FAISS_INDEX_PATH.exists():
     faiss_status_reason = f"missing_index:{FAISS_INDEX_PATH}"
+
+if FAISS_AVAILABLE and SUPPLEMENTAL_VECTOR_ENABLED:
+    supplemental_vector_source = _get_supplemental_vector_source_info()
+    if supplemental_vector_source["available"]:
+        try:
+            print(f"Loading supplemental vector index from {supplemental_vector_source['path']}...", flush=True)
+            raw_supplemental_index = faiss.read_index(str(supplemental_vector_source["path"]))
+            supplemental_faiss_manifest = _load_supplemental_vector_manifest()
+            validation_issues = _validate_supplemental_vector_manifest(raw_supplemental_index, supplemental_faiss_manifest)
+            if validation_issues:
+                supplemental_faiss_status_reason = "; ".join(validation_issues)
+                print(
+                    "Supplemental FAISS disabled by validation gate: "
+                    f"{supplemental_faiss_status_reason}. Rebuild supplemental_textbook_pages.index with a matching manifest.",
+                    flush=True,
+                )
+            else:
+                supplemental_faiss_index = raw_supplemental_index
+                if embedder is None:
+                    embedder = _load_sentence_transformer(EMBEDDER_NAME)
+                print(
+                    f"Supplemental vector index loaded with {supplemental_faiss_index.ntotal} vectors. Model: {EMBEDDER_NAME}",
+                    flush=True,
+                )
+        except Exception as e:
+            supplemental_faiss_index = None
+            supplemental_faiss_status_reason = str(e)
+            print(f"Failed to load supplemental vector index: {e}", flush=True)
+    else:
+        supplemental_faiss_status_reason = f"missing_index:{SUPPLEMENTAL_VECTOR_INDEX_PATH}"
+elif not FAISS_AVAILABLE:
+    supplemental_faiss_status_reason = "faiss_dependencies_unavailable"
+elif not SUPPLEMENTAL_VECTOR_ENABLED:
+    supplemental_faiss_status_reason = "disabled_by_config"
 
 # ── Jieba custom dictionary ──────────────────────────────────────────
 try:
@@ -2721,6 +2900,7 @@ PRECISION_QUERY_PATTERNS = (
     re.compile(r".+是什么"),
     re.compile(r".+的(?:定义|概念|本质|特点|条件|作用|过程|原因)"),
     re.compile(r".+指什么"),
+    re.compile(r".+(?:定律|定理|法则|原理|公式)$"),
     re.compile(r".+(?:有什么)?区别"),
     re.compile(r".+和.+的区别"),
     re.compile(r".+的(?:例子|实例)"),
@@ -2797,6 +2977,9 @@ def _build_precision_query_profile(query: str, user_message: str = "") -> dict:
     elif intent == "lookup" and ("什么是" in compact or compact.endswith("是什么")):
         intent = "definition"
         target = _trim_precision_target(compact.replace("什么是", "").replace("是什么", ""))
+    elif intent == "lookup" and re.search(r"(?:定律|定理|法则|原理|公式)$", compact):
+        intent = "definition"
+        target = _trim_precision_target(clean_query)
     elif intent == "lookup" and ("区别" in compact or "不同" in compact):
         intent = "comparison"
         target = _trim_precision_target(clean_query)
@@ -2907,8 +3090,10 @@ def _search_textbook_semantic_candidates(
     clean_query = _clean_query_text(query_text)
     if not clean_query or not faiss_index or not embedder:
         return []
+    query_vec = _cached_query_embedding(clean_query)
+    if query_vec is None:
+        return []
     try:
-        query_vec = embedder.encode([clean_query[:512]], normalize_embeddings=True).astype("float32")
         distances, ids = faiss_index.search(query_vec, limit * 3)
     except Exception:
         return []
@@ -2957,6 +3142,60 @@ def _search_textbook_semantic_candidates(
         row["semantic_score"] = score
         row["match_channel"] = "semantic"
         results.append(row)
+    return results
+
+
+def _search_supplemental_semantic_candidates(
+    query_text: str,
+    *,
+    scope_subject: str | None = None,
+    book_key: str | None = None,
+    limit: int = 18,
+) -> list[dict]:
+    clean_query = _clean_query_text(query_text)
+    if not clean_query or not supplemental_faiss_index or not embedder:
+        return []
+    query_vec = _cached_query_embedding(clean_query)
+    if query_vec is None:
+        return []
+    try:
+        distances, ids = supplemental_faiss_index.search(query_vec, limit * 6)
+    except Exception:
+        return []
+
+    entries = _load_supplemental_textbook_pages()
+    results = []
+    seen = set()
+    for score, ordinal in zip(distances[0], ids[0]):
+        if ordinal == -1 or ordinal in seen or score <= SUPPLEMENTAL_VECTOR_SCORE_THRESHOLD:
+            continue
+        if ordinal < 0 or ordinal >= len(entries):
+            continue
+        seen.add(int(ordinal))
+        entry = entries[int(ordinal)]
+        if book_key and entry.get("book_key") != book_key:
+            continue
+        if scope_subject and entry.get("subject") != scope_subject:
+            continue
+        results.append(
+            {
+                "id": entry["id"],
+                "content_id": entry.get("content_id"),
+                "subject": entry["subject"],
+                "title": entry["title"],
+                "book_key": entry.get("book_key"),
+                "section": entry["section"],
+                "logical_page": entry.get("logical_page"),
+                "snippet": _build_context_snippet(entry["text"], clean_query),
+                "text": entry["text"],
+                "source": "mineru",
+                "semantic_score": float(score),
+                "match_channel": "semantic",
+                "retrieval_source": "supplemental",
+            }
+        )
+        if len(results) >= limit:
+            break
     return results
 
 
@@ -3064,8 +3303,34 @@ def _normalize_rerank_score(score: float) -> float:
 def _rerank_precision_candidates(query_text: str, query_profile: dict, candidates: list[dict]) -> list[dict]:
     if not candidates:
         return []
+    prepared = []
+    for candidate in candidates:
+        evidence = _extract_candidate_evidence(query_text, query_profile, candidate)
+        coverage_bonus = _query_coverage_bonus(query_text, candidate)
+        merged = dict(candidate)
+        merged["snippet"] = evidence["snippet"]
+        merged["evidence_text"] = evidence["text"]
+        merged["evidence_score"] = evidence["score"]
+        merged["snippet_source"] = evidence["source"]
+        merged["coverage_bonus"] = coverage_bonus
+        merged["pre_rerank_score"] = (
+            float(candidate.get("base_score", 0.0))
+            + float(evidence.get("score") or 0.0)
+            + coverage_bonus
+            + float(candidate.get("semantic_score", 0.0)) * 24.0
+        )
+        prepared.append(merged)
+
+    prepared.sort(
+        key=lambda item: (
+            -item.get("pre_rerank_score", 0.0),
+            -len(item.get("matched_term") or ""),
+            item.get("id", 0),
+        )
+    )
+
     rerank_model = _get_reranker()
-    rerank_scores = [0.0] * len(candidates)
+    rerank_scores = [0.0] * len(prepared)
     if rerank_model:
         try:
             pairs = [
@@ -3074,27 +3339,32 @@ def _rerank_precision_candidates(query_text: str, query_profile: dict, candidate
                     "\n".join(
                         part for part in (
                             candidate.get("title") or "",
-                            (candidate.get("snippet") or "")[:240],
-                            (candidate.get("text") or "")[:640],
+                            (candidate.get("evidence_text") or "")[:220],
+                            (candidate.get("snippet") or "")[:220],
+                            "" if candidate.get("snippet_source") == "sentence" else (candidate.get("text") or "")[:360],
                         ) if part
                     ),
                 )
-                for candidate in candidates[:RERANKER_MAX_CANDIDATES]
+                for candidate in prepared[:RERANKER_MAX_CANDIDATES]
             ]
             raw_scores = rerank_model.predict(pairs, batch_size=8, show_progress_bar=False)
-            rerank_scores = [_normalize_rerank_score(score) for score in raw_scores] + [0.0] * max(0, len(candidates) - len(raw_scores))
+            rerank_scores = [_normalize_rerank_score(score) for score in raw_scores] + [0.0] * max(0, len(prepared) - len(raw_scores))
         except Exception as e:
             print(f"Precision rerank failed: {e}", flush=True)
 
     reranked = []
-    for index, candidate in enumerate(candidates):
+    for index, candidate in enumerate(prepared):
         rerank_score = rerank_scores[index] if index < len(rerank_scores) else 0.0
         intent_bonus = _definition_intent_bonus(query_profile, candidate)
         semantic_bonus = candidate.get("semantic_score", 0.0) * 35.0
-        final_score = candidate.get("base_score", 0.0) + rerank_score * 100.0 + intent_bonus + semantic_bonus
+        evidence_bonus = float(candidate.get("evidence_score") or 0.0)
+        coverage_bonus = float(candidate.get("coverage_bonus") or 0.0)
+        final_score = candidate.get("base_score", 0.0) + rerank_score * 100.0 + intent_bonus + semantic_bonus + evidence_bonus + coverage_bonus
         merged = dict(candidate)
         merged["rerank_score"] = rerank_score
         merged["intent_bonus"] = intent_bonus
+        merged["evidence_bonus"] = evidence_bonus
+        merged["coverage_bonus"] = coverage_bonus
         merged["final_score"] = final_score
         reranked.append(merged)
 
@@ -3164,6 +3434,22 @@ def _collect_precision_candidates(
             match_basis="semantic_query",
             match_channel="semantic",
             retrieval_source="primary",
+        )
+
+    for row in _search_supplemental_semantic_candidates(
+        query_profile.get("target") or query,
+        scope_subject=scope_subject,
+        book_key=book_key,
+        limit=12,
+    ):
+        _append_precision_candidate(
+            bucket,
+            row,
+            base_score=162.0,
+            matched_term=query_profile.get("target") or query,
+            match_basis="semantic_query",
+            match_channel="semantic",
+            retrieval_source="supplemental",
         )
 
     plan = [{"term": term, "basis": "precision_query"} for term in search_terms]
@@ -3405,6 +3691,21 @@ def _collect_hybrid_search_rows(
                 match_basis="semantic_query",
                 match_channel="semantic",
                 retrieval_source="primary",
+            )
+        for row in _search_supplemental_semantic_candidates(
+            semantic_query,
+            scope_subject=scope_subject,
+            book_key=book_key,
+            limit=max(6, min(12, math.ceil(candidate_limit / 4))),
+        ):
+            _append_precision_candidate(
+                bucket,
+                row,
+                base_score=156.0 - semantic_priority * 10.0,
+                matched_term=semantic_query,
+                match_basis="semantic_query",
+                match_channel="semantic",
+                retrieval_source="supplemental",
             )
 
     supplemental_rows = _search_supplemental_textbook_pages(
@@ -4636,6 +4937,219 @@ def _build_context_snippet(text: str | None, query: str, *, window: int = 180) -
     return f"{prefix}{plain[start:end]}{suffix}"
 
 
+def _highlight_snippet_terms(snippet: str, *terms: str) -> str:
+    highlighted = snippet or ""
+    if not highlighted or "<mark>" in highlighted:
+        return highlighted
+    for term in sorted({str(item or "").strip() for item in terms if str(item or "").strip()}, key=len, reverse=True):
+        if term not in highlighted:
+            continue
+        try:
+            highlighted = re.sub(re.escape(term), lambda match: f"<mark>{match.group(0)}</mark>", highlighted, count=1)
+            break
+        except Exception:
+            continue
+    return highlighted
+
+
+def _build_evidence_segments(text: str, intent: str) -> list[str]:
+    plain = re.sub(r"\s+", " ", text or "").strip()
+    if not plain:
+        return []
+    pieces = []
+    for block in re.split(r"[\r\n]+", plain):
+        block = block.strip()
+        if not block:
+            continue
+        parts = [item.strip() for item in re.split(r"(?<=[。！？!?；;])\s*", block) if item.strip()]
+        if not parts:
+            parts = [block]
+        for item in parts:
+            if 4 <= len(item) <= EVIDENCE_MAX_SPAN_CHARS:
+                pieces.append(item)
+    if not pieces:
+        pieces = [plain[:EVIDENCE_MAX_SPAN_CHARS]]
+    pieces = pieces[:EVIDENCE_MAX_SEGMENTS]
+    max_width = 3 if intent == "process" else 2
+    windows = []
+    seen = set()
+    for start in range(len(pieces)):
+        combined = ""
+        for width in range(max_width):
+            idx = start + width
+            if idx >= len(pieces):
+                break
+            combined += pieces[idx]
+            candidate = combined.strip()
+            if len(candidate) < 8 or len(candidate) > EVIDENCE_MAX_SPAN_CHARS:
+                continue
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            windows.append(candidate)
+    return windows or [plain[:EVIDENCE_MAX_SPAN_CHARS]]
+
+
+def _score_evidence_span(query_text: str, query_profile: dict, candidate: dict, span: str) -> float:
+    raw = span.strip()
+    compact = _compact_query_text(raw)
+    if not raw or not compact:
+        return -999.0
+
+    score = 0.0
+    target_raw = _clean_query_text(query_profile.get("target") or "")
+    target = _compact_query_text(target_raw)
+    matched_term = _clean_query_text(candidate.get("matched_term") or "")
+    matched_compact = _compact_query_text(matched_term)
+    query_compact = _compact_query_text(query_text)
+    intent = query_profile.get("intent") or "lookup"
+
+    if target and target in compact:
+        score += 22.0
+    if matched_compact and matched_compact in compact:
+        score += 12.0
+    if query_compact and query_compact in compact:
+        score += 8.0
+
+    if intent == "definition":
+        patterns = (
+            rf"(?:^|[。！？；：])(?:什么是)?{re.escape(target_raw)}(?:通常)?是指",
+            rf"(?:^|[。！？；：])(?:什么是)?{re.escape(target_raw)}(?:通常)?指",
+            rf"(?:^|[。！？；：]){re.escape(target_raw)}(?:是|叫做|称为)",
+            rf"(?:把|将)[^。！？；：]{{0,40}}(?:称为|叫做){re.escape(target_raw)}",
+            rf"[^。！？；：]{{0,40}}物质(?:称为|叫做){re.escape(target_raw)}",
+            rf"什么样的物质才能称为{re.escape(target_raw)}",
+        )
+        for pattern in patterns:
+            if target_raw and re.search(pattern, raw):
+                score += 30.0
+        for marker in ("是指", "通常指", "称为", "叫做", "是什么", "概念", "定义"):
+            if marker in compact:
+                score += 10.0
+        if any(marker in raw for marker in ("什么样的", "为什么", "有什么不同")):
+            score -= 10.0
+        if target_raw and re.search(rf"(?:称为|叫做){re.escape(target_raw)}[A-Za-z0-9\u4e00-\u9fff]", raw):
+            score -= 16.0
+    elif intent == "comparison":
+        for marker in ("区别", "不同", "相同", "联系", "相比", "而", "但是"):
+            if marker in compact:
+                score += 8.0
+    elif intent == "example":
+        for marker in ("例如", "比如", "如", "实例", "例子", "典型"):
+            if marker in compact:
+                score += 8.0
+    elif intent == "reason":
+        for marker in ("原因", "因为", "由于", "所以", "导致"):
+            if marker in compact:
+                score += 8.0
+    elif intent == "process":
+        for marker in ("过程", "步骤", "先", "然后", "接着", "最后"):
+            if marker in compact:
+                score += 7.0
+
+    score -= max(0.0, (len(raw) - 120) * 0.08)
+    if len(raw) < 10:
+        score -= 8.0
+    return score
+
+
+def _extract_candidate_evidence(query_text: str, query_profile: dict, candidate: dict) -> dict:
+    text = candidate.get("text") or ""
+    fallback_snippet = candidate.get("snippet") or _build_context_snippet(
+        text,
+        candidate.get("matched_term") or query_profile.get("target") or query_text,
+    )
+    if not text:
+        return {"snippet": fallback_snippet, "score": 0.0, "source": "context", "text": fallback_snippet}
+
+    cache_key = (
+        hashlib.md5(text.encode("utf-8")).hexdigest()[:16],
+        _compact_query_text(query_text),
+        _compact_query_text(query_profile.get("target") or ""),
+        query_profile.get("intent") or "lookup",
+        _compact_query_text(candidate.get("matched_term") or ""),
+    )
+    cached = EVIDENCE_SPAN_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    best_span = ""
+    best_score = -999.0
+    for span in _build_evidence_segments(text, query_profile.get("intent") or "lookup"):
+        span_score = _score_evidence_span(query_text, query_profile, candidate, span)
+        if span_score > best_score:
+            best_score = span_score
+            best_span = span
+
+    if best_span and best_score >= 18.0:
+        result = {
+            "snippet": _highlight_snippet_terms(
+                best_span,
+                candidate.get("matched_term") or "",
+                query_profile.get("target") or "",
+                query_text,
+            ),
+            "score": best_score,
+            "source": "sentence",
+            "text": best_span,
+        }
+    else:
+        result = {
+            "snippet": _highlight_snippet_terms(
+                fallback_snippet,
+                candidate.get("matched_term") or "",
+                query_profile.get("target") or "",
+                query_text,
+            ),
+            "score": max(0.0, best_score),
+            "source": "context",
+            "text": fallback_snippet,
+        }
+
+    EVIDENCE_SPAN_CACHE[cache_key] = result
+    return result
+
+
+def _query_coverage_bonus(query_text: str, candidate: dict) -> float:
+    compact_query = _compact_query_text(query_text)
+    if len(compact_query) < 2:
+        return 0.0
+    reference = _compact_query_text(
+        "\n".join(
+            part for part in (
+                candidate.get("snippet") or "",
+                (candidate.get("text") or "")[:600],
+            ) if part
+        )
+    )
+    if not reference:
+        return 0.0
+
+    bonus = 0.0
+    if compact_query in reference:
+        bonus += 42.0
+
+    bigrams = []
+    for index in range(len(compact_query) - 1):
+        token = compact_query[index:index + 2]
+        if len(token) == 2:
+            bigrams.append(token)
+    if bigrams:
+        unique_bigrams = tuple(dict.fromkeys(bigrams))
+        matched_bigrams = sum(1 for token in unique_bigrams if token in reference)
+        bonus += (matched_bigrams / max(1, len(unique_bigrams))) * 28.0
+
+    unique_chars = tuple(dict.fromkeys(ch for ch in compact_query if ch.strip()))
+    if unique_chars:
+        matched_chars = sum(1 for ch in unique_chars if ch in reference)
+        coverage = matched_chars / max(1, len(unique_chars))
+        bonus += coverage * 18.0
+        if coverage < 0.42:
+            bonus -= 18.0
+
+    return max(-18.0, min(68.0, bonus))
+
+
 def _extract_passage_heading(text: str | None) -> str:
     for raw_line in (text or "").splitlines()[:6]:
         line = raw_line.strip().strip("*")
@@ -5219,6 +5733,8 @@ def search(
                 "section": r["section"],
                 "logical_page": r["logical_page"] if "logical_page" in r.keys() and r["logical_page"] is not None else r["section"],
                 "snippet": r["snippet"],
+                "snippet_source": r.get("snippet_source") or "context",
+                "evidence_score": r.get("evidence_score") or r.get("evidence_bonus") or 0.0,
                 "text": text[:2000],
                 "image_count": img_count,
                 "source": r["source"] or "mineru",
@@ -5287,6 +5803,7 @@ def search(
                 "hybrid_candidate_count": hybrid_meta["candidate_count"] if hybrid_meta else 0,
                 "semantic_queries": hybrid_meta["semantic_queries"] if hybrid_meta else [],
                 "reranker_loaded": hybrid_meta["reranker_loaded"] if hybrid_meta else bool(reranker),
+                "supplemental_semantic_loaded": bool(supplemental_faiss_index),
                 "supplemental_index_enabled": _get_supplemental_source_info()["available"],
                 "supplemental_index_source": _get_supplemental_source_info()["source"],
                 "supplemental_manifest": {
@@ -7328,6 +7845,20 @@ def health():
     status["graphrag"] = {
         "enabled": GRAPH_RAG_ENABLED,
         "max_relations": GRAPH_RAG_MAX_RELATIONS,
+    }
+    status["supplemental_vectors"] = {
+        "enabled": SUPPLEMENTAL_VECTOR_ENABLED,
+        "loaded": supplemental_faiss_index is not None,
+        "vectors": supplemental_faiss_index.ntotal if supplemental_faiss_index else 0,
+        "path": str((_get_supplemental_vector_source_info().get("path") or "")) or None,
+        "reason": supplemental_faiss_status_reason,
+        "manifest": {
+            "present": supplemental_faiss_manifest is not None,
+            "schema_version": (supplemental_faiss_manifest or {}).get("schema_version"),
+            "model": (supplemental_faiss_manifest or {}).get("model", {}).get("name"),
+            "vector_rows": (supplemental_faiss_manifest or {}).get("index", {}).get("vector_rows"),
+            "dimension": (supplemental_faiss_manifest or {}).get("index", {}).get("dimension"),
+        },
     }
     status["supplemental"] = {
         "ok": supplemental_ok,
