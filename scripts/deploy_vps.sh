@@ -12,6 +12,10 @@ HOST_LEGACY_ST_CACHE="${RUNTIME_ROOT}/state/cache/sentence_transformers"
 CONTAINER_HF_CACHE_ROOT="/state/cache/huggingface"
 CONTAINER_HF_HUB_CACHE="/state/cache/huggingface/hub"
 EMBEDDER_CACHE_KEY="models--${EMBEDDER_NAME//\//--}"
+SUPPLEMENTAL_INDEX_SRC="${SOURCE_ROOT}/backend/supplemental_textbook_pages.jsonl.gz"
+SUPPLEMENTAL_MANIFEST_SRC="${SOURCE_ROOT}/backend/supplemental_textbook_pages.manifest.json"
+SUPPLEMENTAL_INDEX_DST="${RUNTIME_ROOT}/data/index/supplemental_textbook_pages.jsonl.gz"
+SUPPLEMENTAL_MANIFEST_DST="${RUNTIME_ROOT}/data/index/supplemental_textbook_pages.manifest.json"
 
 cd "$SOURCE_ROOT"
 
@@ -23,6 +27,16 @@ mkdir -p \
   "${RUNTIME_ROOT}/state/tmp" \
   "${RUNTIME_ROOT}/state/batch"
 
+if [ ! -f "${SUPPLEMENTAL_INDEX_SRC}" ]; then
+  echo "ERROR: missing bundled supplemental index ${SUPPLEMENTAL_INDEX_SRC}"
+  exit 1
+fi
+
+if [ ! -f "${SUPPLEMENTAL_MANIFEST_SRC}" ]; then
+  echo "ERROR: missing bundled supplemental manifest ${SUPPLEMENTAL_MANIFEST_SRC}"
+  exit 1
+fi
+
 if [ ! -f "${RUNTIME_ROOT}/data/index/textbook_mineru_fts.db" ]; then
   echo "ERROR: missing runtime DB ${RUNTIME_ROOT}/data/index/textbook_mineru_fts.db"
   exit 1
@@ -32,6 +46,9 @@ if [ ! -f "${RUNTIME_ROOT}/data/index/textbook_chunks.index" ]; then
   echo "ERROR: missing runtime FAISS index ${RUNTIME_ROOT}/data/index/textbook_chunks.index"
   exit 1
 fi
+
+install -m 0644 "${SUPPLEMENTAL_INDEX_SRC}" "${SUPPLEMENTAL_INDEX_DST}"
+install -m 0644 "${SUPPLEMENTAL_MANIFEST_SRC}" "${SUPPLEMENTAL_MANIFEST_DST}"
 
 commit_sha="$(git rev-parse --short HEAD)"
 build_stamp="$(date +%Y%m%d_%H%M%S)"
@@ -59,6 +76,29 @@ prune_legacy_st_cache() {
   if [ -d "${HOST_LEGACY_ST_CACHE}/.locks" ]; then
     find "${HOST_LEGACY_ST_CACHE}/.locks" -type f -delete || true
   fi
+}
+
+health_json_ok() {
+  python3 - <<'PY'
+import json
+import sys
+
+try:
+    with open("/tmp/textbook_health.json", "r", encoding="utf-8") as fh:
+        payload = json.load(fh)
+except Exception:
+    sys.exit(1)
+
+supplemental = payload.get("supplemental") or {}
+ok = (
+    payload.get("status") == "ok"
+    and bool((payload.get("db") or {}).get("ok"))
+    and bool((payload.get("faiss") or {}).get("ok"))
+    and bool((payload.get("model") or {}).get("ok"))
+    and bool(supplemental.get("ok"))
+)
+sys.exit(0 if ok else 1)
+PY
 }
 
 echo "=== deploy start $(date -u '+%Y-%m-%d %H:%M:%S UTC') commit=${commit_sha} ==="
@@ -118,7 +158,7 @@ healthy="false"
 for _ in $(seq 1 24); do
   status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${CONTAINER_NAME}" 2>/dev/null || echo "missing")"
   if [ "${status}" = "healthy" ] || [ "${status}" = "running" ]; then
-    if curl -sf http://127.0.0.1:8080/api/health >/tmp/textbook_health.json; then
+    if curl -sf http://127.0.0.1:8080/api/health >/tmp/textbook_health.json && health_json_ok; then
       healthy="true"
       break
     fi

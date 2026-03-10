@@ -1,7 +1,7 @@
 """
 跨学科教材知识平台 · FastAPI 后端
 """
-import asyncio, sqlite3, json, math, os, re, time, functools, hashlib, threading, unicodedata
+import asyncio, gzip, sqlite3, json, math, os, re, time, functools, hashlib, threading, unicodedata
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Optional
@@ -62,6 +62,13 @@ FRONTEND = Path(__file__).parent.parent / "frontend"
 FAISS_INDEX_PATH = _resolve_data_asset("textbook_chunks.index")
 FAISS_MANIFEST_PATH = _resolve_data_asset("textbook_chunks.manifest.json")
 SUPPLEMENTAL_TEXTBOOK_ROOT = DATA_ROOT / "mineru_output_backup"
+SUPPLEMENTAL_TEXTBOOK_INDEX_GZ_PATH = _resolve_data_asset("supplemental_textbook_pages.jsonl.gz")
+SUPPLEMENTAL_TEXTBOOK_INDEX_PATH = _resolve_data_asset("supplemental_textbook_pages.jsonl")
+SUPPLEMENTAL_TEXTBOOK_MANIFEST_PATH = _resolve_data_asset("supplemental_textbook_pages.manifest.json")
+BUNDLED_SUPPLEMENTAL_TEXTBOOK_INDEX_GZ_PATH = Path(__file__).with_name("supplemental_textbook_pages.jsonl.gz")
+BUNDLED_SUPPLEMENTAL_TEXTBOOK_INDEX_PATH = Path(__file__).with_name("supplemental_textbook_pages.jsonl")
+BUNDLED_SUPPLEMENTAL_TEXTBOOK_MANIFEST_PATH = Path(__file__).with_name("supplemental_textbook_pages.manifest.json")
+SUPPLEMENTAL_REQUIRED = os.getenv("SUPPLEMENTAL_REQUIRED", "1").strip().lower() not in {"0", "false", "no"}
 SQLITE_BUSY_TIMEOUT_MS = max(1000, int(os.getenv("SQLITE_BUSY_TIMEOUT_MS", "5000")))
 SQLITE_CONNECT_TIMEOUT_SEC = max(1.0, SQLITE_BUSY_TIMEOUT_MS / 1000.0)
 FAISS_SCORE_THRESHOLD = max(0.0, min(1.0, float(os.getenv("FAISS_SCORE_THRESHOLD", "0.62"))))
@@ -950,6 +957,8 @@ def _resolve_supplemental_book_meta(path: Path) -> dict:
 
     content_id = _parse_content_id_from_text(str(path))
     subject_name = _parse_subject_from_title(display_title)
+    if not subject_name:
+        subject_name = _parse_subject_from_title(str(path))
     matched = registry["by_content_id"].get(content_id)
     if not matched:
         title_key = _normalize_lookup_title(display_title)
@@ -988,62 +997,145 @@ def _merge_supplemental_page_blocks(blocks: list[str]) -> str:
 
 
 @functools.lru_cache(maxsize=1)
+def _load_supplemental_manifest() -> dict:
+    for candidate in (SUPPLEMENTAL_TEXTBOOK_MANIFEST_PATH, BUNDLED_SUPPLEMENTAL_TEXTBOOK_MANIFEST_PATH):
+        if not candidate.exists():
+            continue
+        try:
+            with candidate.open("r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+                if isinstance(payload, dict):
+                    return payload
+        except Exception:
+            continue
+    return {}
+
+
+def _get_supplemental_source_info() -> dict:
+    if SUPPLEMENTAL_TEXTBOOK_INDEX_GZ_PATH.exists():
+        return {"available": True, "source": "runtime_index_gzip", "path": SUPPLEMENTAL_TEXTBOOK_INDEX_GZ_PATH}
+    if SUPPLEMENTAL_TEXTBOOK_INDEX_PATH.exists():
+        return {"available": True, "source": "runtime_index_jsonl", "path": SUPPLEMENTAL_TEXTBOOK_INDEX_PATH}
+    if BUNDLED_SUPPLEMENTAL_TEXTBOOK_INDEX_GZ_PATH.exists():
+        return {"available": True, "source": "bundled_index_gzip", "path": BUNDLED_SUPPLEMENTAL_TEXTBOOK_INDEX_GZ_PATH}
+    if BUNDLED_SUPPLEMENTAL_TEXTBOOK_INDEX_PATH.exists():
+        return {"available": True, "source": "bundled_index_jsonl", "path": BUNDLED_SUPPLEMENTAL_TEXTBOOK_INDEX_PATH}
+    if SUPPLEMENTAL_TEXTBOOK_ROOT.exists():
+        return {"available": True, "source": "directory", "path": SUPPLEMENTAL_TEXTBOOK_ROOT}
+    return {"available": False, "source": "absent", "path": None}
+
+
+def _normalize_supplemental_page_entry(entry: dict) -> dict | None:
+    if not isinstance(entry, dict):
+        return None
+    subject = str(entry.get("subject") or "").strip()
+    title = str(entry.get("title") or "").strip()
+    text = _normalize_text_line(entry.get("text"))
+    if not subject or not title or len(text) < 20:
+        return None
+    try:
+        section = int(entry.get("section"))
+    except Exception:
+        return None
+    logical_page = entry.get("logical_page")
+    try:
+        logical_page_int = int(logical_page) if logical_page is not None else section
+    except Exception:
+        logical_page_int = section
+    stable_id = str(entry.get("id") or "").strip()
+    if not stable_id:
+        stable_id = f"supp:{hashlib.md5(f'{subject}:{title}:{section}'.encode('utf-8')).hexdigest()[:16]}"
+    return {
+        "id": stable_id,
+        "content_id": str(entry.get("content_id") or "").strip() or None,
+        "subject": subject,
+        "title": title,
+        "book_key": str(entry.get("book_key") or "").strip() or None,
+        "section": section,
+        "logical_page": logical_page_int,
+        "text": text,
+        "normalized_text": _compact_query_text(text),
+        "path": str(entry.get("path") or "").strip() or None,
+    }
+
+
+@functools.lru_cache(maxsize=1)
 def _load_supplemental_textbook_pages() -> tuple[dict, ...]:
-    if not SUPPLEMENTAL_TEXTBOOK_ROOT.exists():
+    source_info = _get_supplemental_source_info()
+    if not source_info["available"]:
         return tuple()
 
     page_entries = []
-    registry = _load_textbook_registry()
-    for path in sorted(SUPPLEMENTAL_TEXTBOOK_ROOT.rglob("*_content_list.json")):
-        lowered = str(path).lower()
-        if "test_" in lowered or "/test" in lowered:
-            continue
-        meta = _resolve_supplemental_book_meta(path)
-        if not meta.get("subject"):
-            continue
+    if source_info["source"] in {"runtime_index_gzip", "runtime_index_jsonl", "bundled_index_gzip", "bundled_index_jsonl"}:
+        opener = gzip.open if source_info["source"].endswith("_gzip") else open
         try:
-            with path.open("r", encoding="utf-8") as fh:
-                payload = json.load(fh)
+            with opener(source_info["path"], "rt", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        item = json.loads(line)
+                    except Exception:
+                        continue
+                    normalized = _normalize_supplemental_page_entry(item)
+                    if normalized:
+                        page_entries.append(normalized)
         except Exception:
-            continue
-        if not isinstance(payload, list):
-            continue
-
-        blocks_by_page = defaultdict(list)
-        for item in payload:
-            if not isinstance(item, dict) or item.get("type") != "text":
+            return tuple()
+    else:
+        registry = _load_textbook_registry()
+        for path in sorted(SUPPLEMENTAL_TEXTBOOK_ROOT.rglob("*_content_list.json")):
+            lowered = str(path).lower()
+            if "test_" in lowered or "/test" in lowered:
+                continue
+            meta = _resolve_supplemental_book_meta(path)
+            if not meta.get("subject"):
                 continue
             try:
-                page_idx = int(item.get("page_idx"))
+                with path.open("r", encoding="utf-8") as fh:
+                    payload = json.load(fh)
             except Exception:
                 continue
-            if page_idx < 0:
+            if not isinstance(payload, list):
                 continue
-            text = _normalize_text_line(item.get("text"))
-            if len(text) < 2:
-                continue
-            blocks_by_page[page_idx].append(text)
 
-        for page_num, blocks in blocks_by_page.items():
-            merged_text = _merge_supplemental_page_blocks(blocks)
-            if len(merged_text) < 20:
-                continue
-            book_key = meta.get("book_key")
-            logical_page = registry["page_lookup"].get((book_key, page_num)) if book_key else None
-            page_entries.append(
-                {
-                    "id": f"supp:{hashlib.md5(f'{path}:{page_num}'.encode('utf-8')).hexdigest()[:16]}",
-                    "content_id": meta.get("content_id"),
-                    "subject": meta.get("subject"),
-                    "title": meta.get("title"),
-                    "book_key": book_key,
-                    "section": int(page_num),
-                    "logical_page": int(logical_page) if logical_page is not None else int(page_num),
-                    "text": merged_text,
-                    "normalized_text": _compact_query_text(merged_text),
-                    "path": str(path),
-                }
-            )
+            blocks_by_page = defaultdict(list)
+            for item in payload:
+                if not isinstance(item, dict) or item.get("type") != "text":
+                    continue
+                try:
+                    page_idx = int(item.get("page_idx"))
+                except Exception:
+                    continue
+                if page_idx < 0:
+                    continue
+                text = _normalize_text_line(item.get("text"))
+                if len(text) < 2:
+                    continue
+                blocks_by_page[page_idx].append(text)
+
+            for page_num, blocks in blocks_by_page.items():
+                merged_text = _merge_supplemental_page_blocks(blocks)
+                if len(merged_text) < 20:
+                    continue
+                book_key = meta.get("book_key")
+                logical_page = registry["page_lookup"].get((book_key, page_num)) if book_key else None
+                normalized = _normalize_supplemental_page_entry(
+                    {
+                        "id": f"supp:{hashlib.md5(f'{path}:{page_num}'.encode('utf-8')).hexdigest()[:16]}",
+                        "content_id": meta.get("content_id"),
+                        "subject": meta.get("subject"),
+                        "title": meta.get("title"),
+                        "book_key": book_key,
+                        "section": int(page_num),
+                        "logical_page": int(logical_page) if logical_page is not None else int(page_num),
+                        "text": merged_text,
+                        "path": str(path),
+                    }
+                )
+                if normalized:
+                    page_entries.append(normalized)
 
     page_entries.sort(
         key=lambda item: (
@@ -1137,6 +1229,8 @@ def _derive_query_candidate_terms(query: str, *, limit: int = 18) -> list[str]:
         for window in range(min(4, len(token_candidates)), 0, -1):
             for start in range(0, len(token_candidates) - window + 1):
                 add_term("".join(token_candidates[start:start + window]))
+    elif token_candidates and len(token_candidates) == 1 and _compact_query_text(token_candidates[0]) == compact:
+        return candidates[:limit]
     elif _contains_chinese(compact) and len(compact) >= 4:
         max_len = min(8, len(compact))
         min_len = 2 if len(compact) <= 4 else 3
@@ -1308,12 +1402,13 @@ def _analyze_search_query(
         add_retrieval_term(item["term"])
         for alias in item.get("aliases", [])[:3]:
             add_retrieval_term(alias)
-    for item in fallback_scored[:QUERY_TERM_PLAN_LIMIT]:
+    plan_fallback_terms = fallback_scored[:QUERY_TERM_PLAN_LIMIT] if not concept_matches and not alias_matches else []
+    for item in plan_fallback_terms:
         add_retrieval_term(item["term"])
     add_retrieval_term(clean_q)
 
     concept_terms = concept_matches[:4] + alias_matches[:4]
-    fallback_terms = fallback_scored[:QUERY_TERM_PLAN_LIMIT]
+    fallback_terms = plan_fallback_terms
     used_supplemental_fallback = (
         bool(fallback_terms)
         and not any(item.get("textbook_hits", 0) > 0 for item in fallback_terms)
@@ -3697,7 +3792,16 @@ def search(
                 **query_analysis,
                 "scope_label": scope_label,
                 "search_plan": search_plan,
-                "supplemental_index_enabled": SUPPLEMENTAL_TEXTBOOK_ROOT.exists(),
+                "supplemental_index_enabled": _get_supplemental_source_info()["available"],
+                "supplemental_index_source": _get_supplemental_source_info()["source"],
+                "supplemental_manifest": {
+                    "present": bool(_load_supplemental_manifest()),
+                    "books": int((_load_supplemental_manifest() or {}).get("books") or 0),
+                    "pages": int((_load_supplemental_manifest() or {}).get("pages") or 0),
+                    "subjects": int(len((_load_supplemental_manifest() or {}).get("subjects") or {})),
+                    "source_files_total": int((_load_supplemental_manifest() or {}).get("source_files_total") or 0),
+                    "source_files_indexed": int((_load_supplemental_manifest() or {}).get("source_files_indexed") or 0),
+                },
             },
             "groups": groups,
         }
@@ -5637,6 +5741,13 @@ def graph_overview(
 def health():
     """Health check: DB, FAISS, model status."""
     status = {"status": "ok", "ts": time.time()}
+    supplemental_source = _get_supplemental_source_info()
+    supplemental_manifest = _load_supplemental_manifest()
+    supplemental_has_manifest = bool(supplemental_manifest)
+    supplemental_source_is_index = supplemental_source["source"] != "directory"
+    supplemental_ok = bool(supplemental_source["available"]) and (
+        not supplemental_source_is_index or supplemental_has_manifest
+    )
     # DB check
     try:
         con = get_db()
@@ -5665,9 +5776,27 @@ def health():
         "ok": embedder is not None,
         "name": EMBEDDER_NAME,
     }
+    status["supplemental"] = {
+        "ok": supplemental_ok,
+        "required": SUPPLEMENTAL_REQUIRED,
+        "source": supplemental_source["source"],
+        "path": str(supplemental_source["path"]) if supplemental_source["path"] else None,
+        "manifest": {
+            "present": supplemental_has_manifest,
+            "schema_version": supplemental_manifest.get("schema_version"),
+            "source_files_total": supplemental_manifest.get("source_files_total"),
+            "source_files_indexed": supplemental_manifest.get("source_files_indexed"),
+            "books": supplemental_manifest.get("books"),
+            "pages": supplemental_manifest.get("pages"),
+            "subjects": len(supplemental_manifest.get("subjects") or {}),
+            "output_sha256": (supplemental_manifest.get("output") or {}).get("sha256"),
+        },
+    }
     # Cache stats
     status["cache"] = {"size": len(_cache), "maxsize": getattr(_cache, 'maxsize', 'unlimited')}
     if not status["faiss"]["ok"] or not status["model"]["ok"]:
+        status["status"] = "degraded"
+    if SUPPLEMENTAL_REQUIRED and not status["supplemental"]["ok"]:
         status["status"] = "degraded"
     return status
 

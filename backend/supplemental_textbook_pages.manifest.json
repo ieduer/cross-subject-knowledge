@@ -1,0 +1,66 @@
+{
+  "allow_partial": false,
+  "books": 66,
+  "built_at": "2026-03-10T03:15:19.118622+00:00",
+  "chars": 26965384,
+  "db_path": "/Users/ylsuen/textbook_ai_migration/data/index/textbook_mineru_fts.db",
+  "generator": "scripts/build_supplemental_textbook_index.py",
+  "output": {
+    "bytes": 19261411,
+    "path": "/Users/ylsuen/textbook_ai_migration/platform/backend/supplemental_textbook_pages.jsonl.gz",
+    "sha256": "ebf8438cc804ee6f9787dfb430166627ca6545b64fc414765f90de1483a2defe"
+  },
+  "pages": 31170,
+  "problems": [],
+  "schema_version": 1,
+  "source_files_indexed": 251,
+  "source_files_total": 251,
+  "source_root": "/Users/ylsuen/textbook_ai_migration/data/mineru_output_backup",
+  "subjects": {
+    "化学": {
+      "books": 7,
+      "chars": 1778119,
+      "pages": 2630
+    },
+    "历史": {
+      "books": 1,
+      "chars": 401103,
+      "pages": 680
+    },
+    "地理": {
+      "books": 5,
+      "chars": 1524456,
+      "pages": 3900
+    },
+    "思想政治": {
+      "books": 1,
+      "chars": 518306,
+      "pages": 880
+    },
+    "数学": {
+      "books": 33,
+      "chars": 7353570,
+      "pages": 7616
+    },
+    "物理": {
+      "books": 6,
+      "chars": 2872000,
+      "pages": 4274
+    },
+    "生物学": {
+      "books": 5,
+      "chars": 2496687,
+      "pages": 4053
+    },
+    "英语": {
+      "books": 11,
+      "chars": 9492302,
+      "pages": 6470
+    },
+    "语文": {
+      "books": 1,
+      "chars": 528841,
+      "pages": 667
+    }
+  }
+}
