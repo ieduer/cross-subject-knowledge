@@ -747,19 +747,23 @@ SUBJECT_META = {
 EDITION_PATTERNS = (
     ("A版", ("（A版）", "(A版)", " A版", "_A版_", " A 版", "人民教育出版社 ·北京· A版", "人民教育出版社A版")),
     ("B版", ("（B版）", "(B版)", " B版", "_B版_", " B 版", "中学数学教材实验研究组", "数学（B版）", "数学(B版)")),
-    ("北师大版", ("北师大版", "北京师范大学出版社", "北京师范大学出版社高中数学编辑室", "王尚志", "保继光")),
+    ("北师大版", ("北师大版", "北京师范大学出版社", "北京师范大学出版社高中数学编辑室", "王尚志", "保继光", "主编王蔷")),
     ("冀教版", ("冀教版", "河北教育出版社")),
-    ("外研社版", ("外语教学与研究出版社", "外研社", "Foreign Language Teaching and Research Press")),
+    ("外研社版", ("外语教学与研究出版社", "外研社", "Foreign Language Teaching and Research Press", "陈琳")),
     ("上外教版", ("上海外语教育出版社", "束定芳", "上海外国语大学")),
     ("重大版", ("重庆大学出版社", "杨晓钰")),
-    ("沪教版", ("上海教育出版社", "上海教育出版社有限公司", "牛津大学出版社", "华东师范大学")),
-    ("沪科版", ("上海科学技术出版社", "上海世纪出版", "麻生明", "陈寅")),
+    ("沪教版", ("上海教育出版社", "上海教育出版社有限公司", "牛津大学出版社", "华东师范大学", "上海市中小学（幼儿园）课程改革委员会组织编写")),
+    ("沪科版", ("上海科学技术出版社", "上海科技教育出版社", "上海世纪出版", "麻生明", "陈寅", "束炳如", "何润伟")),
     ("苏教版", ("苏教版", "江苏凤凰教育出版社", "江苏凤凰出版传媒", "葛军", "李善良", "王祖浩")),
     ("鄂教版", ("湖北教育出版社", "武汉中远印务有限公司", "彭双阶", "胡典顺")),
     ("湘教版", ("湖南教育出版社", "湖南出版中心", "张景中", "黄步高", "邹楚林", "邹伟华")),
-    ("鲁科版", ("鲁科版", "山东科学技术出版社")),
-    ("人教版", ("人民教育出版社", "课程教材研究所", "人教版")),
+    ("鲁科版", ("鲁科版", "山东科学技术出版社", "总主编王磊陈光巨", "陈光巨")),
+    ("人教版", ("人民教育出版社", "人民教出版社", "人民都育出版社", "课程教材研究所", "人教版")),
+    ("中图版", ("中国地图出版社",)),
+    ("人民出版社版", ("人民出版社",)),
 )
+
+REAL_CONTENT_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f-]{27}$", re.IGNORECASE)
 
 
 def get_db():
@@ -1149,6 +1153,10 @@ def _parse_content_id_from_text(text: str | None) -> str:
     return match.group(1) if match else ""
 
 
+def _is_real_content_id(value: str | None) -> bool:
+    return bool(REAL_CONTENT_ID_RE.fullmatch(str(value or "").strip()))
+
+
 def _build_text_probe(payload: list[dict], *, max_blocks: int = 600, max_chars: int = 60000) -> str:
     parts = []
     total = 0
@@ -1182,6 +1190,36 @@ def _with_edition(base_title: str, edition: str) -> str:
     if cleaned_edition in cleaned_title:
         return cleaned_title
     return f"{cleaned_title}（{cleaned_edition}）"
+
+
+def _normalize_textbook_version_manifest(payload) -> dict:
+    if not isinstance(payload, dict):
+        return {"by_content_id": {}, "by_book_key": {}}
+    if "by_content_id" in payload or "by_book_key" in payload:
+        by_content_id = payload.get("by_content_id") if isinstance(payload.get("by_content_id"), dict) else {}
+        by_book_key = payload.get("by_book_key") if isinstance(payload.get("by_book_key"), dict) else {}
+        return {"by_content_id": by_content_id, "by_book_key": by_book_key}
+    by_content_id = {k: v for k, v in payload.items() if isinstance(v, dict)}
+    by_book_key = {}
+    for item in by_content_id.values():
+        book_key = str(item.get("book_key") or "").strip()
+        if book_key:
+            by_book_key[book_key] = item
+    return {"by_content_id": by_content_id, "by_book_key": by_book_key}
+
+
+def _book_version_manifest_row(book_key: str | None = None, content_id: str | None = None) -> dict:
+    normalized_book_key = str(book_key or "").strip()
+    normalized_content_id = str(content_id or "").strip()
+    if normalized_book_key:
+        row = _book_version_manifest.get("by_book_key", {}).get(normalized_book_key)
+        if isinstance(row, dict):
+            return row
+    if _is_real_content_id(normalized_content_id):
+        row = _book_version_manifest.get("by_content_id", {}).get(normalized_content_id)
+        if isinstance(row, dict):
+            return row
+    return {}
 
 
 def _match_registry_candidate(candidates, edition_hint: str) -> dict | None:
@@ -1279,21 +1317,23 @@ def _load_textbook_registry() -> dict:
 
     for row in rows:
         book_key = str(row["book_key"] or "").strip()
+        content_id = str(row["content_id"] or "").strip()
         book_info = _book_map.get(book_key, {}) if book_key else {}
-        display_title = str(book_info.get("display_title") or book_info.get("title") or row["title"] or "").strip()
-        edition = str(book_info.get("edition") or "").strip() or _extract_embedded_edition(display_title) or _extract_embedded_edition(row["title"])
+        manifest_row = _book_version_manifest_row(book_key=book_key, content_id=content_id)
+        base_title = str(manifest_row.get("title") or row["title"] or "").strip()
+        display_title = str(manifest_row.get("display_title") or book_info.get("display_title") or book_info.get("title") or base_title).strip()
+        edition = str(manifest_row.get("edition") or book_info.get("edition") or "").strip() or _extract_embedded_edition(display_title) or _extract_embedded_edition(base_title)
         item = {
-            "content_id": row["content_id"],
-            "title": row["title"],
-            "display_title": display_title or row["title"],
+            "content_id": content_id,
+            "title": base_title,
+            "display_title": display_title or base_title,
             "book_key": book_key,
-            "subject": row["subject"],
+            "subject": str(manifest_row.get("subject") or row["subject"] or "").strip(),
             "edition": edition,
         }
-        content_id = str(row["content_id"] or "").strip()
-        title_key = _normalize_lookup_title(row["title"])
-        subject_name = str(row["subject"] or "").strip()
-        if content_id and content_id not in by_content_id:
+        title_key = _normalize_lookup_title(base_title)
+        subject_name = str(item["subject"] or "").strip()
+        if _is_real_content_id(content_id) and content_id not in by_content_id:
             by_content_id[content_id] = item
         if title_key and subject_name:
             by_title_subject[(title_key, subject_name)].append(item)
@@ -2139,6 +2179,8 @@ def _search_supplemental_textbook_pages(
 
     results = []
     for entry in _load_supplemental_textbook_pages():
+        if entry.get("has_page_images"):
+            continue
         if book_key and entry.get("book_key") != book_key:
             continue
         if scope_subject and entry.get("subject") != scope_subject:
@@ -3213,6 +3255,8 @@ def _search_supplemental_semantic_candidates(
             continue
         seen.add(int(ordinal))
         entry = entries[int(ordinal)]
+        if entry.get("has_page_images"):
+            continue
         if book_key and entry.get("book_key") != book_key:
             continue
         if scope_subject and entry.get("subject") != scope_subject:
@@ -7956,11 +8000,13 @@ IMG_CDN = os.getenv("IMG_CDN", "https://img.rdfzer.com")
 # ── Book Map for page images ─────────────────────────────────────────
 _book_map = {}  # book_key -> {key, title, pages}
 _book_key_to_short = {}  # book_key -> short_key (12-char hash)
-_book_version_manifest = {}  # content_id -> {title, display_title, edition, ...}
+_book_version_manifest = {}  # {"by_content_id": {...}, "by_book_key": {...}}
 try:
     if TEXTBOOK_VERSION_MANIFEST_PATH.exists():
         with open(TEXTBOOK_VERSION_MANIFEST_PATH, encoding="utf-8") as _f:
-            _book_version_manifest = json.load(_f)
+            _book_version_manifest = _normalize_textbook_version_manifest(json.load(_f))
+    else:
+        _book_version_manifest = {"by_content_id": {}, "by_book_key": {}}
     _bm_path = FRONTEND / "assets/pages/book_map.json"
     if _bm_path.exists():
         with open(_bm_path) as _f:
@@ -7981,7 +8027,7 @@ def _extract_book_content_id(book_key: str | None) -> str:
 def _resolve_book_runtime_meta(book_key: str | None, fallback_title: str | None = None, content_id: str | None = None) -> dict:
     info = _book_map.get(book_key or "", {})
     resolved_content_id = str(content_id or info.get("content_id") or _extract_book_content_id(book_key)).strip()
-    manifest_row = _book_version_manifest.get(resolved_content_id, {}) if resolved_content_id else {}
+    manifest_row = _book_version_manifest_row(book_key=book_key, content_id=resolved_content_id)
     base_title = str(manifest_row.get("title") or info.get("title") or fallback_title or "").strip()
     display_title = str(manifest_row.get("display_title") or info.get("display_title") or base_title or fallback_title or "").strip()
     edition = str(manifest_row.get("edition") or info.get("edition") or "").strip()

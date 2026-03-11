@@ -1,7 +1,17 @@
 {
-  "frontend_refactor_version": "2026.03.10-r23",
+  "frontend_refactor_version": "2026.03.10-r25",
   "updated_at": "2026-03-10",
   "history": [
+    {
+      "version": "2026.03.10-r25",
+      "date": "2026-03-10",
+      "summary": "tightened textbook identity reconciliation at the data layer, removed primary-bound duplicate pages from the runtime supplemental corpus, and rebuilt the verified 15185-page supplemental vector release"
+    },
+    {
+      "version": "2026.03.10-r24",
+      "date": "2026-03-10",
+      "summary": "verified textbook editions at the identity layer, merged same-edition supplemental duplicates back into the correct primary books, and refreshed cache markers for the corrected 187-book catalog"
+    },
     {
       "version": "2026.03.10-r23",
       "date": "2026-03-10",

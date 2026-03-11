@@ -18,14 +18,14 @@
 - 📊 **数据洞察** — 726 个精选学术术语的词频分析、学科关联热力图、考试覆盖分析、概念广度排名
 - 📚 **教材下载** — 全部 316 本高中教材 PDF 可从 [jks.bdfz.net](https://jks.bdfz.net/) 下载
 
-数据层、运行时资产与部署边界的长期说明见 [docs/data_layer_lineage_memory.md](docs/data_layer_lineage_memory.md) 和 [docs/runtime_operations_overview.md](docs/runtime_operations_overview.md)。任何数据重建、检索排障、部署或回滚前，先看 `data_layer_lineage_memory.md`。
+数据层、运行时资产与部署边界的长期说明见 [docs/data_layer_lineage_memory.md](docs/data_layer_lineage_memory.md)、[docs/runtime_operations_overview.md](docs/runtime_operations_overview.md) 和 [docs/textbook_identity_audit.md](docs/textbook_identity_audit.md)。任何数据重建、检索排障、部署或回滚前，先看 `data_layer_lineage_memory.md`，涉及教材版本和“同一本是否被拆开”时再看 `textbook_identity_audit.md`。
 
 ### 高级检索
 
 - ⚙️ **高级搜索面板** — 按教材筛选、按排序方式切换（相关度 / 跨学科数 / 含图优先）
 - 🔗 **相关概念推荐** — 搜索后自动推荐共现频率最高的相关概念，点击即搜
 - 📷 **图片标注** — 搜索结果显示图片数量 badge，展开即可查看教材原图
-- 📖 **教材筛选** — 按学科分组的 193 本可检索教材下拉选择器，精准定位特定教材内容
+- 📖 **教材筛选** — 按学科分组的 187 本可检索教材下拉选择器，精准定位特定教材内容
 
 ---
 
@@ -33,7 +33,9 @@
 
 ### 本轮已完成的关键更新
 
-- 修复“潜热”等教材原词无结果问题：补充教材索引已按版本和书目身份重建，发布后可检索教材扩展到 **193 本**（主库 69 本 + 补充独立书目 124 本）
+- 修复“潜热”等教材原词无结果问题：补充教材索引已按真实版本和书目身份重建，发布后可检索教材收敛到 **187 本**（主库 69 本 + 补充独立书目 118 本）
+- 主库 69 本教材的版本身份已全部核定，`textbook_version_manifest` 升级为 `by_book_key + by_content_id` 双索引；同一本不再因缺 `content_id` 被拆开，不同版本也不会再误并到同一个 `book_key`
+- 本轮教材身份审计已消化完 `9` 个“应并回主库”的候选，并保留 `40` 组“同标题但不同版本”的并行教材，不再用标题相似度硬并
 - `/api/search` 升级为 **hybrid + rerank**：词法命中、FAISS 语义召回、补充教材页索引兜底、CrossEncoder 重排共同参与排序
 - 定义型查询单独做意图识别与降噪，例如“晶体的定义”会优先召回“是什么 / 是指 / 称为”类正式定义句，降低“晶体”“的定义”这类高频词噪声
 - AI 搜索改为精确问法优先走后端 precision agent；列表搜索与 AI 卡片分层保留，前者给原文证据，后者给过滤后的答案
@@ -54,6 +56,7 @@
 
 - 列表搜索已经从纯关键词升级为混合检索，但主体仍是 chunk / page 级证据，不是句级定义抽取
 - 精确问法的 AI 卡片体验通常优于原始结果列表，但 `/api/search` 仍保留可解释、可翻阅的原文检索属性，不以摘要替代证据
+- 当前 `查看原文` 页图产品仅覆盖 `69` 本主库教材；`118` 本补充独立版次虽已具备 OCR 与 `origin/layout/span` PDF，但页图尚未生成，因此会明确显示为“补充教材暂无页图”
 
 ---
 
@@ -88,12 +91,12 @@
 
 | 指标 | 数值 |
 |------|------|
-| 可检索教材 | **193 本**（主库 **69** 本 + 补充独立书目 **124** 本） |
+| 可检索教材 | **187 本**（主库 **69** 本 + 补充独立书目 **118** 本） |
 | PDF 下载库 | **316 本**（独立教材下载区） |
 | 学科覆盖 | **9 科**：语文、数学、英语、物理、化学、生物学、历史、地理、思想政治 |
 | 结构化语料 | **21,925 条**（主库教材 **17,896** + 高考真题 **4,029**） |
-| 补充教材页索引 | **22,844 页**（来自 **251** 份 OCR 源文件，按页全文匹配） |
-| 补充教材向量 | **22,844 条**（`BAAI/bge-m3`，与当前补充页源 fingerprint / sha256 一致） |
+| 补充教材页索引 | **15,185 页**（来自 **251** 份 OCR 源文件，`31,170` 个合并源页经去重/主库回绑后保留为运行时可检索页） |
+| 补充教材向量 | **15,185 条**（`BAAI/bge-m3`，与当前补充页源 fingerprint / sha256 一致） |
 | 高考真题 | **4,029 道**（`2002-2025`，其中 **651** 道含图题） |
 | 学术概念图谱 | **788 个**概念，1,723 条学科映射，83 条跨学科聚合记录 |
 | 精选术语 | **726 个**精选学术术语 |
@@ -159,8 +162,8 @@
     │               │   └── Jieba ── 中文分词 + 词性标注
     │               ├── 前端 (HTML/CSS/JS + D3.js + KaTeX)
     │               ├── SQLite FTS5 检索库 (56MB)
-    │               ├── 补充教材页索引 (22,844 页 gzip + manifest)
-    │               ├── 补充教材向量 (22,844 条，FAISS)
+    │               ├── 补充教材页索引 (15,185 页 gzip + manifest)
+    │               ├── 补充教材向量 (15,185 条，FAISS)
     │               └── 宿主机挂载 data/index + state/cache
     │
     ├── HTTPS → img.rdfzer.com (Cloudflare R2 CDN)
@@ -516,8 +519,8 @@ certbot --nginx -d your-domain.com
 | 自动部署 | GitHub Actions + `deploy_vps.sh` | 干净 release checkout 构建、健康检查、失败回滚 |
 | 概念图谱 | SQLite `concept_map` | 788 个学术概念，跨学科自动发现 |
 | 全文检索 | SQLite FTS5 | Porter 分词器，OR 组合查询 |
-| 补充教材兜底 | `supplemental_textbook_pages.jsonl.gz` | 22,844 页全文匹配，覆盖主库缺失的教材原词与并行版本页 |
-| 补充教材向量 | `supplemental_textbook_pages.index` | 22,844 条 `BAAI/bge-m3` 补充页向量，参与 hybrid semantic recall |
+| 补充教材兜底 | `supplemental_textbook_pages.jsonl.gz` | 15,185 页全文匹配，覆盖主库缺失的教材原词与并行版本页；主库同版教材的重复补充页已从运行时剔除 |
+| 补充教材向量 | `supplemental_textbook_pages.index` | 15,185 条 `BAAI/bge-m3` 补充页向量，参与 hybrid semantic recall |
 | 评分算法 | Hybrid retrieval + custom rerank | 词法命中 + 向量召回 + 补充页索引 + 定义意图重排 |
 
 **教材检索流程**（hybrid + rerank）：
@@ -535,9 +538,11 @@ certbot --nginx -d your-domain.com
 
 **数据与覆盖**
 - ✅ 重建并上线页级补充教材索引，`251/251` 份 OCR 源文件已入索引，`unresolved_books=0`、`unresolved_pages=0`
-- ✅ 线上可检索教材扩展到 `193` 本（主库 `69` 本 + 补充独立书目 `124` 本），补充页索引规模 `22,844` 页
+- ✅ 教材身份审计闭合后，可检索教材口径收敛到 `187` 本（主库 `69` 本 + 补充独立书目 `118` 本），补充页索引规模 `15,185` 页（由 `31,170` 个合并源页经去重/主库回绑后得出）
+- ✅ 主库 `69` 本教材版本全部核定；`textbook_version_manifest` 现为 `by_book_key + by_content_id` 双索引，补充书目与主库同版教材不再误拆
 - ✅ 补充教材向量索引已完成重建并通过 source fingerprint / sha256 校验，发布后可参与补充教材语义召回
 - ✅ 修复 `潜热` 等“教材原词存在但主库缺失”时无法命中的问题，补充教材原文现在能被直接兜底检索
+- ✅ 主库同版教材对应的补充 OCR 页已从运行时补充检索中剔除，避免“同一本被拆成两套证据”导致的串版和错误 `查看原文`
 
 **检索与 AI**
 - ✅ `/api/search` 从词法主导升级为 `lexical + semantic + supplemental + rerank` 的混合主链
@@ -548,7 +553,7 @@ certbot --nginx -d your-domain.com
 **前端与运维**
 - ✅ 结果卡区分 `精确命中 / 全文命中 / 向量召回 / 备份教材兜底`，方便诊断召回来源
 - ✅ 部署脚本新增补充索引/向量同步、reranker 预热与健康闸门；`/api/health` 现在直接暴露 `supplemental`、`supplemental_vectors` 和 `reranker` 状态
-- ✅ 前端版本标记更新到 `2026.03.10-r22`
+- ✅ 前端版本标记更新到 `2026.03.10-r25`
 
 ### 2026-03-05: 页面对齐重建 + 交互链路加固
 

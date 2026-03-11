@@ -2,7 +2,7 @@
 
 This document records the current runtime, data, and deployment boundaries of the textbook project.
 
-Before any data rebuild, deploy, rollback, or search-debugging pass, read [data_layer_lineage_memory.md](./data_layer_lineage_memory.md) first. That file is the canonical long-term memory for data lineage, count meanings, runtime asset boundaries, and release rules.
+Before any data rebuild, deploy, rollback, or search-debugging pass, read [data_layer_lineage_memory.md](./data_layer_lineage_memory.md) first. That file is the canonical long-term memory for data lineage, count meanings, runtime asset boundaries, and release rules. For textbook-version reconciliation and “same book vs different edition” decisions, also read [textbook_identity_audit.md](./textbook_identity_audit.md).
 
 ## Machine roles
 
@@ -29,17 +29,40 @@ Production runtime depends on host-mounted directories instead of baking data in
 
 The repository also keeps bundled fallback copies of the supplemental index under `backend/`, but production should rely on the synced `data/index/` copies and their manifest.
 
+Current page-image boundary:
+
+- `book_map.json` and the CDN page-image product currently cover the `69` primary books
+- the `118` supplemental-only visible books already have `origin/layout/span` PDFs in `data/mineru_output_backup`, but they do not yet have generated page-image assets in the current product
+- therefore, a missing `查看原文` for a supplemental-only result is currently a coverage boundary, not evidence that the result was remapped to the wrong primary book
+
 ## Current runtime profile
 
-As of 2026-03-10:
+As of 2026-03-10, keep production current and local pending rollout separate:
+
+### Production current
 
 - DB chunks: `21925`
 - Textbook chunks: `17896`
 - Gaokao chunks: `4029`
 - FAISS vectors: `17896`
-- Searchable textbooks: `193` (`69` primary books + `124` supplemental-only visible books)
+- Searchable textbooks: current live API still serves the pre-identity-cleanup catalog
 - Supplemental textbook pages: `22844` from `251` indexed OCR source files
 - Supplemental vectors: `22844`
+- Frontend version marker: `2026.03.10-r23`
+
+### Local pending rollout
+
+- Verified textbook-version manifest: `69` primary books resolved, `0` unresolved, `0` duplicate primary identities, `0` remaining safe merge candidates
+- Visible searchable textbooks after identity cleanup: `187` (`69` primary books + `118` supplemental-only visible books)
+- Supplemental textbook runtime pages: `15185`
+- Supplemental page source pages before omission/dedupe: `31170`
+- Primary-bound duplicate pages omitted from runtime supplemental search: `10724`
+- Duplicate OCR pages collapsed inside the supplemental-only corpus: `5261`
+- Supplemental vectors: verified against the `15185`-page source and ready for rollout
+- Frontend version marker prepared for rollout: `2026.03.10-r25`
+
+Common runtime facts shared by both states:
+
 - Embedder: `BAAI/bge-m3`
 - Reranker: `BAAI/bge-reranker-base`
 - Production image size: about `2.07 GB`
