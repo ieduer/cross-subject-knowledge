@@ -99,11 +99,10 @@ def verify_runtime_data(
 
     issues: list[str] = []
 
-    if len(primary_books) != len(book_map):
-        issues.append(f"primary book count mismatch: db={len(primary_books)} book_map={len(book_map)}")
     missing_book_map_keys = sorted(set(primary_books) - set(book_map))
     if missing_book_map_keys:
         issues.append(f"primary books missing page-image map: {len(missing_book_map_keys)}")
+    supplemental_page_map_keys = sorted(set(book_map) - set(primary_books))
 
     if int(version_manifest.get("primary_books") or 0) != len(primary_books):
         issues.append("version manifest primary_books mismatch")
@@ -124,8 +123,9 @@ def verify_runtime_data(
         issues.append("supplemental manifest blank_title_duplicate_groups != 0")
 
     catalog = supplemental_manifest.get("book_catalog") or []
-    primary_bound_books = [item for item in catalog if item.get("has_page_images")]
-    supplemental_only_books = [item for item in catalog if not item.get("has_page_images")]
+    primary_bound_books = [item for item in catalog if item.get("primary_bound")]
+    supplemental_only_books = [item for item in catalog if not item.get("primary_bound")]
+    supported_searchable_books = [item for item in supplemental_only_books if item.get("supported", True)]
     if len(catalog) != int(supplemental_manifest.get("books") or 0):
         issues.append("supplemental manifest books count mismatch")
     if len(primary_bound_books) != int(supplemental_manifest.get("primary_books") or 0):
@@ -142,6 +142,8 @@ def verify_runtime_data(
     supplemental_rows = 0
     supplemental_books_seen: set[str] = set()
     active_rows_with_page_images = 0
+    active_rows_primary_bound = 0
+    active_rows_supported_false = 0
     active_rows_in_book_map = 0
     bad_sections = 0
     subject_counts: Counter[str] = Counter()
@@ -154,6 +156,10 @@ def verify_runtime_data(
                 supplemental_books_seen.add(book_key)
             if entry.get("has_page_images"):
                 active_rows_with_page_images += 1
+            if entry.get("primary_bound"):
+                active_rows_primary_bound += 1
+            if not entry.get("supported", True):
+                active_rows_supported_false += 1
             if book_key in book_map:
                 active_rows_in_book_map += 1
             section = entry.get("section")
@@ -163,21 +169,23 @@ def verify_runtime_data(
 
     if supplemental_rows != int(supplemental_manifest.get("pages") or 0):
         issues.append(f"supplemental row count mismatch: jsonl={supplemental_rows} manifest={supplemental_manifest.get('pages')}")
-    if active_rows_with_page_images != 0:
-        issues.append(f"searchable supplemental rows still marked has_page_images: {active_rows_with_page_images}")
-    if active_rows_in_book_map != 0:
-        issues.append(f"searchable supplemental rows still point at primary book_map keys: {active_rows_in_book_map}")
+    if active_rows_primary_bound != 0:
+        issues.append(f"searchable supplemental rows still marked primary_bound: {active_rows_primary_bound}")
+    if active_rows_supported_false != 0:
+        issues.append(f"searchable supplemental rows still marked unsupported: {active_rows_supported_false}")
     if bad_sections != 0:
         issues.append(f"supplemental rows with negative sections: {bad_sections}")
-    if len(supplemental_books_seen) != len(supplemental_only_books):
+    if len(supplemental_books_seen) != len(supported_searchable_books):
         issues.append(
-            f"supplemental searchable book count mismatch: rows={len(supplemental_books_seen)} catalog={len(supplemental_only_books)}"
+            f"supplemental searchable book count mismatch: rows={len(supplemental_books_seen)} catalog={len(supported_searchable_books)}"
         )
 
     summary = {
         "status": "ok" if not issues else "failed",
         "primary_db_books": len(primary_books),
         "book_map_books": len(book_map),
+        "book_map_primary_books": len(primary_books) - len(missing_book_map_keys),
+        "book_map_supplemental_books": len(supplemental_page_map_keys),
         "version_manifest": {
             "primary_books": int(version_manifest.get("primary_books") or 0),
             "resolved_primary_books": int(version_manifest.get("resolved_primary_books") or 0),
@@ -190,9 +198,12 @@ def verify_runtime_data(
             "books": int(supplemental_manifest.get("books") or 0),
             "primary_books": int(supplemental_manifest.get("primary_books") or 0),
             "supplemental_only_books": int(supplemental_manifest.get("supplemental_only_books") or 0),
+            "supported_books": int(supplemental_manifest.get("supported_books") or 0),
+            "supported_searchable_books": int(supplemental_manifest.get("supported_searchable_books") or 0),
             "source_pages": int(supplemental_manifest.get("source_pages") or 0),
             "pages": int(supplemental_manifest.get("pages") or 0),
             "primary_bound_pages_omitted": int(supplemental_manifest.get("primary_bound_pages_omitted") or 0),
+            "unsupported_pages_omitted": int(supplemental_manifest.get("unsupported_pages_omitted") or 0),
             "primary_bound_page_lookup_misses": int(supplemental_manifest.get("primary_bound_page_lookup_misses") or 0),
             "duplicate_pages_collapsed": max(
                 0,
@@ -206,6 +217,8 @@ def verify_runtime_data(
             "books": len(supplemental_books_seen),
             "subject_rows": dict(sorted(subject_counts.items())),
             "has_page_images_rows": active_rows_with_page_images,
+            "primary_bound_rows": active_rows_primary_bound,
+            "unsupported_rows": active_rows_supported_false,
             "book_map_key_rows": active_rows_in_book_map,
         },
         "artifacts": {

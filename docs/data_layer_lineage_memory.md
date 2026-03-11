@@ -50,9 +50,9 @@ As of 2026-03-10:
 | --- | --- | --- | --- |
 | Main DB | `textbook_mineru_fts.db`, `21925` rows | same DB file currently in local `data/index/` | Runtime startup auto-syncs only this DB |
 | Main dense vectors | `17896` vectors, loaded | same local primary FAISS | Physical DB filter is `source != 'gaokao'`, not `source='textbook'` |
-| Supplemental page index | corrected build loaded: `books=176`, `primary_books=52`, `supplemental_only_books=124`, `pages=22844` | rebuilt identity-correct source: `books=175`, `primary_books=57`, `supplemental_only_books=118`, `pages=15185`, `source_pages=31170` | Local pending rollout has consumed the false splits, restored 3 mis-grouped 中图版 atlas books as separate editions, omitted `10724` primary-bound duplicate pages from runtime search, and collapsed `5261` duplicate OCR pages |
-| Supplemental vectors | loaded on production: `22844` vectors, manifest present, health `loaded=true` | local rebuild verified: `15185` vectors against the corrected `15185`-page source | These assets still must be explicitly transported; GitHub deploy does not pull them automatically from local `data/index/` |
-| Frontend version marker | `2026.03.10-r23` | local code is prepared for `2026.03.10-r25` | Frontend marker must move with the identity-fix rollout so book labels and runtime behavior stay in sync |
+| Supplemental page index | corrected build loaded: `books=176`, `primary_books=52`, `supplemental_only_books=124`, `pages=22844` | rebuilt product-scoped source: `books=175`, `primary_books=57`, `supplemental_only_books=118`, `pages=2843`, `source_pages=31170`, `unsupported_pages_omitted=17603` | Local pending rollout now keeps only the public support scope (`人教版全部` + `英语·北师大版` + `化学·鲁科版`) in the runtime supplemental corpus |
+| Supplemental vectors | loaded on production: `22844` vectors, manifest present, health `loaded=true` | local rebuild verified: `2843` vectors against the scoped `2843`-page source | These assets still must be explicitly transported; GitHub deploy does not pull them automatically from local `data/index/` |
+| Frontend version marker | `2026.03.10-r23` | local code is prepared for `2026.03.10-r27` | Frontend marker must move with the support-scope rollout so book labels and runtime behavior stay in sync |
 
 Never mix production current counts with local rebuilt counts in release notes or debugging conclusions.
 
@@ -203,10 +203,10 @@ Notes:
 | `data/index/textbook_mineru_fts.db` | main runtime DB | about `56M` |
 | `data/index/textbook_chunks.index` | primary FAISS | about `70M`, `17896` vectors |
 | `data/index/textbook_chunks.manifest.json` | primary FAISS manifest | present |
-| `platform/backend/supplemental_textbook_pages.jsonl.gz` | supplemental page index source bundled in repo | about `9.0M`, `15185` searchable rows (`31170` merged source pages before omission/dedupe) |
-| `platform/backend/supplemental_textbook_pages.manifest.json` | supplemental page manifest bundled in repo | about `100K` |
-| `data/index/supplemental_textbook_pages.index` | supplemental FAISS target path | local build path; final rebuild must pass verify before release |
-| `data/index/supplemental_textbook_pages.vector.manifest.json` | supplemental FAISS manifest | local build path; verify required before release |
+| `platform/backend/supplemental_textbook_pages.jsonl.gz` | supplemental page index source bundled in repo | about `1.8M`, `2843` searchable rows (`31170` merged source pages before omission/dedupe) |
+| `platform/backend/supplemental_textbook_pages.manifest.json` | supplemental page manifest bundled in repo | about `110K` |
+| `data/index/supplemental_textbook_pages.index` | supplemental FAISS target path | about `11M`, verified against the scoped `2843`-page source |
+| `data/index/supplemental_textbook_pages.vector.manifest.json` | supplemental FAISS manifest | present, verify required before release |
 
 Other data directories that matter operationally:
 
@@ -229,13 +229,13 @@ Use this ledger before every upload, sync, or rollback. Do not transfer a runtim
 | `data/index/textbook_mineru_fts.db` | main runtime DB | `58892288` | `5a92fff4f33c4891a7b6916ce26eda69b413c8a3f852e1b8687c70e75fa45c71` |
 | `data/index/textbook_chunks.index` | primary FAISS index | `73445274` | `2c5a5aa221c6e42ae0e3ca6e841c1a8dbe7b40fba606d5cf2345e59eccde0331` |
 | `data/index/textbook_chunks.manifest.json` | primary FAISS manifest | `891` | `394d69870d116106fdcf7a5f17af9aa0275139340c41a8b029bb7a43f1664155` |
-| `platform/backend/supplemental_textbook_pages.jsonl.gz` | bundled supplemental page source | `9448514` | `301db38dd1f544c593e544f47f07cc8014f7edbdd0b551c5ba1b10f64270c5ee` |
-| `platform/backend/supplemental_textbook_pages.manifest.json` | bundled supplemental page manifest | `101869` | `37c6644fa49914e47c08229f6de628bda5158c92371f1b8e07671f2c312c24b9` |
-| `data/index/supplemental_textbook_pages.index` | supplemental FAISS index | `62197805` | `2217a8c076589622dccc474ac517d8b0c386fd3151fe3a6f2520fc7e9f3aa819` |
-| `data/index/supplemental_textbook_pages.vector.manifest.json` | supplemental FAISS manifest | `720` | `dbfcfcb757d47b8aa797c47848d2df80d7aae33afc050bdd37321e807d08ee6a` |
-| `platform/frontend/assets/pages/book_map.json` | page-image identity map | `29919` | `fe0e3d85ee4819e11fcd03fc2f983adb7271b7a578db53220dd6244cdb27d30e` |
+| `platform/backend/supplemental_textbook_pages.jsonl.gz` | bundled supplemental page source | `1889049` | `16937cbe0a7034ccc40b29e7db65fc12f3db5ecf0c0f29cfd431c07e9a75344e` |
+| `platform/backend/supplemental_textbook_pages.manifest.json` | bundled supplemental page manifest | `111821` | `bd071850079a96976ad6b495c91143ae8fca0bd1f6dd70bc41d6066cb72f2a9c` |
+| `data/index/supplemental_textbook_pages.index` | supplemental FAISS index | `11644973` | `879a02d544e999bfc31813eab76bbd5bf1b8b91a7ec70fb3f4cd65e2d2c5f4ca` |
+| `data/index/supplemental_textbook_pages.vector.manifest.json` | supplemental FAISS manifest | `717` | `f2fbbbb91988d58f891d90ab8677c7a05732de3308bfde7a1222c53e8bc9425f` |
+| `platform/frontend/assets/pages/book_map.json` | page-image identity map | `40261` | `b005aabe1a5f5ce3311fc849999de54db3ae3bf2b0afb10cc2921b7aeba7485d` |
 | `platform/backend/textbook_version_manifest.json` | version-label manifest | `72847` | `674494d6de4c0acca0e4e9a2f3c265e80d8865bfd4167f6ea9a021e934c88c93` |
-| `platform/frontend/assets/version.json` | public frontend version ledger | `5980` | `2eda95d309f532a1fcf221653c905d374bf2528e9c3d888d98778baac521c834` |
+| `platform/frontend/assets/version.json` | public frontend version ledger | `6303` | `5369c2d567f9223647d5a34857d2098fbab25c3c0ce5a6007a235afb74c0bc74` |
 
 Important DB note:
 
@@ -270,7 +270,7 @@ This rule exists because a Git checkout, a local build output, and a repo-bundle
 Current-vector verification note for this round:
 
 - `platform/scripts/build_supplemental_vector_index.py verify` has passed against the current `platform/backend/supplemental_textbook_pages.jsonl.gz`
-- verified result: `15185` vector rows, `1024` dimensions, fingerprint `0c84fd76cf3f9defcd5f23faae353d5e11eb7eafbd581a3610c435789080d82d`
+- verified result: `2843` vector rows, `1024` dimensions, fingerprint `5d2ecfc643d22aa32026b4f94dba14dd320d797c3f1408f7d6c9fb8768886948`
 
 ## Current corpus counts and relationships
 
@@ -319,12 +319,14 @@ Corrected local supplemental manifest facts:
 
 - indexed source files: `251 / 251`
 - manifest books: `175`
-- searchable runtime pages: `15185`
+- searchable runtime pages: `2843`
 - merged source pages before omission/dedupe: `31170`
 - books safely merged back to primary `book_key`: `57`
-- supplemental-only visible books: `118`
+- supplemental-only books in the identity manifest: `118`
+- supported supplemental-only visible books in the current public release: `27`
 - primary-bound duplicate pages omitted from runtime search: `10724`
-- duplicate OCR pages collapsed inside the supplemental-only corpus: `5261`
+- unsupported-version supplemental pages omitted from runtime search: `17603`
+- duplicate OCR pages collapsed inside the release-scoped supplemental corpus: `0`
 - unresolved books: `0`
 - unresolved pages: `0`
 - edition conflicts: `0`
@@ -332,34 +334,33 @@ Corrected local supplemental manifest facts:
 
 Supplemental page row facts:
 
-- total searchable rows: `15185`
-- searchable rows with `content_id`: `11600`
-- searchable rows without `content_id`: `3585`
+- total searchable rows: `2843`
+- searchable rows with `content_id`: `2843`
+- searchable rows without `content_id`: `0`
 - searchable rows bound to primary page images: `0`
-- searchable rows pointing at `book_map.json` keys: `0`
+- searchable rows carrying an explicit `book_map_key` field: `0`
 - empty-text rows: `0`
 
 Supplemental-only source PDF coverage facts:
 
-- books with `*_origin.pdf`: `118 / 118`
-- books with `*_layout.pdf`: `118 / 118`
-- books with `*_span.pdf`: `118 / 118`
-- conclusion: a missing `查看原文` for a supplemental-only edition is currently a page-image product coverage gap, not a source-PDF absence problem
-- release rule: do not fake this gap by remapping a supplemental-only edition to a different primary book just to surface a page image
-- future expansion note: page-image coverage for 人教版 / 沪教版 / 沪科版 / 苏教版 / 湘教版 / 英语并行版本 is feasible from the existing backup MinerU trees and should be treated as a separate data-product rollout
+- books with `*_origin.pdf`: `27 / 27`
+- books with `*_layout.pdf`: `27 / 27`
+- books with `*_span.pdf`: `27 / 27`
+- all `27` supported supplemental-only books in the current public release have generated page-image products and valid `book_map.json` entries
+- release rule: do not remap unsupported parallel editions to a supported primary book merely to surface a page image
+- future expansion note: unsupported parallel editions remain preserved in the audit data layer and can be productized later as a separate page-image rollout
 
 Supplemental page counts by subject:
 
-- 英语: `4675`
-- 数学: `4363`
-- 地理: `1717`
-- 化学: `1696`
-- 物理: `1428`
-- 生物学: `1306`
+- 英语: `869`
+- 地理: `714`
+- 物理: `767`
+- 化学: `367`
+- 生物学: `126`
 
 Subjects intentionally absent from searchable supplemental rows after identity cleanup:
 
-- 语文、历史、思想政治 currently resolve entirely through primary books and therefore contribute `0` supplemental runtime pages
+- 数学、语文、历史、思想政治 currently contribute `0` searchable supplemental rows in the current public release scope
 
 Supplemental manifest book counts by subject:
 
@@ -391,10 +392,11 @@ Relationship rule that must stay explicit:
 
 - supplemental manifest books: `175`
 - supplemental books merged into primary: `57`
-- supplemental-only visible books: `118`
-- visible `/api/books` total after merge: `69 + 118 = 187`
+- supplemental-only books in the identity manifest: `118`
+- supported supplemental-only books currently released: `27`
+- visible `/api/books` total in the current public release: `35 + 27 = 62`
 
-Never report `175` as the visible `/api/books` total.
+Never report `175` or `118` as the current public `/api/books` total.
 
 ## Count and terminology audit points
 
@@ -443,10 +445,12 @@ For analytics helper tables, verify the table’s own semantics first.
 
 When describing books:
 
-- `69` = current primary searchable books with page-image registry
+- `69` = full primary books present in the runtime DB and page-image registry
+- `35` = supported primary books in the current public release
 - `175` = corrected supplemental manifest books after identity audit
-- `118` = supplemental-only visible books after removing the `57` books merged back into primary identities
-- `187` = expected visible `/api/books` total after merge
+- `118` = supplemental-only books in the full identity manifest after removing the `57` books merged back into primary identities
+- `27` = supported supplemental-only books in the current public release
+- `62` = expected visible `/api/books` total in the current public release
 
 ### Production-vs-local wording
 

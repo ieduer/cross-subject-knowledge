@@ -31,9 +31,9 @@ The repository also keeps bundled fallback copies of the supplemental index unde
 
 Current page-image boundary:
 
-- `book_map.json` and the CDN page-image product currently cover the `69` primary books
-- the `118` supplemental-only visible books already have `origin/layout/span` PDFs in `data/mineru_output_backup`, but they do not yet have generated page-image assets in the current product
-- therefore, a missing `查看原文` for a supplemental-only result is currently a coverage boundary, not evidence that the result was remapped to the wrong primary book
+- `book_map.json` and the CDN page-image product now cover `96` books: the original `69` primary books plus `27` supported supplemental books
+- the current public product scope is intentionally narrower than the full identity-audited catalog: only `人教版全部`、`英语·北师大版`、`化学·鲁科版`
+- unsupported parallel editions still retain OCR and `origin/layout/span` PDFs for audit, but they are not part of the current public search/product scope
 
 ## Current runtime profile
 
@@ -53,13 +53,14 @@ As of 2026-03-10, keep production current and local pending rollout separate:
 ### Local pending rollout
 
 - Verified textbook-version manifest: `69` primary books resolved, `0` unresolved, `0` duplicate primary identities, `0` remaining safe merge candidates
-- Visible searchable textbooks after identity cleanup: `187` (`69` primary books + `118` supplemental-only visible books)
-- Supplemental textbook runtime pages: `15185`
+- Visible searchable textbooks in the current public support scope: `62` (`35` supported primary books + `27` supported supplemental books)
+- Page-image mapped books after supplemental page generation: `96`
+- Supplemental textbook runtime pages: `2843`
 - Supplemental page source pages before omission/dedupe: `31170`
 - Primary-bound duplicate pages omitted from runtime supplemental search: `10724`
-- Duplicate OCR pages collapsed inside the supplemental-only corpus: `5261`
-- Supplemental vectors: verified against the `15185`-page source and ready for rollout
-- Frontend version marker prepared for rollout: `2026.03.10-r25`
+- Unsupported-version supplemental pages omitted from the current public runtime corpus: `17603`
+- Supplemental vectors: verified against the `2843`-page source and ready for rollout
+- Frontend version marker prepared for rollout: `2026.03.10-r27`
 
 Common runtime facts shared by both states:
 

@@ -1192,6 +1192,16 @@ def _with_edition(base_title: str, edition: str) -> str:
     return f"{cleaned_title}（{cleaned_edition}）"
 
 
+def _is_supported_runtime_edition(subject: str | None, edition: str | None) -> bool:
+    normalized_subject = str(subject or "").strip()
+    normalized_edition = str(edition or "").strip()
+    return (
+        normalized_edition == "人教版"
+        or (normalized_subject == "英语" and normalized_edition == "北师大版")
+        or (normalized_subject == "化学" and normalized_edition == "鲁科版")
+    )
+
+
 def _normalize_textbook_version_manifest(payload) -> dict:
     if not isinstance(payload, dict):
         return {"by_content_id": {}, "by_book_key": {}}
@@ -1358,6 +1368,7 @@ def _load_textbook_registry() -> dict:
         "by_title_subject": {k: tuple(v) for k, v in by_title_subject.items()},
         "by_title": {k: tuple(v) for k, v in by_title.items()},
         "page_lookup": page_lookup,
+        "book_map": _book_map,
     }
 
 
@@ -1387,14 +1398,18 @@ def _resolve_supplemental_book_meta(path: Path, payload: list[dict] | None = Non
         )
 
     if matched:
+        matched_subject = matched.get("subject") or subject_name
+        matched_edition = matched.get("edition") or edition_hint
         return {
             "content_id": matched.get("content_id") or content_id,
             "title": matched.get("display_title") or matched.get("title") or _with_edition(display_title, edition_hint),
             "base_title": matched.get("title") or display_title,
             "book_key": matched.get("book_key"),
-            "subject": matched.get("subject") or subject_name,
-            "edition": matched.get("edition") or edition_hint,
+            "subject": matched_subject,
+            "edition": matched_edition,
             "has_page_images": bool(matched.get("book_key")),
+            "primary_bound": True,
+            "supported": _is_supported_runtime_edition(matched_subject, matched_edition),
             "synthetic": False,
         }
     synthetic_key = _make_supplemental_book_key(
@@ -1403,6 +1418,7 @@ def _resolve_supplemental_book_meta(path: Path, payload: list[dict] | None = Non
         edition_hint,
         content_id or str(path.parent),
     )
+    synthetic_has_page_images = bool((registry.get("book_map") or {}).get(synthetic_key))
     return {
         "content_id": content_id or None,
         "title": _with_edition(display_title, edition_hint),
@@ -1410,7 +1426,9 @@ def _resolve_supplemental_book_meta(path: Path, payload: list[dict] | None = Non
         "book_key": synthetic_key,
         "subject": subject_name,
         "edition": edition_hint,
-        "has_page_images": False,
+        "has_page_images": synthetic_has_page_images,
+        "primary_bound": False,
+        "supported": _is_supported_runtime_edition(subject_name, edition_hint),
         "synthetic": True,
     }
 
@@ -1496,6 +1514,8 @@ def _normalize_supplemental_page_entry(entry: dict) -> dict | None:
         "normalized_text": _compact_query_text(text),
         "path": str(entry.get("path") or "").strip() or None,
         "has_page_images": bool(entry.get("has_page_images")),
+        "primary_bound": bool(entry.get("primary_bound")),
+        "supported": bool(entry.get("supported", True)),
         "synthetic": bool(entry.get("synthetic")),
     }
 
@@ -1539,7 +1559,7 @@ def _load_supplemental_textbook_pages() -> tuple[dict, ...]:
             if not isinstance(payload, list):
                 continue
             meta = _resolve_supplemental_book_meta(path, payload)
-            if not meta.get("subject"):
+            if not meta.get("subject") or not meta.get("supported"):
                 continue
 
             blocks_by_page = defaultdict(list)
@@ -1562,7 +1582,9 @@ def _load_supplemental_textbook_pages() -> tuple[dict, ...]:
                 if len(merged_text) < 20:
                     continue
                 book_key = meta.get("book_key")
-                logical_page = registry["page_lookup"].get((book_key, page_num)) if meta.get("has_page_images") else None
+                if meta.get("primary_bound"):
+                    continue
+                logical_page = registry["page_lookup"].get((book_key, page_num)) if meta.get("primary_bound") else None
                 normalized = _normalize_supplemental_page_entry(
                     {
                         "id": f"supp:{hashlib.md5(f'{book_key}:{page_num}'.encode('utf-8')).hexdigest()[:16]}",
@@ -1577,6 +1599,8 @@ def _load_supplemental_textbook_pages() -> tuple[dict, ...]:
                         "text": merged_text,
                         "path": str(path),
                         "has_page_images": bool(meta.get("has_page_images")),
+                        "primary_bound": bool(meta.get("primary_bound")),
+                        "supported": bool(meta.get("supported")),
                         "synthetic": bool(meta.get("synthetic")),
                     }
                 )
@@ -1625,7 +1649,9 @@ def _load_supplemental_book_catalog() -> tuple[dict, ...]:
                     "edition": str(item.get("edition") or "").strip(),
                     "content_id": str(item.get("content_id") or "").strip() or None,
                     "has_page_images": bool(item.get("has_page_images")),
-                    "source": str(item.get("source") or ("primary" if item.get("has_page_images") else "supplemental_only")).strip(),
+                    "primary_bound": bool(item.get("primary_bound")),
+                    "supported": bool(item.get("supported", True)),
+                    "source": str(item.get("source") or ("primary_bound" if item.get("primary_bound") else "supplemental_only")).strip(),
                     "pages": int(item.get("pages") or 0),
                 }
             )
@@ -1647,7 +1673,9 @@ def _load_supplemental_book_catalog() -> tuple[dict, ...]:
                 "edition": entry.get("edition") or "",
                 "content_id": entry.get("content_id"),
                 "has_page_images": bool(entry.get("has_page_images")),
-                "source": "primary" if entry.get("has_page_images") else "supplemental_only",
+                "primary_bound": bool(entry.get("primary_bound")),
+                "supported": bool(entry.get("supported", True)),
+                "source": "primary_bound" if entry.get("primary_bound") else "supplemental_only",
                 "pages": 0,
             },
         )
@@ -1658,6 +1686,62 @@ def _load_supplemental_book_catalog() -> tuple[dict, ...]:
             key=lambda item: (item.get("subject") or "", item.get("title") or "", item.get("book_key") or ""),
         )
     )
+
+
+@functools.lru_cache(maxsize=1)
+def _load_supported_textbook_sets() -> dict[str, set[str]]:
+    supported_book_keys: set[str] = set()
+    supported_content_ids: set[str] = set()
+
+    for row in (_book_version_manifest.get("by_book_key") or {}).values():
+        if not isinstance(row, dict):
+            continue
+        subject = str(row.get("subject") or "").strip()
+        edition = str(row.get("edition") or "").strip()
+        if not _is_supported_runtime_edition(subject, edition):
+            continue
+        book_key = str(row.get("book_key") or "").strip()
+        content_id = str(row.get("content_id") or "").strip()
+        if book_key:
+            supported_book_keys.add(book_key)
+        if _is_real_content_id(content_id):
+            supported_content_ids.add(content_id)
+
+    for item in _load_supplemental_book_catalog():
+        subject = str(item.get("subject") or "").strip()
+        edition = str(item.get("edition") or "").strip()
+        if not _is_supported_runtime_edition(subject, edition):
+            continue
+        book_key = str(item.get("book_key") or "").strip()
+        content_id = str(item.get("content_id") or "").strip()
+        if book_key:
+            supported_book_keys.add(book_key)
+        if _is_real_content_id(content_id):
+            supported_content_ids.add(content_id)
+
+    return {
+        "book_keys": supported_book_keys,
+        "content_ids": supported_content_ids,
+    }
+
+
+def _is_supported_textbook_book(
+    *,
+    book_key: str | None = None,
+    content_id: str | None = None,
+    subject: str | None = None,
+    edition: str | None = None,
+) -> bool:
+    if _is_supported_runtime_edition(subject, edition):
+        return True
+    supported_sets = _load_supported_textbook_sets()
+    normalized_book_key = str(book_key or "").strip()
+    normalized_content_id = str(content_id or "").strip()
+    if normalized_book_key and normalized_book_key in supported_sets["book_keys"]:
+        return True
+    if _is_real_content_id(normalized_content_id) and normalized_content_id in supported_sets["content_ids"]:
+        return True
+    return False
 
 
 def _count_textbook_term_hits(
@@ -2130,6 +2214,16 @@ def _search_chunks_by_term(
     like_ranked = []
     for row in like_rows:
         data = dict(row)
+        if not _is_supported_textbook_book(
+            book_key=data.get("book_key"),
+            content_id=data.get("content_id"),
+            subject=data.get("subject"),
+            edition=_book_version_manifest_row(
+                book_key=data.get("book_key"),
+                content_id=data.get("content_id"),
+            ).get("edition"),
+        ):
+            continue
         data["snippet"] = data["snippet"].replace(clean_term, f"<mark>{clean_term}</mark>")
         data["match_channel"] = "exact"
         like_ranked.append(data)
@@ -2160,6 +2254,16 @@ def _search_chunks_by_term(
     fts_ranked = []
     for row in fts_rows:
         data = dict(row)
+        if not _is_supported_textbook_book(
+            book_key=data.get("book_key"),
+            content_id=data.get("content_id"),
+            subject=data.get("subject"),
+            edition=_book_version_manifest_row(
+                book_key=data.get("book_key"),
+                content_id=data.get("content_id"),
+            ).get("edition"),
+        ):
+            continue
         data["match_channel"] = "fts"
         fts_ranked.append(data)
     return _merge_ranked_rows(like_ranked, fts_ranked, sort=sort)
@@ -2179,7 +2283,7 @@ def _search_supplemental_textbook_pages(
 
     results = []
     for entry in _load_supplemental_textbook_pages():
-        if entry.get("has_page_images"):
+        if entry.get("primary_bound") or not entry.get("supported", True):
             continue
         if book_key and entry.get("book_key") != book_key:
             continue
@@ -3221,6 +3325,16 @@ def _search_textbook_semantic_candidates(
         row = row_by_id.get(row_id)
         if not row:
             continue
+        if not _is_supported_textbook_book(
+            book_key=row.get("book_key"),
+            content_id=row.get("content_id"),
+            subject=row.get("subject"),
+            edition=_book_version_manifest_row(
+                book_key=row.get("book_key"),
+                content_id=row.get("content_id"),
+            ).get("edition"),
+        ):
+            continue
         row["semantic_score"] = score
         row["match_channel"] = "semantic"
         results.append(row)
@@ -3255,7 +3369,7 @@ def _search_supplemental_semantic_candidates(
             continue
         seen.add(int(ordinal))
         entry = entries[int(ordinal)]
-        if entry.get("has_page_images"):
+        if entry.get("primary_bound") or not entry.get("supported", True):
             continue
         if book_key and entry.get("book_key") != book_key:
             continue
@@ -6187,6 +6301,17 @@ def books():
         seen_book_keys = set()
         for r in rows:
             s = r["subject"]
+            manifest_row = _book_version_manifest_row(
+                book_key=r["book_key"],
+                content_id=r["content_id"] if "content_id" in r.keys() else None,
+            )
+            if not _is_supported_textbook_book(
+                book_key=r["book_key"],
+                content_id=r["content_id"] if "content_id" in r.keys() else None,
+                subject=r["subject"],
+                edition=manifest_row.get("edition"),
+            ):
+                continue
             if s not in by_subject:
                 meta = SUBJECT_META.get(s, {"icon": "📚", "color": "#95a5a6"})
                 by_subject[s] = {"subject": s, **meta, "books": []}
@@ -6211,7 +6336,18 @@ def books():
             book_key = str(item.get("book_key") or "").strip()
             subject = str(item.get("subject") or "").strip()
             title = str(item.get("title") or "").strip()
-            if not book_key or not subject or not title or book_key in seen_book_keys:
+            if (
+                not book_key
+                or not subject
+                or not title
+                or book_key in seen_book_keys
+                or not _is_supported_textbook_book(
+                    book_key=book_key,
+                    content_id=item.get("content_id"),
+                    subject=subject,
+                    edition=item.get("edition"),
+                )
+            ):
                 continue
             if subject not in by_subject:
                 meta = SUBJECT_META.get(subject, {"icon": "📚", "color": "#95a5a6"})
@@ -8063,6 +8199,13 @@ def page_image(
     info = _book_map.get(book_key)
     if not info:
         raise HTTPException(404, f"Book not found: {book_key[:60]}")
+    if not _is_supported_textbook_book(
+        book_key=book_key,
+        content_id=info.get("content_id"),
+        subject=info.get("subject"),
+        edition=info.get("edition"),
+    ):
+        raise HTTPException(404, f"Book not available in current edition scope: {book_key[:60]}")
 
     short_key = info["key"]
     total_pages = info["pages"]
@@ -8111,6 +8254,12 @@ def book_pages():
             "edition": info.get("edition", ""),
         }
         for bk, info in _book_map.items()
+        if _is_supported_textbook_book(
+            book_key=bk,
+            content_id=info.get("content_id"),
+            subject=info.get("subject"),
+            edition=info.get("edition"),
+        )
     }
 
 

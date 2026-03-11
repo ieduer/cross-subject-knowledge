@@ -1,4 +1,24 @@
 {
+  "高中_思想政治_习近平新时代中国特色社会主义思想学生读本_高中": {
+    "key": "154e502659bd",
+    "title": "习近平新时代中国特色社会主义思想学生读本·高中",
+    "display_title": "习近平新时代中国特色社会主义思想学生读本·高中",
+    "pages": 129,
+    "page_offset": 8,
+    "content_id": "unknown",
+    "subject": "思想政治",
+    "edition": ""
+  },
+  "suppbook:802fd91c0bceb90b": {
+    "key": "6105a073a429",
+    "title": "普通高中教科书·化学必修 第一册",
+    "display_title": "普通高中教科书·化学必修 第一册（人教版）",
+    "pages": 138,
+    "page_offset": 4,
+    "content_id": "5cd19072-e40d-4a73-8580-7b7ada5d4005",
+    "subject": "化学",
+    "edition": "人教版"
+  },
   "高中_化学_高中_化学_普通高中教科书_化学必修_第一册_智慧中小学_88874a47-cd9b-4dbc-bd48-bb2ea5d63115": {
     "key": "6a4d6c7a3a1c",
     "title": "普通高中教科书·化学必修 第一册",
@@ -29,6 +49,16 @@
     "subject": "化学",
     "edition": "鲁科版"
   },
+  "suppbook:0a001670ba5fc9da": {
+    "key": "a7f71c058339",
+    "title": "普通高中教科书·化学选择性必修1 化学反应原理",
+    "display_title": "普通高中教科书·化学选择性必修1 化学反应原理（人教版）",
+    "pages": 138,
+    "page_offset": 4,
+    "content_id": "3502fe81-b23e-4f68-aa3d-7921e7932ec9",
+    "subject": "化学",
+    "edition": "人教版"
+  },
   "高中_化学_高中_化学_普通高中教科书_化学选择性必修1_化学反应原理_智慧中小学_97ac34e8-e154-44b3-9188-301d40a70501": {
     "key": "be068ce97a61",
     "title": "普通高中教科书·化学选择性必修1 化学反应原理",
@@ -38,6 +68,16 @@
     "content_id": "97ac34e8-e154-44b3-9188-301d40a70501",
     "subject": "化学",
     "edition": "鲁科版"
+  },
+  "suppbook:e30240d65a39807c": {
+    "key": "e99370b495b5",
+    "title": "普通高中教科书·化学选择性必修2 物质结构与性质",
+    "display_title": "普通高中教科书·化学选择性必修2 物质结构与性质（人教版）",
+    "pages": 114,
+    "page_offset": 2,
+    "content_id": "b82cefe7-d631-4bde-baf9-352ca033cba4",
+    "subject": "化学",
+    "edition": "人教版"
   },
   "高中_化学_高中_化学_普通高中教科书_化学选择性必修2_物质结构与性质_智慧中小学_ec8efb84-29a5-441c-bcd6-8603c7bfe004": {
     "key": "abc7c703255f",
@@ -119,6 +159,16 @@
     "subject": "历史",
     "edition": ""
   },
+  "suppbook:845cc95ea27e8219": {
+    "key": "890c235d20c4",
+    "title": "普通高中教科书·地理图册必修 第一册",
+    "display_title": "普通高中教科书·地理图册必修 第一册（人教版）",
+    "pages": 60,
+    "page_offset": 3,
+    "content_id": "c4a420be-3e22-4b5f-8f79-ef2c7a5c3c69",
+    "subject": "地理",
+    "edition": "人教版"
+  },
   "高中_地理_高中_地理_普通高中教科书_地理图册必修_第一册_智慧中小学_eaf90d3b-7a81-4e4f-ac1a-8b3f591f6218": {
     "key": "a2325102a631",
     "title": "普通高中教科书·地理图册必修 第一册",
@@ -128,6 +178,16 @@
     "content_id": "eaf90d3b-7a81-4e4f-ac1a-8b3f591f6218",
     "subject": "地理",
     "edition": ""
+  },
+  "suppbook:c087a258a172958a": {
+    "key": "cb525b1d3005",
+    "title": "普通高中教科书·地理图册必修 第二册",
+    "display_title": "普通高中教科书·地理图册必修 第二册（人教版）",
+    "pages": 60,
+    "page_offset": 3,
+    "content_id": "23094e58-73b9-4f6f-b42f-cf9bb0a53eca",
+    "subject": "地理",
+    "edition": "人教版"
   },
   "高中_地理_普通高中教科书_地理图册必修_第二册": {
     "key": "41ee2c72633c",
@@ -139,6 +199,16 @@
     "subject": "地理",
     "edition": ""
   },
+  "suppbook:fe28f517b1408381": {
+    "key": "d0587da370a4",
+    "title": "普通高中教科书·地理图册选择性必修1 自然地理基础",
+    "display_title": "普通高中教科书·地理图册选择性必修1 自然地理基础（人教版）",
+    "pages": 56,
+    "page_offset": 3,
+    "content_id": "9098cb0a-0cd8-4d27-982b-d189d4e0ec6b",
+    "subject": "地理",
+    "edition": "人教版"
+  },
   "高中_地理_普通高中教科书_地理图册选择性必修1_自然地理基础": {
     "key": "a4e71193b1d9",
     "title": "普通高中教科书·地理图册选择性必修1 自然地理基础",
@@ -148,6 +218,16 @@
     "content_id": "unknown",
     "subject": "地理",
     "edition": ""
+  },
+  "suppbook:c8c62d3c26de86dc": {
+    "key": "3b704ccc41ff",
+    "title": "普通高中教科书·地理图册选择性必修2 区域发展",
+    "display_title": "普通高中教科书·地理图册选择性必修2 区域发展（人教版）",
+    "pages": 56,
+    "page_offset": 3,
+    "content_id": "da944a29-9de3-4277-b29a-b1316c43270d",
+    "subject": "地理",
+    "edition": "人教版"
   },
   "高中_地理_高中_地理_普通高中教科书_地理图册选择性必修2_区域发展_智慧中小学_3809366b-8cda-4e08-9f01-cec45606f08e": {
     "key": "9f55ef36f64e",
@@ -159,6 +239,16 @@
     "subject": "地理",
     "edition": ""
   },
+  "suppbook:97ae6da3c8efb915": {
+    "key": "01a3087898b5",
+    "title": "普通高中教科书·地理图册选择性必修3 资源、环境与国家安全",
+    "display_title": "普通高中教科书·地理图册选择性必修3 资源、环境与国家安全（人教版）",
+    "pages": 56,
+    "page_offset": 3,
+    "content_id": "88d7cf7a-f066-4a7a-b4d2-80bb9d802a56",
+    "subject": "地理",
+    "edition": "人教版"
+  },
   "高中_地理_普通高中教科书_地理图册选择性必修3_资源_环境与国家安全": {
     "key": "e1be3d7032e0",
     "title": "普通高中教科书·地理图册选择性必修3 资源、环境与国家安全",
@@ -168,6 +258,16 @@
     "content_id": "unknown",
     "subject": "地理",
     "edition": ""
+  },
+  "suppbook:d9cba6859bc27a78": {
+    "key": "5d7ca2682888",
+    "title": "普通高中教科书·地理必修 第一册",
+    "display_title": "普通高中教科书·地理必修 第一册（人教版）",
+    "pages": 133,
+    "page_offset": 4,
+    "content_id": "e2c5fb9c-9a73-4f1a-8fb5-10b1299c7f5c",
+    "subject": "地理",
+    "edition": "人教版"
   },
   "高中_地理_普通高中教科书_地理必修_第一册": {
     "key": "0ff02bba634c",
@@ -179,6 +279,16 @@
     "subject": "地理",
     "edition": ""
   },
+  "suppbook:448df0af49d911bc": {
+    "key": "f5dbc88963b8",
+    "title": "普通高中教科书·地理必修 第二册",
+    "display_title": "普通高中教科书·地理必修 第二册（人教版）",
+    "pages": 133,
+    "page_offset": 4,
+    "content_id": "8452d2cf-1a23-4656-84b9-26616cbd2eff",
+    "subject": "地理",
+    "edition": "人教版"
+  },
   "高中_地理_高中_地理_普通高中教科书_地理必修_第二册_智慧中小学_52e14ba5-4e60-4be6-b9ad-bd310b6c80d8": {
     "key": "b19b66cc191f",
     "title": "普通高中教科书·地理必修 第二册",
@@ -188,6 +298,16 @@
     "content_id": "52e14ba5-4e60-4be6-b9ad-bd310b6c80d8",
     "subject": "地理",
     "edition": ""
+  },
+  "suppbook:7a899b3966393bed": {
+    "key": "e86ad8b2d8fe",
+    "title": "普通高中教科书·地理选择性必修1 自然地理基础",
+    "display_title": "普通高中教科书·地理选择性必修1 自然地理基础（人教版）",
+    "pages": 105,
+    "page_offset": 4,
+    "content_id": "373d48bd-c1b4-4edd-b148-628713692ba3",
+    "subject": "地理",
+    "edition": "人教版"
   },
   "高中_地理_高中_地理_普通高中教科书_地理选择性必修1_自然地理基础_智慧中小学_d68ab621-05bc-446b-a298-8b255d8e7fef": {
     "key": "3efc344e862c",
@@ -199,6 +319,16 @@
     "subject": "地理",
     "edition": ""
   },
+  "suppbook:8b0b079be870b865": {
+    "key": "84646c8b3208",
+    "title": "普通高中教科书·地理选择性必修2 区域发展",
+    "display_title": "普通高中教科书·地理选择性必修2 区域发展（人教版）",
+    "pages": 101,
+    "page_offset": 4,
+    "content_id": "db7e6c9c-44b3-4818-96c6-ce81dabb3cc7",
+    "subject": "地理",
+    "edition": "人教版"
+  },
   "高中_地理_普通高中教科书_地理选择性必修2_区域发展": {
     "key": "832fbe09bb57",
     "title": "普通高中教科书·地理选择性必修2 区域发展",
@@ -209,6 +339,16 @@
     "subject": "地理",
     "edition": ""
   },
+  "suppbook:6779080d863f662a": {
+    "key": "c25a2f32c178",
+    "title": "普通高中教科书·地理选择性必修3 资源、环境与国家安全",
+    "display_title": "普通高中教科书·地理选择性必修3 资源、环境与国家安全（人教版）",
+    "pages": 125,
+    "page_offset": 4,
+    "content_id": "f07377f5-2ced-4d59-a59d-fe3b37800ead",
+    "subject": "地理",
+    "edition": "人教版"
+  },
   "高中_地理_普通高中教科书_地理选择性必修3_资源_环境与国家安全": {
     "key": "72042f54c6b4",
     "title": "普通高中教科书·地理选择性必修3 资源、环境与国家安全",
@@ -217,16 +357,6 @@
     "page_offset": 2,
     "content_id": "unknown",
     "subject": "地理",
-    "edition": ""
-  },
-  "高中_思想政治_习近平新时代中国特色社会主义思想学生读本_高中": {
-    "key": "154e502659bd",
-    "title": "习近平新时代中国特色社会主义思想学生读本·高中",
-    "display_title": "习近平新时代中国特色社会主义思想学生读本·高中",
-    "pages": 129,
-    "page_offset": 8,
-    "content_id": "unknown",
-    "subject": "思想政治",
     "edition": ""
   },
   "高中_思想政治_普通高中教科书_思想政治必修1_中国特色社会主义": {
@@ -419,6 +549,16 @@
     "subject": "数学",
     "edition": ""
   },
+  "suppbook:8391dfa2cb0e22a3": {
+    "key": "5ccfb493e901",
+    "title": "普通高中教科书·物理必修 第一册",
+    "display_title": "普通高中教科书·物理必修 第一册（人教版）",
+    "pages": 133,
+    "page_offset": 4,
+    "content_id": "708256b6-6f06-4d14-89c7-4df16dfe3b81",
+    "subject": "物理",
+    "edition": "人教版"
+  },
   "高中_物理_高中_物理_普通高中教科书_物理必修_第一册_智慧中小学_5843dc73-d545-4766-8d1e-8476cde67e12": {
     "key": "b87f1040188a",
     "title": "普通高中教科书·物理必修 第一册",
@@ -428,6 +568,16 @@
     "content_id": "5843dc73-d545-4766-8d1e-8476cde67e12",
     "subject": "物理",
     "edition": ""
+  },
+  "suppbook:128c4f500a15ee33": {
+    "key": "17466181e65c",
+    "title": "普通高中教科书·物理必修 第三册",
+    "display_title": "普通高中教科书·物理必修 第三册（人教版）",
+    "pages": 142,
+    "page_offset": 4,
+    "content_id": "dcd8cc6b-5380-4008-a2d0-a061f24d34dd",
+    "subject": "物理",
+    "edition": "人教版"
   },
   "高中_物理_高中_物理_普通高中教科书_物理必修_第三册_智慧中小学_bae7ac26-099a-40bd-a28f-df55e0a79d88": {
     "key": "6dfd2aa7fa95",
@@ -439,6 +589,16 @@
     "subject": "物理",
     "edition": ""
   },
+  "suppbook:f7ea3b52c092389e": {
+    "key": "c3d9023ca786",
+    "title": "普通高中教科书·物理必修 第二册",
+    "display_title": "普通高中教科书·物理必修 第二册（人教版）",
+    "pages": 113,
+    "page_offset": 4,
+    "content_id": "55baa3cc-156f-4358-8e28-bfa21a864450",
+    "subject": "物理",
+    "edition": "人教版"
+  },
   "高中_物理_高中_物理_普通高中教科书_物理必修_第二册_智慧中小学_d0148845-e323-44df-9e5b-d629fd7c4514": {
     "key": "a92af9a7fc2e",
     "title": "普通高中教科书·物理必修 第二册",
@@ -448,6 +608,16 @@
     "content_id": "d0148845-e323-44df-9e5b-d629fd7c4514",
     "subject": "物理",
     "edition": ""
+  },
+  "suppbook:156205f20a348662": {
+    "key": "400a3469b34b",
+    "title": "普通高中教科书·物理选择性必修 第一册",
+    "display_title": "普通高中教科书·物理选择性必修 第一册（人教版）",
+    "pages": 129,
+    "page_offset": 4,
+    "content_id": "346c3c04-1663-472c-849e-ff876dcf293f",
+    "subject": "物理",
+    "edition": "人教版"
   },
   "高中_物理_高中_物理_普通高中教科书_物理选择性必修_第一册_智慧中小学_927bd70c-f2b3-401e-937b-047691bfa8e7": {
     "key": "17bb16f7ee1f",
@@ -459,6 +629,16 @@
     "subject": "物理",
     "edition": ""
   },
+  "suppbook:cabf9ae26e37ed0f": {
+    "key": "f0401e2264d4",
+    "title": "普通高中教科书·物理选择性必修 第三册",
+    "display_title": "普通高中教科书·物理选择性必修 第三册（人教版）",
+    "pages": 142,
+    "page_offset": 4,
+    "content_id": "2109c25c-2e52-4da3-8ab3-18cbe632ec11",
+    "subject": "物理",
+    "edition": "人教版"
+  },
   "高中_物理_高中_物理_普通高中教科书_物理选择性必修_第三册_智慧中小学_49910438-fdab-4f61-a972-558818436b24": {
     "key": "4f707e6e951e",
     "title": "普通高中教科书·物理选择性必修 第三册",
@@ -468,6 +648,16 @@
     "content_id": "49910438-fdab-4f61-a972-558818436b24",
     "subject": "物理",
     "edition": ""
+  },
+  "suppbook:05133e9de7cfe36b": {
+    "key": "1890dd46c204",
+    "title": "普通高中教科书·物理选择性必修 第二册",
+    "display_title": "普通高中教科书·物理选择性必修 第二册（人教版）",
+    "pages": 121,
+    "page_offset": 4,
+    "content_id": "2ee7d7fa-1920-4d37-a179-91d5fd59b8c1",
+    "subject": "物理",
+    "edition": "人教版"
   },
   "高中_物理_高中_物理_普通高中教科书_物理选择性必修_第二册_智慧中小学_737efb83-7597-4199-903d-a0d2c2a42725": {
     "key": "c17363ffa313",
@@ -519,6 +709,16 @@
     "subject": "生物学",
     "edition": ""
   },
+  "suppbook:3728fb494406dae1": {
+    "key": "1b97ef55ea0a",
+    "title": "普通高中教科书·生物学选择性必修3 生物技术与工程",
+    "display_title": "普通高中教科书·生物学选择性必修3 生物技术与工程（人教版）",
+    "pages": 129,
+    "page_offset": 8,
+    "content_id": "d12ff6b6-b6cd-444a-9749-4642aa350482",
+    "subject": "生物学",
+    "edition": "人教版"
+  },
   "高中_生物学_高中_生物学_普通高中教科书_生物学选择性必修3_生物技术与工程_智慧中小学_7571ad8f-6735-46f8-ab07-a365be6c805d": {
     "key": "10d5ba75f97f",
     "title": "普通高中教科书·生物学选择性必修3 生物技术与工程",
@@ -529,6 +729,16 @@
     "subject": "生物学",
     "edition": ""
   },
+  "suppbook:8d645e210a976d8f": {
+    "key": "287f8b5a8ae0",
+    "title": "普通高中教科书·英语必修 第一册",
+    "display_title": "普通高中教科书·英语必修 第一册（人教版）",
+    "pages": 137,
+    "page_offset": 6,
+    "content_id": "8e62f140-1990-411e-8831-59a69bb53c1d",
+    "subject": "英语",
+    "edition": "人教版"
+  },
   "高中_英语_高中_英语_普通高中教科书_英语必修_第一册_智慧中小学_e37af837-2671-4018-af45-c82356546822": {
     "key": "fe716cc8bd4b",
     "title": "普通高中教科书·英语必修 第一册",
@@ -538,6 +748,16 @@
     "content_id": "e37af837-2671-4018-af45-c82356546822",
     "subject": "英语",
     "edition": "北师大版"
+  },
+  "suppbook:8d2cd2d7df7a7db3": {
+    "key": "a1889a306096",
+    "title": "普通高中教科书·英语必修 第三册",
+    "display_title": "普通高中教科书·英语必修 第三册（人教版）",
+    "pages": 129,
+    "page_offset": 6,
+    "content_id": "bf54b36f-4c75-4c91-8b9c-53ce15e4f903",
+    "subject": "英语",
+    "edition": "人教版"
   },
   "高中_英语_高中_英语_普通高中教科书_英语必修_第三册_智慧中小学_1e2e7507-0db6-4505-af12-87baac887bc1": {
     "key": "da45900bd2b0",
@@ -559,6 +779,16 @@
     "subject": "英语",
     "edition": "外研社版"
   },
+  "suppbook:4d8d211e36ce1be9": {
+    "key": "fa6596726bbe",
+    "title": "普通高中教科书·英语必修 第二册",
+    "display_title": "普通高中教科书·英语必修 第二册（人教版）",
+    "pages": 125,
+    "page_offset": 6,
+    "content_id": "144425f4-87a0-4a3a-82b7-ea7be112856c",
+    "subject": "英语",
+    "edition": "人教版"
+  },
   "高中_英语_高中_英语_普通高中教科书_英语必修_第二册_智慧中小学_f8c5c17e-8444-4b76-ba3a-5d6a9fce30e1": {
     "key": "e92b83d02348",
     "title": "普通高中教科书·英语必修 第二册",
@@ -568,6 +798,16 @@
     "content_id": "f8c5c17e-8444-4b76-ba3a-5d6a9fce30e1",
     "subject": "英语",
     "edition": "北师大版"
+  },
+  "suppbook:2d625f0ca03b5d05": {
+    "key": "01604b02cfb3",
+    "title": "普通高中教科书·英语选择性必修 第一册",
+    "display_title": "普通高中教科书·英语选择性必修 第一册（人教版）",
+    "pages": 129,
+    "page_offset": 6,
+    "content_id": "ec1adf40-7bf0-48a4-9902-89162f59277d",
+    "subject": "英语",
+    "edition": "人教版"
   },
   "高中_英语_高中_英语_普通高中教科书_英语选择性必修_第一册_智慧中小学_896fab67-95a4-4dea-8352-674712beae14": {
     "key": "9dbb2a03f0b2",
@@ -589,6 +829,16 @@
     "subject": "英语",
     "edition": "北师大版"
   },
+  "suppbook:8bfca9dd17744cea": {
+    "key": "fe148e701a46",
+    "title": "普通高中教科书·英语选择性必修 第三册",
+    "display_title": "普通高中教科书·英语选择性必修 第三册（人教版）",
+    "pages": 129,
+    "page_offset": 6,
+    "content_id": "671e59b0-608f-49c6-8f23-e076decf27e2",
+    "subject": "英语",
+    "edition": "人教版"
+  },
   "高中_英语_高中_英语_普通高中教科书_英语选择性必修_第三册_智慧中小学_3027e9a6-73f4-4d2d-a183-26db604d37b8": {
     "key": "3891d15b2f7e",
     "title": "普通高中教科书·英语选择性必修 第三册",
@@ -609,6 +859,16 @@
     "subject": "英语",
     "edition": "北师大版"
   },
+  "suppbook:801dd08ff2006aff": {
+    "key": "06f93cbe420b",
+    "title": "普通高中教科书·英语选择性必修 第二册",
+    "display_title": "普通高中教科书·英语选择性必修 第二册（人教版）",
+    "pages": 133,
+    "page_offset": 6,
+    "content_id": "0d537335-d02c-4774-85e2-7554c86fea7e",
+    "subject": "英语",
+    "edition": "人教版"
+  },
   "高中_英语_高中_英语_普通高中教科书_英语选择性必修_第二册_智慧中小学_1cf7d948-dffd-4707-bef6-d044c63797ee": {
     "key": "669bd1a43680",
     "title": "普通高中教科书·英语选择性必修 第二册",
@@ -618,6 +878,16 @@
     "content_id": "1cf7d948-dffd-4707-bef6-d044c63797ee",
     "subject": "英语",
     "edition": "北师大版"
+  },
+  "suppbook:f5b9c6b96e6b3002": {
+    "key": "3b3414d84268",
+    "title": "普通高中教科书·英语选择性必修 第四册",
+    "display_title": "普通高中教科书·英语选择性必修 第四册（人教版）",
+    "pages": 129,
+    "page_offset": 6,
+    "content_id": "5f0829b2-fc05-479b-a51e-47f871598eba",
+    "subject": "英语",
+    "edition": "人教版"
   },
   "高中_英语_高中_英语_普通高中教科书_英语选择性必修_第四册_智慧中小学_c8ffa10a-2847-477b-9cbb-31b1cac42a20": {
     "key": "e9248c8f65a5",

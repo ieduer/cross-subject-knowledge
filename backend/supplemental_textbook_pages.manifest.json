@@ -8,12 +8,14 @@
       "book_key": "suppbook:802fd91c0bceb90b",
       "content_id": "5cd19072-e40d-4a73-8580-7b7ada5d4005",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 130,
+      "primary_bound": false,
       "search_pages": 130,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "化学",
+      "supported": true,
       "title": "普通高中教科书·化学必修 第一册（人教版）"
     },
     {
@@ -23,10 +25,12 @@
       "edition": "沪科版",
       "has_page_images": false,
       "pages": 298,
-      "search_pages": 149,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "化学",
+      "supported": false,
       "title": "普通高中教科书·化学必修 第一册（沪科版）"
     },
     {
@@ -36,10 +40,12 @@
       "edition": "苏教版",
       "has_page_images": false,
       "pages": 151,
-      "search_pages": 151,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "化学",
+      "supported": false,
       "title": "普通高中教科书·化学必修 第一册（苏教版）"
     },
     {
@@ -49,10 +55,12 @@
       "edition": "沪科版",
       "has_page_images": false,
       "pages": 240,
-      "search_pages": 120,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "化学",
+      "supported": false,
       "title": "普通高中教科书·化学必修 第二册（沪科版）"
     },
     {
@@ -62,10 +70,12 @@
       "edition": "苏教版",
       "has_page_images": false,
       "pages": 122,
-      "search_pages": 122,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "化学",
+      "supported": false,
       "title": "普通高中教科书·化学必修 第二册（苏教版）"
     },
     {
@@ -75,10 +85,12 @@
       "edition": "鲁科版",
       "has_page_images": true,
       "pages": 136,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "化学",
+      "supported": true,
       "title": "普通高中教科书·化学必修 第二册（鲁科版）"
     },
     {
@@ -86,12 +98,14 @@
       "book_key": "suppbook:0a001670ba5fc9da",
       "content_id": "3502fe81-b23e-4f68-aa3d-7921e7932ec9",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 130,
+      "primary_bound": false,
       "search_pages": 130,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "化学",
+      "supported": true,
       "title": "普通高中教科书·化学选择性必修1 化学反应原理（人教版）"
     },
     {
@@ -101,10 +115,12 @@
       "edition": "沪科版",
       "has_page_images": false,
       "pages": 250,
-      "search_pages": 125,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "化学",
+      "supported": false,
       "title": "普通高中教科书·化学选择性必修1 化学反应原理（沪科版）"
     },
     {
@@ -114,10 +130,12 @@
       "edition": "苏教版",
       "has_page_images": false,
       "pages": 131,
-      "search_pages": 131,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "化学",
+      "supported": false,
       "title": "普通高中教科书·化学选择性必修1 化学反应原理（苏教版）"
     },
     {
@@ -125,12 +143,14 @@
       "book_key": "suppbook:e30240d65a39807c",
       "content_id": "b82cefe7-d631-4bde-baf9-352ca033cba4",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 107,
+      "primary_bound": false,
       "search_pages": 107,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "化学",
+      "supported": true,
       "title": "普通高中教科书·化学选择性必修2 物质结构与性质（人教版）"
     },
     {
@@ -140,10 +160,12 @@
       "edition": "沪科版",
       "has_page_images": false,
       "pages": 212,
-      "search_pages": 106,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "化学",
+      "supported": false,
       "title": "普通高中教科书·化学选择性必修2 物质结构与性质（沪科版）"
     },
     {
@@ -153,10 +175,12 @@
       "edition": "苏教版",
       "has_page_images": false,
       "pages": 123,
-      "search_pages": 123,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "化学",
+      "supported": false,
       "title": "普通高中教科书·化学选择性必修2 物质结构与性质（苏教版）"
     },
     {
@@ -166,10 +190,12 @@
       "edition": "沪科版",
       "has_page_images": false,
       "pages": 260,
-      "search_pages": 130,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "化学",
+      "supported": false,
       "title": "普通高中教科书·化学选择性必修3 有机化学基础（沪科版）"
     },
     {
@@ -179,10 +205,12 @@
       "edition": "苏教版",
       "has_page_images": false,
       "pages": 172,
-      "search_pages": 172,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "化学",
+      "supported": false,
       "title": "普通高中教科书·化学选择性必修3 有机化学基础（苏教版）"
     },
     {
@@ -192,10 +220,12 @@
       "edition": "鲁科版",
       "has_page_images": true,
       "pages": 168,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "化学",
+      "supported": true,
       "title": "普通高中教科书·化学选择性必修3 有机化学基础（鲁科版）"
     },
     {
@@ -205,10 +235,12 @@
       "edition": "人教版",
       "has_page_images": true,
       "pages": 206,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "历史",
+      "supported": true,
       "title": "普通高中教科书·历史必修 中外历史纲要（上）（人教版）"
     },
     {
@@ -218,10 +250,12 @@
       "edition": "人教版",
       "has_page_images": true,
       "pages": 155,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "历史",
+      "supported": true,
       "title": "普通高中教科书·历史必修 中外历史纲要（下）（人教版）"
     },
     {
@@ -231,10 +265,12 @@
       "edition": "人教版",
       "has_page_images": true,
       "pages": 118,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "历史",
+      "supported": true,
       "title": "普通高中教科书·历史选择性必修1 国家制度与社会治理（人教版）"
     },
     {
@@ -244,10 +280,12 @@
       "edition": "人教版",
       "has_page_images": true,
       "pages": 100,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "历史",
+      "supported": true,
       "title": "普通高中教科书·历史选择性必修2 经济与社会生活（人教版）"
     },
     {
@@ -257,10 +295,12 @@
       "edition": "人教版",
       "has_page_images": true,
       "pages": 101,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "历史",
+      "supported": true,
       "title": "普通高中教科书·历史选择性必修3 文化交流与传播（人教版）"
     },
     {
@@ -270,10 +310,12 @@
       "edition": "中图版",
       "has_page_images": true,
       "pages": 61,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 2,
       "subject": "地理",
+      "supported": false,
       "title": "普通高中教科书·地理图册必修 第一册（中图版）"
     },
     {
@@ -281,12 +323,14 @@
       "book_key": "suppbook:845cc95ea27e8219",
       "content_id": "c4a420be-3e22-4b5f-8f79-ef2c7a5c3c69",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 34,
+      "primary_bound": false,
       "search_pages": 34,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "地理",
+      "supported": true,
       "title": "普通高中教科书·地理图册必修 第一册（人教版）"
     },
     {
@@ -296,10 +340,12 @@
       "edition": "沪教版",
       "has_page_images": false,
       "pages": 62,
-      "search_pages": 31,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "地理",
+      "supported": false,
       "title": "普通高中教科书·地理图册必修 第一册（沪教版）"
     },
     {
@@ -309,10 +355,12 @@
       "edition": "中图版",
       "has_page_images": false,
       "pages": 76,
-      "search_pages": 49,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "地理",
+      "supported": false,
       "title": "普通高中教科书·地理图册必修 第二册（中图版）"
     },
     {
@@ -320,12 +368,14 @@
       "book_key": "suppbook:c087a258a172958a",
       "content_id": "23094e58-73b9-4f6f-b42f-cf9bb0a53eca",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 26,
+      "primary_bound": false,
       "search_pages": 26,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "地理",
+      "supported": true,
       "title": "普通高中教科书·地理图册必修 第二册（人教版）"
     },
     {
@@ -335,10 +385,12 @@
       "edition": "沪教版",
       "has_page_images": true,
       "pages": 59,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 2,
       "subject": "地理",
+      "supported": false,
       "title": "普通高中教科书·地理图册必修 第二册（沪教版）"
     },
     {
@@ -348,10 +400,12 @@
       "edition": "中图版",
       "has_page_images": false,
       "pages": 78,
-      "search_pages": 47,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "地理",
+      "supported": false,
       "title": "普通高中教科书·地理图册选择性必修1 自然地理基础（中图版）"
     },
     {
@@ -359,12 +413,14 @@
       "book_key": "suppbook:fe28f517b1408381",
       "content_id": "9098cb0a-0cd8-4d27-982b-d189d4e0ec6b",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 28,
+      "primary_bound": false,
       "search_pages": 28,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "地理",
+      "supported": true,
       "title": "普通高中教科书·地理图册选择性必修1 自然地理基础（人教版）"
     },
     {
@@ -374,10 +430,12 @@
       "edition": "沪教版",
       "has_page_images": true,
       "pages": 70,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 2,
       "subject": "地理",
+      "supported": false,
       "title": "普通高中教科书·地理图册选择性必修1 自然地理基础（沪教版）"
     },
     {
@@ -387,10 +445,12 @@
       "edition": "中图版",
       "has_page_images": true,
       "pages": 43,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 2,
       "subject": "地理",
+      "supported": false,
       "title": "普通高中教科书·地理图册选择性必修2 区域发展（中图版）"
     },
     {
@@ -398,12 +458,14 @@
       "book_key": "suppbook:c8c62d3c26de86dc",
       "content_id": "da944a29-9de3-4277-b29a-b1316c43270d",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 20,
+      "primary_bound": false,
       "search_pages": 20,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "地理",
+      "supported": true,
       "title": "普通高中教科书·地理图册选择性必修2 区域发展（人教版）"
     },
     {
@@ -413,10 +475,12 @@
       "edition": "沪教版",
       "has_page_images": false,
       "pages": 58,
-      "search_pages": 29,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "地理",
+      "supported": false,
       "title": "普通高中教科书·地理图册选择性必修2 区域发展（沪教版）"
     },
     {
@@ -426,10 +490,12 @@
       "edition": "中图版",
       "has_page_images": false,
       "pages": 60,
-      "search_pages": 41,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "地理",
+      "supported": false,
       "title": "普通高中教科书·地理图册选择性必修3 资源、环境与国家安全（中图版）"
     },
     {
@@ -437,12 +503,14 @@
       "book_key": "suppbook:97ae6da3c8efb915",
       "content_id": "88d7cf7a-f066-4a7a-b4d2-80bb9d802a56",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 23,
+      "primary_bound": false,
       "search_pages": 23,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "地理",
+      "supported": true,
       "title": "普通高中教科书·地理图册选择性必修3 资源、环境与国家安全（人教版）"
     },
     {
@@ -452,10 +520,12 @@
       "edition": "沪教版",
       "has_page_images": true,
       "pages": 56,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 2,
       "subject": "地理",
+      "supported": false,
       "title": "普通高中教科书·地理图册选择性必修3 资源、环境与国家安全（沪教版）"
     },
     {
@@ -465,10 +535,12 @@
       "edition": "中图版",
       "has_page_images": true,
       "pages": 388,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 3,
       "subject": "地理",
+      "supported": false,
       "title": "普通高中教科书·地理必修 第一册（中图版）"
     },
     {
@@ -476,12 +548,14 @@
       "book_key": "suppbook:d9cba6859bc27a78",
       "content_id": "e2c5fb9c-9a73-4f1a-8fb5-10b1299c7f5c",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 129,
+      "primary_bound": false,
       "search_pages": 129,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "地理",
+      "supported": true,
       "title": "普通高中教科书·地理必修 第一册（人教版）"
     },
     {
@@ -491,10 +565,12 @@
       "edition": "湘教版",
       "has_page_images": false,
       "pages": 142,
-      "search_pages": 142,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "地理",
+      "supported": false,
       "title": "普通高中教科书·地理必修 第一册（湘教版）"
     },
     {
@@ -504,10 +580,12 @@
       "edition": "中图版",
       "has_page_images": true,
       "pages": 132,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "地理",
+      "supported": false,
       "title": "普通高中教科书·地理必修 第二册（中图版）"
     },
     {
@@ -515,12 +593,14 @@
       "book_key": "suppbook:448df0af49d911bc",
       "content_id": "8452d2cf-1a23-4656-84b9-26616cbd2eff",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 131,
+      "primary_bound": false,
       "search_pages": 131,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "地理",
+      "supported": true,
       "title": "普通高中教科书·地理必修 第二册（人教版）"
     },
     {
@@ -530,10 +610,12 @@
       "edition": "沪教版",
       "has_page_images": false,
       "pages": 270,
-      "search_pages": 135,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "地理",
+      "supported": false,
       "title": "普通高中教科书·地理必修 第二册（沪教版）"
     },
     {
@@ -543,10 +625,12 @@
       "edition": "湘教版",
       "has_page_images": false,
       "pages": 146,
-      "search_pages": 146,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "地理",
+      "supported": false,
       "title": "普通高中教科书·地理必修 第二册（湘教版）"
     },
     {
@@ -556,10 +640,12 @@
       "edition": "中图版",
       "has_page_images": true,
       "pages": 382,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 3,
       "subject": "地理",
+      "supported": false,
       "title": "普通高中教科书·地理选择性必修1 自然地理基础（中图版）"
     },
     {
@@ -567,12 +653,14 @@
       "book_key": "suppbook:7a899b3966393bed",
       "content_id": "373d48bd-c1b4-4edd-b148-628713692ba3",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 100,
+      "primary_bound": false,
       "search_pages": 100,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "地理",
+      "supported": true,
       "title": "普通高中教科书·地理选择性必修1 自然地理基础（人教版）"
     },
     {
@@ -582,10 +670,12 @@
       "edition": "湘教版",
       "has_page_images": false,
       "pages": 133,
-      "search_pages": 133,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "地理",
+      "supported": false,
       "title": "普通高中教科书·地理选择性必修1 自然地理基础（湘教版）"
     },
     {
@@ -595,10 +685,12 @@
       "edition": "中图版",
       "has_page_images": true,
       "pages": 361,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 3,
       "subject": "地理",
+      "supported": false,
       "title": "普通高中教科书·地理选择性必修2 区域发展（中图版）"
     },
     {
@@ -606,12 +698,14 @@
       "book_key": "suppbook:8b0b079be870b865",
       "content_id": "db7e6c9c-44b3-4818-96c6-ce81dabb3cc7",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 100,
+      "primary_bound": false,
       "search_pages": 100,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "地理",
+      "supported": true,
       "title": "普通高中教科书·地理选择性必修2 区域发展（人教版）"
     },
     {
@@ -621,10 +715,12 @@
       "edition": "湘教版",
       "has_page_images": false,
       "pages": 124,
-      "search_pages": 124,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "地理",
+      "supported": false,
       "title": "普通高中教科书·地理选择性必修2 区域发展（湘教版）"
     },
     {
@@ -634,10 +730,12 @@
       "edition": "中图版",
       "has_page_images": true,
       "pages": 359,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 3,
       "subject": "地理",
+      "supported": false,
       "title": "普通高中教科书·地理选择性必修3 资源、环境与国家安全（中图版）"
     },
     {
@@ -645,12 +743,14 @@
       "book_key": "suppbook:6779080d863f662a",
       "content_id": "f07377f5-2ced-4d59-a59d-fe3b37800ead",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 123,
+      "primary_bound": false,
       "search_pages": 123,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "地理",
+      "supported": true,
       "title": "普通高中教科书·地理选择性必修3 资源、环境与国家安全（人教版）"
     },
     {
@@ -660,10 +760,12 @@
       "edition": "湘教版",
       "has_page_images": false,
       "pages": 126,
-      "search_pages": 126,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "地理",
+      "supported": false,
       "title": "普通高中教科书·地理选择性必修3 资源、环境与国家安全（湘教版）"
     },
     {
@@ -673,10 +775,12 @@
       "edition": "人民出版社版",
       "has_page_images": true,
       "pages": 128,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "思想政治",
+      "supported": false,
       "title": "习近平新时代中国特色社会主义思想学生读本·高中（人民出版社版）"
     },
     {
@@ -686,10 +790,12 @@
       "edition": "人教版",
       "has_page_images": true,
       "pages": 78,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "思想政治",
+      "supported": true,
       "title": "普通高中教科书·思想政治必修1 中国特色社会主义（人教版）"
     },
     {
@@ -699,10 +805,12 @@
       "edition": "人教版",
       "has_page_images": true,
       "pages": 66,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "思想政治",
+      "supported": true,
       "title": "普通高中教科书·思想政治必修2 经济与社会（人教版）"
     },
     {
@@ -712,10 +820,12 @@
       "edition": "人教版",
       "has_page_images": true,
       "pages": 119,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "思想政治",
+      "supported": true,
       "title": "普通高中教科书·思想政治必修3 政治与法治（人教版）"
     },
     {
@@ -725,10 +835,12 @@
       "edition": "人教版",
       "has_page_images": true,
       "pages": 131,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "思想政治",
+      "supported": true,
       "title": "普通高中教科书·思想政治必修4 哲学与文化（人教版）"
     },
     {
@@ -738,10 +850,12 @@
       "edition": "人教版",
       "has_page_images": true,
       "pages": 124,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "思想政治",
+      "supported": true,
       "title": "普通高中教科书·思想政治选择性必修1 当代国际政治与经济（人教版）"
     },
     {
@@ -751,10 +865,12 @@
       "edition": "人教版",
       "has_page_images": true,
       "pages": 106,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "思想政治",
+      "supported": true,
       "title": "普通高中教科书·思想政治选择性必修2 法律与生活（人教版）"
     },
     {
@@ -764,10 +880,12 @@
       "edition": "人教版",
       "has_page_images": true,
       "pages": 128,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "思想政治",
+      "supported": true,
       "title": "普通高中教科书·思想政治选择性必修3 逻辑与思维（人教版）"
     },
     {
@@ -777,10 +895,12 @@
       "edition": "北师大版",
       "has_page_images": false,
       "pages": 241,
-      "search_pages": 241,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学必修 第一册（北师大版）"
     },
     {
@@ -790,10 +910,12 @@
       "edition": "沪教版",
       "has_page_images": false,
       "pages": 162,
-      "search_pages": 162,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学必修 第一册（沪教版）"
     },
     {
@@ -803,10 +925,12 @@
       "edition": "湘教版",
       "has_page_images": false,
       "pages": 420,
-      "search_pages": 210,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学必修 第一册（湘教版）"
     },
     {
@@ -816,10 +940,12 @@
       "edition": "苏教版",
       "has_page_images": false,
       "pages": 254,
-      "search_pages": 254,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学必修 第一册（苏教版）"
     },
     {
@@ -829,10 +955,12 @@
       "edition": "鄂教版",
       "has_page_images": false,
       "pages": 54,
-      "search_pages": 54,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学必修 第一册（鄂教版）"
     },
     {
@@ -842,10 +970,12 @@
       "edition": "沪教版",
       "has_page_images": false,
       "pages": 382,
-      "search_pages": 191,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学必修 第三册（沪教版）"
     },
     {
@@ -855,10 +985,12 @@
       "edition": "鄂教版",
       "has_page_images": false,
       "pages": 105,
-      "search_pages": 105,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学必修 第三册（鄂教版）"
     },
     {
@@ -868,10 +1000,12 @@
       "edition": "北师大版",
       "has_page_images": false,
       "pages": 273,
-      "search_pages": 273,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学必修 第二册（北师大版）"
     },
     {
@@ -881,10 +1015,12 @@
       "edition": "沪教版",
       "has_page_images": false,
       "pages": 182,
-      "search_pages": 182,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学必修 第二册（沪教版）"
     },
     {
@@ -894,10 +1030,12 @@
       "edition": "湘教版",
       "has_page_images": false,
       "pages": 540,
-      "search_pages": 270,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学必修 第二册（湘教版）"
     },
     {
@@ -907,10 +1045,12 @@
       "edition": "苏教版",
       "has_page_images": false,
       "pages": 307,
-      "search_pages": 307,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学必修 第二册（苏教版）"
     },
     {
@@ -920,10 +1060,12 @@
       "edition": "鄂教版",
       "has_page_images": false,
       "pages": 149,
-      "search_pages": 149,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学必修 第二册（鄂教版）"
     },
     {
@@ -933,10 +1075,12 @@
       "edition": "沪教版",
       "has_page_images": false,
       "pages": 104,
-      "search_pages": 52,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学必修 第四册（沪教版）"
     },
     {
@@ -946,10 +1090,12 @@
       "edition": "鄂教版",
       "has_page_images": false,
       "pages": 84,
-      "search_pages": 84,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学必修 第四册（鄂教版）"
     },
     {
@@ -959,10 +1105,12 @@
       "edition": "北师大版",
       "has_page_images": false,
       "pages": 266,
-      "search_pages": 266,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学选择性必修 第一册（北师大版）"
     },
     {
@@ -972,10 +1120,12 @@
       "edition": "沪教版",
       "has_page_images": false,
       "pages": 183,
-      "search_pages": 183,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学选择性必修 第一册（沪教版）"
     },
     {
@@ -985,10 +1135,12 @@
       "edition": "湘教版",
       "has_page_images": false,
       "pages": 542,
-      "search_pages": 271,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学选择性必修 第一册（湘教版）"
     },
     {
@@ -998,10 +1150,12 @@
       "edition": "苏教版",
       "has_page_images": false,
       "pages": 235,
-      "search_pages": 235,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学选择性必修 第一册（苏教版）"
     },
     {
@@ -1011,10 +1165,12 @@
       "edition": "鄂教版",
       "has_page_images": false,
       "pages": 134,
-      "search_pages": 134,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学选择性必修 第一册（鄂教版）"
     },
     {
@@ -1024,10 +1180,12 @@
       "edition": "沪教版",
       "has_page_images": false,
       "pages": 96,
-      "search_pages": 48,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学选择性必修 第三册（沪教版）"
     },
     {
@@ -1037,10 +1195,12 @@
       "edition": "鄂教版",
       "has_page_images": false,
       "pages": 101,
-      "search_pages": 101,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学选择性必修 第三册（鄂教版）"
     },
     {
@@ -1050,10 +1210,12 @@
       "edition": "北师大版",
       "has_page_images": false,
       "pages": 109,
-      "search_pages": 109,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学选择性必修 第二册（北师大版）"
     },
     {
@@ -1063,10 +1225,12 @@
       "edition": "湘教版",
       "has_page_images": false,
       "pages": 418,
-      "search_pages": 209,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学选择性必修 第二册（湘教版）"
     },
     {
@@ -1076,10 +1240,12 @@
       "edition": "苏教版",
       "has_page_images": false,
       "pages": 194,
-      "search_pages": 194,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学选择性必修 第二册（苏教版）"
     },
     {
@@ -1089,10 +1255,12 @@
       "edition": "鄂教版",
       "has_page_images": false,
       "pages": 79,
-      "search_pages": 79,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学选择性必修 第二册（鄂教版）"
     },
     {
@@ -1102,10 +1270,12 @@
       "edition": "A版",
       "has_page_images": true,
       "pages": 264,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学（A版）必修 第一册"
     },
     {
@@ -1115,10 +1285,12 @@
       "edition": "A版",
       "has_page_images": true,
       "pages": 274,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学（A版）必修 第二册"
     },
     {
@@ -1128,10 +1300,12 @@
       "edition": "A版",
       "has_page_images": true,
       "pages": 152,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学（A版）选择性必修 第一册"
     },
     {
@@ -1141,10 +1315,12 @@
       "edition": "A版",
       "has_page_images": true,
       "pages": 152,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学（A版）选择性必修 第三册"
     },
     {
@@ -1154,10 +1330,12 @@
       "edition": "A版",
       "has_page_images": true,
       "pages": 110,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学（A版）选择性必修 第二册"
     },
     {
@@ -1167,10 +1345,12 @@
       "edition": "B版",
       "has_page_images": true,
       "pages": 150,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学（B版）必修 第一册"
     },
     {
@@ -1180,10 +1360,12 @@
       "edition": "B版",
       "has_page_images": true,
       "pages": 123,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学（B版）必修 第三册"
     },
     {
@@ -1193,10 +1375,12 @@
       "edition": "B版",
       "has_page_images": true,
       "pages": 187,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学（B版）必修 第二册"
     },
     {
@@ -1206,10 +1390,12 @@
       "edition": "B版",
       "has_page_images": true,
       "pages": 140,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学（B版）必修 第四册"
     },
     {
@@ -1219,10 +1405,12 @@
       "edition": "B版",
       "has_page_images": true,
       "pages": 189,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学（B版）选择性必修 第一册"
     },
     {
@@ -1232,10 +1420,12 @@
       "edition": "B版",
       "has_page_images": true,
       "pages": 123,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学（B版）选择性必修 第三册"
     },
     {
@@ -1245,10 +1435,12 @@
       "edition": "B版",
       "has_page_images": true,
       "pages": 138,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "数学",
+      "supported": false,
       "title": "普通高中教科书·数学（B版）选择性必修 第二册"
     },
     {
@@ -1256,12 +1448,14 @@
       "book_key": "suppbook:8391dfa2cb0e22a3",
       "content_id": "708256b6-6f06-4d14-89c7-4df16dfe3b81",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 130,
+      "primary_bound": false,
       "search_pages": 130,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "物理",
+      "supported": true,
       "title": "普通高中教科书·物理必修 第一册（人教版）"
     },
     {
@@ -1271,10 +1465,12 @@
       "edition": "沪科版",
       "has_page_images": false,
       "pages": 360,
-      "search_pages": 126,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 3,
       "subject": "物理",
+      "supported": false,
       "title": "普通高中教科书·物理必修 第一册（沪科版）"
     },
     {
@@ -1284,10 +1480,12 @@
       "edition": "鲁科版",
       "has_page_images": true,
       "pages": 290,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 2,
       "subject": "物理",
+      "supported": false,
       "title": "普通高中教科书·物理必修 第一册（鲁科版）"
     },
     {
@@ -1295,12 +1493,14 @@
       "book_key": "suppbook:128c4f500a15ee33",
       "content_id": "dcd8cc6b-5380-4008-a2d0-a061f24d34dd",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 140,
+      "primary_bound": false,
       "search_pages": 140,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "物理",
+      "supported": true,
       "title": "普通高中教科书·物理必修 第三册（人教版）"
     },
     {
@@ -1310,10 +1510,12 @@
       "edition": "沪科版",
       "has_page_images": false,
       "pages": 425,
-      "search_pages": 149,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 3,
       "subject": "物理",
+      "supported": false,
       "title": "普通高中教科书·物理必修 第三册（沪科版）"
     },
     {
@@ -1323,10 +1525,12 @@
       "edition": "鲁科版",
       "has_page_images": true,
       "pages": 153,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "物理",
+      "supported": false,
       "title": "普通高中教科书·物理必修 第三册（鲁科版）"
     },
     {
@@ -1334,12 +1538,14 @@
       "book_key": "suppbook:f7ea3b52c092389e",
       "content_id": "55baa3cc-156f-4358-8e28-bfa21a864450",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 110,
+      "primary_bound": false,
       "search_pages": 110,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "物理",
+      "supported": true,
       "title": "普通高中教科书·物理必修 第二册（人教版）"
     },
     {
@@ -1349,10 +1555,12 @@
       "edition": "沪科版",
       "has_page_images": false,
       "pages": 347,
-      "search_pages": 122,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 3,
       "subject": "物理",
+      "supported": false,
       "title": "普通高中教科书·物理必修 第二册（沪科版）"
     },
     {
@@ -1362,10 +1570,12 @@
       "edition": "鲁科版",
       "has_page_images": true,
       "pages": 276,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 2,
       "subject": "物理",
+      "supported": false,
       "title": "普通高中教科书·物理必修 第二册（鲁科版）"
     },
     {
@@ -1373,12 +1583,14 @@
       "book_key": "suppbook:156205f20a348662",
       "content_id": "346c3c04-1663-472c-849e-ff876dcf293f",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 126,
+      "primary_bound": false,
       "search_pages": 126,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "物理",
+      "supported": true,
       "title": "普通高中教科书·物理选择性必修 第一册（人教版）"
     },
     {
@@ -1388,10 +1600,12 @@
       "edition": "沪科版",
       "has_page_images": false,
       "pages": 321,
-      "search_pages": 111,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 3,
       "subject": "物理",
+      "supported": false,
       "title": "普通高中教科书·物理选择性必修 第一册（沪科版）"
     },
     {
@@ -1401,10 +1615,12 @@
       "edition": "鲁科版",
       "has_page_images": true,
       "pages": 269,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 2,
       "subject": "物理",
+      "supported": false,
       "title": "普通高中教科书·物理选择性必修 第一册（鲁科版）"
     },
     {
@@ -1412,12 +1628,14 @@
       "book_key": "suppbook:cabf9ae26e37ed0f",
       "content_id": "2109c25c-2e52-4da3-8ab3-18cbe632ec11",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 141,
+      "primary_bound": false,
       "search_pages": 141,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "物理",
+      "supported": true,
       "title": "普通高中教科书·物理选择性必修 第三册（人教版）"
     },
     {
@@ -1427,10 +1645,12 @@
       "edition": "沪科版",
       "has_page_images": false,
       "pages": 399,
-      "search_pages": 153,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 3,
       "subject": "物理",
+      "supported": false,
       "title": "普通高中教科书·物理选择性必修 第三册（沪科版）"
     },
     {
@@ -1440,10 +1660,12 @@
       "edition": "鲁科版",
       "has_page_images": true,
       "pages": 134,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "物理",
+      "supported": false,
       "title": "普通高中教科书·物理选择性必修 第三册（鲁科版）"
     },
     {
@@ -1451,12 +1673,14 @@
       "book_key": "suppbook:05133e9de7cfe36b",
       "content_id": "2ee7d7fa-1920-4d37-a179-91d5fd59b8c1",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 120,
+      "primary_bound": false,
       "search_pages": 120,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "物理",
+      "supported": true,
       "title": "普通高中教科书·物理选择性必修 第二册（人教版）"
     },
     {
@@ -1466,10 +1690,12 @@
       "edition": "沪科版",
       "has_page_images": true,
       "pages": 533,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 4,
       "subject": "物理",
+      "supported": false,
       "title": "普通高中教科书·物理选择性必修 第二册（沪科版）"
     },
     {
@@ -1479,10 +1705,12 @@
       "edition": "人教版",
       "has_page_images": true,
       "pages": 451,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 3,
       "subject": "生物学",
+      "supported": true,
       "title": "普通高中教科书·生物学必修1 分子与细胞（人教版）"
     },
     {
@@ -1492,10 +1720,12 @@
       "edition": "沪科版",
       "has_page_images": false,
       "pages": 264,
-      "search_pages": 132,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "生物学",
+      "supported": false,
       "title": "普通高中教科书·生物学必修1 分子与细胞（沪科版）"
     },
     {
@@ -1505,10 +1735,12 @@
       "edition": "苏教版",
       "has_page_images": false,
       "pages": 142,
-      "search_pages": 142,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "生物学",
+      "supported": false,
       "title": "普通高中教科书·生物学必修1 分子与细胞（苏教版）"
     },
     {
@@ -1518,10 +1750,12 @@
       "edition": "人教版",
       "has_page_images": true,
       "pages": 441,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 3,
       "subject": "生物学",
+      "supported": true,
       "title": "普通高中教科书·生物学必修2 遗传与进化（人教版）"
     },
     {
@@ -1531,10 +1765,12 @@
       "edition": "沪科版",
       "has_page_images": false,
       "pages": 254,
-      "search_pages": 127,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "生物学",
+      "supported": false,
       "title": "普通高中教科书·生物学必修2 遗传与进化（沪科版）"
     },
     {
@@ -1544,10 +1780,12 @@
       "edition": "苏教版",
       "has_page_images": false,
       "pages": 140,
-      "search_pages": 140,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "生物学",
+      "supported": false,
       "title": "普通高中教科书·生物学必修2 遗传与进化（苏教版）"
     },
     {
@@ -1557,10 +1795,12 @@
       "edition": "人教版",
       "has_page_images": true,
       "pages": 409,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 3,
       "subject": "生物学",
+      "supported": true,
       "title": "普通高中教科书·生物学选择性必修1 稳态与调节（人教版）"
     },
     {
@@ -1570,10 +1810,12 @@
       "edition": "沪科版",
       "has_page_images": false,
       "pages": 240,
-      "search_pages": 120,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "生物学",
+      "supported": false,
       "title": "普通高中教科书·生物学选择性必修1 稳态与调节（沪科版）"
     },
     {
@@ -1583,10 +1825,12 @@
       "edition": "苏教版",
       "has_page_images": false,
       "pages": 135,
-      "search_pages": 135,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "生物学",
+      "supported": false,
       "title": "普通高中教科书·生物学选择性必修1 稳态与调节（苏教版）"
     },
     {
@@ -1596,10 +1840,12 @@
       "edition": "人教版",
       "has_page_images": true,
       "pages": 406,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 3,
       "subject": "生物学",
+      "supported": true,
       "title": "普通高中教科书·生物学选择性必修2 生物与环境（人教版）"
     },
     {
@@ -1609,10 +1855,12 @@
       "edition": "沪科版",
       "has_page_images": false,
       "pages": 232,
-      "search_pages": 116,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "生物学",
+      "supported": false,
       "title": "普通高中教科书·生物学选择性必修2 生物与环境（沪科版）"
     },
     {
@@ -1622,10 +1870,12 @@
       "edition": "苏教版",
       "has_page_images": false,
       "pages": 139,
-      "search_pages": 139,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "生物学",
+      "supported": false,
       "title": "普通高中教科书·生物学选择性必修2 生物与环境（苏教版）"
     },
     {
@@ -1633,12 +1883,14 @@
       "book_key": "suppbook:3728fb494406dae1",
       "content_id": "d12ff6b6-b6cd-444a-9749-4642aa350482",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 126,
+      "primary_bound": false,
       "search_pages": 126,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "生物学",
+      "supported": true,
       "title": "普通高中教科书·生物学选择性必修3 生物技术与工程（人教版）"
     },
     {
@@ -1648,10 +1900,12 @@
       "edition": "沪科版",
       "has_page_images": false,
       "pages": 258,
-      "search_pages": 129,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "生物学",
+      "supported": false,
       "title": "普通高中教科书·生物学选择性必修3 生物技术与工程（沪科版）"
     },
     {
@@ -1661,10 +1915,12 @@
       "edition": "苏教版",
       "has_page_images": true,
       "pages": 416,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 3,
       "subject": "生物学",
+      "supported": false,
       "title": "普通高中教科书·生物学选择性必修3 生物技术与工程（苏教版）"
     },
     {
@@ -1674,10 +1930,12 @@
       "edition": "上外教版",
       "has_page_images": false,
       "pages": 176,
-      "search_pages": 88,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语必修 第一册（上外教版）"
     },
     {
@@ -1685,12 +1943,14 @@
       "book_key": "suppbook:8d645e210a976d8f",
       "content_id": "8e62f140-1990-411e-8831-59a69bb53c1d",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 129,
+      "primary_bound": false,
       "search_pages": 129,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": true,
       "title": "普通高中教科书·英语必修 第一册（人教版）"
     },
     {
@@ -1700,10 +1960,12 @@
       "edition": "冀教版",
       "has_page_images": false,
       "pages": 130,
-      "search_pages": 130,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语必修 第一册（冀教版）"
     },
     {
@@ -1713,10 +1975,12 @@
       "edition": "外研社版",
       "has_page_images": false,
       "pages": 149,
-      "search_pages": 149,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语必修 第一册（外研社版）"
     },
     {
@@ -1726,10 +1990,12 @@
       "edition": "沪教版",
       "has_page_images": false,
       "pages": 213,
-      "search_pages": 125,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语必修 第一册（沪教版）"
     },
     {
@@ -1739,10 +2005,12 @@
       "edition": "重大版",
       "has_page_images": false,
       "pages": 140,
-      "search_pages": 140,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语必修 第一册（重大版）"
     },
     {
@@ -1752,10 +2020,12 @@
       "edition": "上外教版",
       "has_page_images": false,
       "pages": 174,
-      "search_pages": 87,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语必修 第三册（上外教版）"
     },
     {
@@ -1763,12 +2033,14 @@
       "book_key": "suppbook:8d2cd2d7df7a7db3",
       "content_id": "bf54b36f-4c75-4c91-8b9c-53ce15e4f903",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 120,
+      "primary_bound": false,
       "search_pages": 120,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": true,
       "title": "普通高中教科书·英语必修 第三册（人教版）"
     },
     {
@@ -1778,10 +2050,12 @@
       "edition": "冀教版",
       "has_page_images": false,
       "pages": 131,
-      "search_pages": 131,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语必修 第三册（冀教版）"
     },
     {
@@ -1791,10 +2065,12 @@
       "edition": "北师大版",
       "has_page_images": true,
       "pages": 123,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "英语",
+      "supported": true,
       "title": "普通高中教科书·英语必修 第三册（北师大版）"
     },
     {
@@ -1804,10 +2080,12 @@
       "edition": "沪教版",
       "has_page_images": false,
       "pages": 215,
-      "search_pages": 126,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语必修 第三册（沪教版）"
     },
     {
@@ -1817,10 +2095,12 @@
       "edition": "重大版",
       "has_page_images": false,
       "pages": 132,
-      "search_pages": 132,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语必修 第三册（重大版）"
     },
     {
@@ -1830,10 +2110,12 @@
       "edition": "上外教版",
       "has_page_images": false,
       "pages": 168,
-      "search_pages": 84,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语必修 第二册（上外教版）"
     },
     {
@@ -1841,12 +2123,14 @@
       "book_key": "suppbook:4d8d211e36ce1be9",
       "content_id": "144425f4-87a0-4a3a-82b7-ea7be112856c",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 119,
+      "primary_bound": false,
       "search_pages": 119,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": true,
       "title": "普通高中教科书·英语必修 第二册（人教版）"
     },
     {
@@ -1856,10 +2140,12 @@
       "edition": "冀教版",
       "has_page_images": false,
       "pages": 131,
-      "search_pages": 131,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语必修 第二册（冀教版）"
     },
     {
@@ -1869,10 +2155,12 @@
       "edition": "外研社版",
       "has_page_images": false,
       "pages": 149,
-      "search_pages": 149,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语必修 第二册（外研社版）"
     },
     {
@@ -1882,10 +2170,12 @@
       "edition": "沪教版",
       "has_page_images": false,
       "pages": 216,
-      "search_pages": 126,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语必修 第二册（沪教版）"
     },
     {
@@ -1895,10 +2185,12 @@
       "edition": "重大版",
       "has_page_images": false,
       "pages": 132,
-      "search_pages": 132,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语必修 第二册（重大版）"
     },
     {
@@ -1908,10 +2200,12 @@
       "edition": "上外教版",
       "has_page_images": false,
       "pages": 194,
-      "search_pages": 97,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语选择性必修 第一册（上外教版）"
     },
     {
@@ -1919,12 +2213,14 @@
       "book_key": "suppbook:2d625f0ca03b5d05",
       "content_id": "ec1adf40-7bf0-48a4-9902-89162f59277d",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 125,
+      "primary_bound": false,
       "search_pages": 125,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": true,
       "title": "普通高中教科书·英语选择性必修 第一册（人教版）"
     },
     {
@@ -1934,10 +2230,12 @@
       "edition": "北师大版",
       "has_page_images": true,
       "pages": 123,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "英语",
+      "supported": true,
       "title": "普通高中教科书·英语选择性必修 第一册（北师大版）"
     },
     {
@@ -1947,10 +2245,12 @@
       "edition": "外研社版",
       "has_page_images": false,
       "pages": 143,
-      "search_pages": 143,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语选择性必修 第一册（外研社版）"
     },
     {
@@ -1960,10 +2260,12 @@
       "edition": "沪教版",
       "has_page_images": false,
       "pages": 216,
-      "search_pages": 125,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语选择性必修 第一册（沪教版）"
     },
     {
@@ -1973,10 +2275,12 @@
       "edition": "重大版",
       "has_page_images": false,
       "pages": 128,
-      "search_pages": 128,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语选择性必修 第一册（重大版）"
     },
     {
@@ -1986,10 +2290,12 @@
       "edition": "上外教版",
       "has_page_images": false,
       "pages": 178,
-      "search_pages": 89,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语选择性必修 第三册（上外教版）"
     },
     {
@@ -1997,12 +2303,14 @@
       "book_key": "suppbook:8bfca9dd17744cea",
       "content_id": "671e59b0-608f-49c6-8f23-e076decf27e2",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 124,
+      "primary_bound": false,
       "search_pages": 124,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": true,
       "title": "普通高中教科书·英语选择性必修 第三册（人教版）"
     },
     {
@@ -2012,10 +2320,12 @@
       "edition": "北师大版",
       "has_page_images": true,
       "pages": 131,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "英语",
+      "supported": true,
       "title": "普通高中教科书·英语选择性必修 第三册（北师大版）"
     },
     {
@@ -2025,10 +2335,12 @@
       "edition": "外研社版",
       "has_page_images": false,
       "pages": 142,
-      "search_pages": 142,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语选择性必修 第三册（外研社版）"
     },
     {
@@ -2038,10 +2350,12 @@
       "edition": "沪教版",
       "has_page_images": false,
       "pages": 225,
-      "search_pages": 125,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语选择性必修 第三册（沪教版）"
     },
     {
@@ -2051,10 +2365,12 @@
       "edition": "重大版",
       "has_page_images": false,
       "pages": 128,
-      "search_pages": 128,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语选择性必修 第三册（重大版）"
     },
     {
@@ -2064,10 +2380,12 @@
       "edition": "上外教版",
       "has_page_images": false,
       "pages": 182,
-      "search_pages": 91,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语选择性必修 第二册（上外教版）"
     },
     {
@@ -2075,12 +2393,14 @@
       "book_key": "suppbook:801dd08ff2006aff",
       "content_id": "0d537335-d02c-4774-85e2-7554c86fea7e",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 130,
+      "primary_bound": false,
       "search_pages": 130,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": true,
       "title": "普通高中教科书·英语选择性必修 第二册（人教版）"
     },
     {
@@ -2090,10 +2410,12 @@
       "edition": "冀教版",
       "has_page_images": false,
       "pages": 130,
-      "search_pages": 130,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语选择性必修 第二册（冀教版）"
     },
     {
@@ -2103,10 +2425,12 @@
       "edition": "外研社版",
       "has_page_images": false,
       "pages": 150,
-      "search_pages": 150,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语选择性必修 第二册（外研社版）"
     },
     {
@@ -2116,10 +2440,12 @@
       "edition": "沪教版",
       "has_page_images": false,
       "pages": 216,
-      "search_pages": 125,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 2,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语选择性必修 第二册（沪教版）"
     },
     {
@@ -2129,10 +2455,12 @@
       "edition": "重大版",
       "has_page_images": false,
       "pages": 128,
-      "search_pages": 128,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语选择性必修 第二册（重大版）"
     },
     {
@@ -2142,10 +2470,12 @@
       "edition": "上外教版",
       "has_page_images": false,
       "pages": 94,
-      "search_pages": 94,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语选择性必修 第四册（上外教版）"
     },
     {
@@ -2153,12 +2483,14 @@
       "book_key": "suppbook:f5b9c6b96e6b3002",
       "content_id": "5f0829b2-fc05-479b-a51e-47f871598eba",
       "edition": "人教版",
-      "has_page_images": false,
+      "has_page_images": true,
       "pages": 122,
+      "primary_bound": false,
       "search_pages": 122,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": true,
       "title": "普通高中教科书·英语选择性必修 第四册（人教版）"
     },
     {
@@ -2168,10 +2500,12 @@
       "edition": "冀教版",
       "has_page_images": false,
       "pages": 130,
-      "search_pages": 130,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语选择性必修 第四册（冀教版）"
     },
     {
@@ -2181,10 +2515,12 @@
       "edition": "北师大版",
       "has_page_images": true,
       "pages": 125,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "英语",
+      "supported": true,
       "title": "普通高中教科书·英语选择性必修 第四册（北师大版）"
     },
     {
@@ -2194,10 +2530,12 @@
       "edition": "沪教版",
       "has_page_images": false,
       "pages": 333,
-      "search_pages": 125,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 3,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语选择性必修 第四册（沪教版）"
     },
     {
@@ -2207,10 +2545,12 @@
       "edition": "重大版",
       "has_page_images": false,
       "pages": 126,
-      "search_pages": 126,
+      "primary_bound": false,
+      "search_pages": 0,
       "source": "supplemental_only",
       "source_files": 1,
       "subject": "英语",
+      "supported": false,
       "title": "普通高中教科书·英语选择性必修 第四册（重大版）"
     },
     {
@@ -2220,10 +2560,12 @@
       "edition": "人教版",
       "has_page_images": true,
       "pages": 148,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "语文",
+      "supported": true,
       "title": "普通高中教科书·语文必修 上册（人教版）"
     },
     {
@@ -2233,10 +2575,12 @@
       "edition": "人教版",
       "has_page_images": true,
       "pages": 161,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "语文",
+      "supported": true,
       "title": "普通高中教科书·语文必修 下册（人教版）"
     },
     {
@@ -2246,10 +2590,12 @@
       "edition": "人教版",
       "has_page_images": true,
       "pages": 110,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "语文",
+      "supported": true,
       "title": "普通高中教科书·语文选择性必修 上册（人教版）"
     },
     {
@@ -2259,10 +2605,12 @@
       "edition": "人教版",
       "has_page_images": true,
       "pages": 114,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "语文",
+      "supported": true,
       "title": "普通高中教科书·语文选择性必修 下册（人教版）"
     },
     {
@@ -2272,29 +2620,32 @@
       "edition": "人教版",
       "has_page_images": true,
       "pages": 134,
+      "primary_bound": true,
       "search_pages": 0,
-      "source": "primary",
+      "source": "primary_bound",
       "source_files": 1,
       "subject": "语文",
+      "supported": true,
       "title": "普通高中教科书·语文选择性必修 中册（人教版）"
     }
   ],
   "books": 175,
-  "built_at": "2026-03-10T18:01:10.610192+00:00",
-  "chars": 14999713,
+  "built_at": "2026-03-11T00:40:46.658926+00:00",
+  "chars": 2665017,
   "content_id_missing_books": 32,
   "cross_source_identity_conflict_samples": [],
   "cross_source_identity_conflicts": 0,
   "db_path": "/Users/ylsuen/textbook_ai_migration/data/index/textbook_mineru_fts.db",
+  "duplicate_pages_collapsed": 0,
   "edition_conflict_samples": [],
   "edition_conflicts": 0,
   "generator": "scripts/build_supplemental_textbook_index.py",
   "output": {
-    "bytes": 9448514,
+    "bytes": 1889049,
     "path": "/Users/ylsuen/textbook_ai_migration/platform/backend/supplemental_textbook_pages.jsonl.gz",
-    "sha256": "301db38dd1f544c593e544f47f07cc8014f7edbdd0b551c5ba1b10f64270c5ee"
+    "sha256": "16937cbe0a7034ccc40b29e7db65fc12f3db5ecf0c0f29cfd431c07e9a75344e"
   },
-  "pages": 15185,
+  "pages": 2843,
   "primary_books": 57,
   "primary_bound_page_lookup_miss_samples": [
     {
@@ -2482,7 +2833,7 @@
   "primary_bound_pages_omitted": 10724,
   "problems": [],
   "schema_version": 1,
-  "searchable_pages": 15185,
+  "searchable_pages": 2843,
   "source_chars": 26965384,
   "source_files_indexed": 251,
   "source_files_total": 251,
@@ -2491,8 +2842,8 @@
   "subjects": {
     "化学": {
       "books": 15,
-      "chars": 1191345,
-      "pages": 1696,
+      "chars": 285994,
+      "pages": 367,
       "source_chars": 1778119,
       "source_pages": 2630
     },
@@ -2505,8 +2856,8 @@
     },
     "地理": {
       "books": 31,
-      "chars": 688608,
-      "pages": 1717,
+      "chars": 279405,
+      "pages": 714,
       "source_chars": 1524456,
       "source_pages": 3900
     },
@@ -2519,29 +2870,29 @@
     },
     "数学": {
       "books": 37,
-      "chars": 4222619,
-      "pages": 4363,
+      "chars": 0,
+      "pages": 0,
       "source_chars": 7353570,
       "source_pages": 7616
     },
     "物理": {
       "books": 17,
-      "chars": 1051344,
-      "pages": 1428,
+      "chars": 517510,
+      "pages": 767,
       "source_chars": 2872000,
       "source_pages": 4274
     },
     "生物学": {
       "books": 15,
-      "chars": 814044,
-      "pages": 1306,
+      "chars": 92094,
+      "pages": 126,
       "source_chars": 2496687,
       "source_pages": 4053
     },
     "英语": {
       "books": 42,
-      "chars": 7031753,
-      "pages": 4675,
+      "chars": 1490014,
+      "pages": 869,
       "source_chars": 9492302,
       "source_pages": 6470
     },
@@ -2554,6 +2905,9 @@
     }
   },
   "supplemental_only_books": 118,
+  "supported_books": 54,
+  "supported_searchable_books": 27,
   "unresolved_books": 0,
-  "unresolved_pages": 0
+  "unresolved_pages": 0,
+  "unsupported_pages_omitted": 17603
 }

@@ -1,7 +1,17 @@
 {
-  "frontend_refactor_version": "2026.03.10-r25",
+  "frontend_refactor_version": "2026.03.10-r27",
   "updated_at": "2026-03-10",
   "history": [
+    {
+      "version": "2026.03.10-r27",
+      "date": "2026-03-10",
+      "summary": "aligned the public release to the supported textbook scope, attached page-image products to all 27 supported supplemental books, and prepared the verified 2843-row supplemental vector rollout"
+    },
+    {
+      "version": "2026.03.10-r26",
+      "date": "2026-03-10",
+      "summary": "restricted the public textbook scope to 人教版 plus 英语北师大版 and 化学鲁科版, generated page-image products for 27 supported supplemental books, and rebuilt the 2843-page supplemental search/vector corpus"
+    },
     {
       "version": "2026.03.10-r25",
       "date": "2026-03-10",

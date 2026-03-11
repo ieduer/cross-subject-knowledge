@@ -156,6 +156,8 @@ def _load_textbook_registry(db_path: Path) -> dict:
             "by_title_subject": {},
             "by_title": {},
             "page_lookup": {},
+            "page_sections": {},
+            "book_map": {},
         }
 
     con = sqlite3.connect(db_path)
@@ -243,6 +245,7 @@ def _load_textbook_registry(db_path: Path) -> dict:
         "by_title": {k: tuple(v) for k, v in by_title.items()},
         "page_lookup": page_lookup,
         "page_sections": {k: tuple(sorted(v)) for k, v in page_sections.items()},
+        "book_map": book_map,
     }
 
 
@@ -281,6 +284,16 @@ def _with_edition(base_title: str, edition: str) -> str:
     if cleaned_edition in cleaned_title:
         return cleaned_title
     return f"{cleaned_title}（{cleaned_edition}）"
+
+
+def _is_supported_runtime_edition(subject: str | None, edition: str | None) -> bool:
+    normalized_subject = str(subject or "").strip()
+    normalized_edition = str(edition or "").strip()
+    return (
+        normalized_edition == "人教版"
+        or (normalized_subject == "英语" and normalized_edition == "北师大版")
+        or (normalized_subject == "化学" and normalized_edition == "鲁科版")
+    )
 
 
 def _match_registry_candidate(candidates, edition_hint: str) -> dict | None:
@@ -347,14 +360,18 @@ def _resolve_supplemental_book_meta(path: Path, registry: dict, payload: list[di
         )
 
     if matched:
+        matched_subject = matched.get("subject") or subject_name
+        matched_edition = matched.get("edition") or edition_hint
         return {
             "content_id": matched.get("content_id") or content_id,
             "title": matched.get("display_title") or matched.get("title") or _with_edition(display_title, edition_hint),
             "base_title": matched.get("title") or display_title,
             "book_key": matched.get("book_key"),
-            "subject": matched.get("subject") or subject_name,
-            "edition": matched.get("edition") or edition_hint,
+            "subject": matched_subject,
+            "edition": matched_edition,
             "has_page_images": bool(matched.get("book_key")),
+            "primary_bound": True,
+            "supported": _is_supported_runtime_edition(matched_subject, matched_edition),
             "synthetic": False,
         }
     synthetic_key = _make_supplemental_book_key(
@@ -363,6 +380,7 @@ def _resolve_supplemental_book_meta(path: Path, registry: dict, payload: list[di
         edition_hint,
         content_id or str(path.parent),
     )
+    synthetic_has_page_images = bool((registry.get("book_map") or {}).get(synthetic_key))
     return {
         "content_id": content_id or None,
         "title": _with_edition(display_title, edition_hint),
@@ -370,7 +388,9 @@ def _resolve_supplemental_book_meta(path: Path, registry: dict, payload: list[di
         "book_key": synthetic_key,
         "subject": subject_name,
         "edition": edition_hint,
-        "has_page_images": False,
+        "has_page_images": synthetic_has_page_images,
+        "primary_bound": False,
+        "supported": _is_supported_runtime_edition(subject_name, edition_hint),
         "synthetic": True,
     }
 
@@ -422,6 +442,7 @@ def build_index(source_root: Path, db_path: Path, output_gz: Path, manifest_path
     source_pages_total = 0
     source_chars_total = 0
     primary_bound_pages_omitted = 0
+    unsupported_pages_omitted = 0
     primary_bound_page_lookup_misses = 0
     primary_bound_page_lookup_miss_samples: list[dict] = []
     indexed_files = 0
@@ -499,7 +520,9 @@ def build_index(source_root: Path, db_path: Path, output_gz: Path, manifest_path
                 "edition": str(meta.get("edition") or "").strip(),
                 "content_id": meta.get("content_id"),
                 "has_page_images": bool(meta.get("has_page_images")),
-                "source": "primary" if meta.get("has_page_images") else "supplemental_only",
+                "primary_bound": bool(meta.get("primary_bound")),
+                "supported": bool(meta.get("supported")),
+                "source": "primary_bound" if meta.get("primary_bound") else "supplemental_only",
                 "source_files": set(),
                 "pages": 0,
                 "search_pages": 0,
@@ -523,6 +546,13 @@ def build_index(source_root: Path, db_path: Path, output_gz: Path, manifest_path
             )
         elif not existing_edition and incoming_edition:
             catalog["edition"] = incoming_edition
+        if meta.get("has_page_images"):
+            catalog["has_page_images"] = True
+        if meta.get("primary_bound"):
+            catalog["primary_bound"] = True
+            catalog["source"] = "primary_bound"
+        if meta.get("supported"):
+            catalog["supported"] = True
         catalog["source_files"].add(str(path.relative_to(source_root.parent)))
 
         for page_num in sorted(blocks_by_page):
@@ -536,7 +566,7 @@ def build_index(source_root: Path, db_path: Path, output_gz: Path, manifest_path
             subject_stats["source_chars"] += len(merged_text)
             catalog["pages"] += 1
 
-            if meta.get("has_page_images"):
+            if meta.get("primary_bound"):
                 primary_bound_pages_omitted += 1
                 if (book_key, int(page_num)) not in registry["page_lookup"]:
                     primary_bound_page_lookup_misses += 1
@@ -554,6 +584,9 @@ def build_index(source_root: Path, db_path: Path, output_gz: Path, manifest_path
                             }
                         )
                 continue
+            if not meta.get("supported"):
+                unsupported_pages_omitted += 1
+                continue
 
             entry = {
                 "id": f"supp:{hashlib.md5(f'{book_key}:{page_num}'.encode('utf-8')).hexdigest()[:16]}",
@@ -568,6 +601,8 @@ def build_index(source_root: Path, db_path: Path, output_gz: Path, manifest_path
                 "text": merged_text,
                 "path": str(path.relative_to(source_root.parent)),
                 "has_page_images": bool(meta.get("has_page_images")),
+                "primary_bound": bool(meta.get("primary_bound")),
+                "supported": bool(meta.get("supported")),
                 "synthetic": bool(meta.get("synthetic")),
                 "_quality_score": _page_text_quality(merged_text),
             }
@@ -631,7 +666,10 @@ def build_index(source_root: Path, db_path: Path, output_gz: Path, manifest_path
     tmp_output.replace(output_gz)
     output_sha256 = _sha256_file(output_gz)
     output_bytes = output_gz.stat().st_size
-    duplicate_pages_collapsed = max(0, source_pages_total - primary_bound_pages_omitted - pages_written)
+    duplicate_pages_collapsed = max(
+        0,
+        source_pages_total - primary_bound_pages_omitted - unsupported_pages_omitted - pages_written,
+    )
 
     subject_manifest = {
         subject: {
@@ -716,9 +754,14 @@ def build_index(source_root: Path, db_path: Path, output_gz: Path, manifest_path
         "chars": chars_written,
         "source_pages": source_pages_total,
         "source_chars": source_chars_total,
-        "primary_books": sum(1 for item in books_catalog.values() if item.get("has_page_images")),
-        "supplemental_only_books": sum(1 for item in books_catalog.values() if not item.get("has_page_images")),
+        "primary_books": sum(1 for item in books_catalog.values() if item.get("primary_bound")),
+        "supplemental_only_books": sum(1 for item in books_catalog.values() if not item.get("primary_bound")),
         "primary_bound_pages_omitted": primary_bound_pages_omitted,
+        "unsupported_pages_omitted": unsupported_pages_omitted,
+        "supported_books": sum(1 for item in books_catalog.values() if item.get("supported")),
+        "supported_searchable_books": sum(
+            1 for item in books_catalog.values() if item.get("supported") and not item.get("primary_bound")
+        ),
         "primary_bound_page_lookup_misses": primary_bound_page_lookup_misses,
         "primary_bound_page_lookup_miss_samples": primary_bound_page_lookup_miss_samples,
         "duplicate_pages_collapsed": duplicate_pages_collapsed,
@@ -741,6 +784,8 @@ def build_index(source_root: Path, db_path: Path, output_gz: Path, manifest_path
                     "edition": item["edition"],
                     "content_id": item["content_id"],
                     "has_page_images": item["has_page_images"],
+                    "primary_bound": bool(item.get("primary_bound")),
+                    "supported": bool(item.get("supported")),
                     "source": item["source"],
                     "source_files": len(item["source_files"]),
                     "pages": item["pages"],
@@ -776,9 +821,10 @@ def build_index(source_root: Path, db_path: Path, output_gz: Path, manifest_path
                 "source_pages": source_pages_total,
                 "chars": chars_written,
                 "subjects": {k: v["pages"] for k, v in subject_manifest.items()},
-                "primary_books": sum(1 for item in books_catalog.values() if item.get("has_page_images")),
-                "supplemental_only_books": sum(1 for item in books_catalog.values() if not item.get("has_page_images")),
+                "primary_books": sum(1 for item in books_catalog.values() if item.get("primary_bound")),
+                "supplemental_only_books": sum(1 for item in books_catalog.values() if not item.get("primary_bound")),
                 "primary_bound_pages_omitted": primary_bound_pages_omitted,
+                "unsupported_pages_omitted": unsupported_pages_omitted,
                 "duplicate_pages_collapsed": duplicate_pages_collapsed,
                 "output_bytes": output_bytes,
                 "output_sha256": output_sha256,
