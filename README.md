@@ -18,7 +18,7 @@
 - 📊 **数据洞察** — 726 个精选学术术语的词频分析、学科关联热力图、考试覆盖分析、概念广度排名
 - 📚 **教材下载** — 全部 316 本高中教材 PDF 可从 [jks.bdfz.net](https://jks.bdfz.net/) 下载
 
-数据层、运行时资产与部署边界的长期说明见 [docs/data_layer_lineage_memory.md](docs/data_layer_lineage_memory.md)、[docs/runtime_operations_overview.md](docs/runtime_operations_overview.md) 和 [docs/textbook_identity_audit.md](docs/textbook_identity_audit.md)。任何数据重建、检索排障、部署或回滚前，先看 `data_layer_lineage_memory.md`，涉及教材版本和“同一本是否被拆开”时再看 `textbook_identity_audit.md`。
+数据层、运行时资产与部署边界的长期说明见 [docs/data_layer_lineage_memory.md](docs/data_layer_lineage_memory.md)、[docs/runtime_operations_overview.md](docs/runtime_operations_overview.md)、[docs/release_maintenance_design.md](docs/release_maintenance_design.md) 和 [docs/textbook_identity_audit.md](docs/textbook_identity_audit.md)。任何数据重建、检索排障、部署或回滚前，先看 `data_layer_lineage_memory.md`；涉及手工发布、clean release source 或回滚锚点时，再看 `release_maintenance_design.md`；涉及教材版本和“同一本是否被拆开”时再看 `textbook_identity_audit.md`。
 
 ### 高级检索
 
@@ -43,6 +43,7 @@
 ### 公开运维约束
 
 - 涉及前端或页图行为的发布，必须从 clean release source 构建，不能直接从 VPS runtime repo 出包
+- 本机是唯一源头：代码更新先固化到 `release_manifest.json`，再推 GitHub；大文件同步到 VPS；页图同步到 R2；四端状态必须按同一轮 release manifest 对齐
 - 若发布涉及页图映射，镜像内必须包含 `frontend/assets/pages/book_map.json`；上线验收时需抽查 live 搜索结果返回非空 `page_url`
 - 手工发布前如需保留人工回滚点，应先按 running image digest 额外打 tag，不要直接把 `textbook-knowledge:latest` 当作回滚锚点
 - 仅 `README.md` / `docs/**` 这类说明文档更新不应触发生产部署；workflow 需继续显式忽略 docs-only push
@@ -403,6 +404,19 @@ RUNTIME_ROOT=/root/cross-subject-knowledge ./scripts/deploy_vps.sh
 6.  新容器通过 `/api/health` 健康检查后才算部署成功；当前健康闸门要求 DB、FAISS、补充教材索引可用，且在启用 reranker 时确认 `reranker.loaded=true`；失败则自动回滚到上一镜像。
 7.  运行时模型缓存保存在宿主机 `state/cache/`，避免每次发版都把 Hugging Face 缓存烘进镜像。
 8.  部署完成后自动清理悬空镜像，只保留最近几份 `pre-*` 回滚镜像，并删除历史 `build-*` tag。
+
+手工紧急发布不应再从 VPS runtime repo 直接出包。当前统一做法是：
+
+```bash
+/Users/ylsuen/.venv/bin/python platform/scripts/build_release_manifest.py
+
+/Users/ylsuen/.venv/bin/python platform/scripts/stage_clean_release.py \
+  --output-dir /tmp/textbook-clean-release \
+  --archive /tmp/textbook-clean-release.tgz \
+  --overwrite
+```
+
+然后只从这个 clean release 目录或压缩包执行 `scripts/deploy_vps.sh`。
 
 ### 3. 服务器 (VPS) 迁移指南
 由于大头数据 (4GB+ 图片) 都在云端 CDN，如果未来需要更换服务器提供商，迁移将极其简单轻量：

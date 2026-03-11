@@ -1,0 +1,256 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-11T14:36:55.640411+00:00",
+  "git_head": "32c69d3b69cb2ad5d31b7c9abe4ec65420a2328d",
+  "frontend_version": "2026.03.11-r30",
+  "source_of_truth": {
+    "local_workspace": "authoritative",
+    "github": "authoritative_for_code_only_after_push",
+    "vps": "authoritative_for_runtime_large_assets_after_sync",
+    "r2": "authoritative_for_page_images_after_sync"
+  },
+  "source_assets": [
+    {
+      "kind": "source",
+      "logical_path": "Dockerfile",
+      "size": 1355,
+      "sha256": "59de729b4c698c9c522eacdea60257bfbc75ed19512f76cad0fa17e2805add75"
+    },
+    {
+      "kind": "source",
+      "logical_path": ".dockerignore",
+      "size": 161,
+      "sha256": "13950d7751e5dc7abd46f434d7b8d36bc53fe90417cc7cfb59442602ee7d6ec3"
+    },
+    {
+      "kind": "source",
+      "logical_path": "requirements.runtime.txt",
+      "size": 169,
+      "sha256": "b4160fcb610e511269e7b803736b38e69062d3327012b9c46a1f11f92ce2a190"
+    },
+    {
+      "kind": "source",
+      "logical_path": "backend/main.py",
+      "size": 338118,
+      "sha256": "d23e5ae436781a148ae00c932f68122883f4ef50b03de1053b27cdcf70647927"
+    },
+    {
+      "kind": "source",
+      "logical_path": "backend/entrypoint.sh",
+      "size": 172,
+      "sha256": "4cc0d23dbf99899c4467553caaa318a5cd4033c46c017b04dc6dec09e6f11418"
+    },
+    {
+      "kind": "source",
+      "logical_path": "backend/preflight.py",
+      "size": 2567,
+      "sha256": "c7d9978b52d62481d2a33fa9f98e3338616911c73407e4e3646079963e927fb8"
+    },
+    {
+      "kind": "source",
+      "logical_path": "backend/sync_db.py",
+      "size": 1904,
+      "sha256": "55f2b3119d1852036180cd3a6cf397a4f7c808d38c9e05f1e8a02f02d0fe5a53"
+    },
+    {
+      "kind": "source",
+      "logical_path": "backend/textbook_classics_manifest.json",
+      "size": 8746,
+      "sha256": "cdf6d6171fae1bb6bbff2628415afa986ec80e7c20687d33ecfb080240dc7996"
+    },
+    {
+      "kind": "source",
+      "logical_path": "backend/textbook_version_manifest.json",
+      "size": 72847,
+      "sha256": "674494d6de4c0acca0e4e9a2f3c265e80d8865bfd4167f6ea9a021e934c88c93"
+    },
+    {
+      "kind": "source",
+      "logical_path": "backend/xuci_single_char_index.json",
+      "size": 322,
+      "sha256": "81ca66105e3a964f2d59a88c1fd258dfe6f6544f99da40a8873fe317b94b1300"
+    },
+    {
+      "kind": "source",
+      "logical_path": "backend/supplemental_textbook_pages.jsonl.gz",
+      "size": 1889049,
+      "sha256": "16937cbe0a7034ccc40b29e7db65fc12f3db5ecf0c0f29cfd431c07e9a75344e"
+    },
+    {
+      "kind": "source",
+      "logical_path": "backend/supplemental_textbook_pages.manifest.json",
+      "size": 111821,
+      "sha256": "bd071850079a96976ad6b495c91143ae8fca0bd1f6dd70bc41d6066cb72f2a9c"
+    },
+    {
+      "kind": "source",
+      "logical_path": "frontend/index.html",
+      "size": 13805,
+      "sha256": "174c3906eacc06a63bedacb76296d9f45ea110cb35da38a79e1000314d985d7c"
+    },
+    {
+      "kind": "source",
+      "logical_path": "frontend/dict.html",
+      "size": 9836,
+      "sha256": "63dced4dcfc1f454d888429ee6569e2d90a0674f3fd3c65a12dde53044bf71d8"
+    },
+    {
+      "kind": "source",
+      "logical_path": "frontend/assets/app.js",
+      "size": 121749,
+      "sha256": "57fe3dcce5c0b8685761861809c2d0b8a0795fa5677ffc0a3ccd605252aa7749"
+    },
+    {
+      "kind": "source",
+      "logical_path": "frontend/assets/style.css",
+      "size": 72642,
+      "sha256": "9a10f8fa77dec809feeaaaa6300653d2b7f2b9af112e3e045d88dd3cb638dad2"
+    },
+    {
+      "kind": "source",
+      "logical_path": "frontend/assets/dict.js",
+      "size": 67069,
+      "sha256": "984557b57b86e60ecdb7d68807551f088e73ba4757056beea2c586d20a52a213"
+    },
+    {
+      "kind": "source",
+      "logical_path": "frontend/assets/dict.css",
+      "size": 26936,
+      "sha256": "3d41d0fee14e1b10ef6129bf84c7c1806a9f12f4d4c698355dc01fa16a6b3612"
+    },
+    {
+      "kind": "source",
+      "logical_path": "frontend/assets/version.json",
+      "size": 7438,
+      "sha256": "686a2d3dcc07cac07e9515a75e54282f53293c5e263bf2631f7a867b7e515be8"
+    },
+    {
+      "kind": "source",
+      "logical_path": "frontend/assets/pages/book_map.json",
+      "size": 40261,
+      "sha256": "b005aabe1a5f5ce3311fc849999de54db3ae3bf2b0afb10cc2921b7aeba7485d"
+    },
+    {
+      "kind": "source",
+      "logical_path": "scripts/deploy_vps.sh",
+      "size": 13040,
+      "sha256": "af5c476eced7e12625fcef41bb79f88d9c634bd373b0a82f6c71c734dcd0534e"
+    },
+    {
+      "kind": "source",
+      "logical_path": "scripts/stage_clean_release.py",
+      "size": 5651,
+      "sha256": "fc99f99a9b85c8c64bcadff8c73623fb5f10356b6e654448d81d7f3a89ad5231"
+    },
+    {
+      "kind": "source",
+      "logical_path": "scripts/build_release_manifest.py",
+      "size": 6868,
+      "sha256": "709c5782b39f84a756bf7d00d8d14f22996e24dbda0579b43afeed28790a992f"
+    },
+    {
+      "kind": "source",
+      "logical_path": "scripts/verify_release_manifest.py",
+      "size": 3798,
+      "sha256": "be6b63e7606867e840154cc939dd44cdadecc0836a9ccfd508b1310ba6e1c78d"
+    }
+  ],
+  "runtime_assets": [
+    {
+      "kind": "runtime",
+      "logical_path": "data/index/textbook_mineru_fts.db",
+      "size": 58892288,
+      "sha256": "766e9878195a0ceb9c385f21884017bc86d51c6066427e542c361a05b05d5f1d",
+      "source_path": "data/index/textbook_mineru_fts.db"
+    },
+    {
+      "kind": "runtime",
+      "logical_path": "data/index/textbook_chunks.index",
+      "size": 73445274,
+      "sha256": "2c5a5aa221c6e42ae0e3ca6e841c1a8dbe7b40fba606d5cf2345e59eccde0331",
+      "source_path": "data/index/textbook_chunks.index"
+    },
+    {
+      "kind": "runtime",
+      "logical_path": "data/index/textbook_chunks.manifest.json",
+      "size": 891,
+      "sha256": "394d69870d116106fdcf7a5f17af9aa0275139340c41a8b029bb7a43f1664155",
+      "source_path": "data/index/textbook_chunks.manifest.json"
+    },
+    {
+      "kind": "runtime",
+      "logical_path": "data/index/supplemental_textbook_pages.jsonl.gz",
+      "size": 1889049,
+      "sha256": "16937cbe0a7034ccc40b29e7db65fc12f3db5ecf0c0f29cfd431c07e9a75344e",
+      "source_path": "platform/backend/supplemental_textbook_pages.jsonl.gz"
+    },
+    {
+      "kind": "runtime",
+      "logical_path": "data/index/supplemental_textbook_pages.manifest.json",
+      "size": 111821,
+      "sha256": "bd071850079a96976ad6b495c91143ae8fca0bd1f6dd70bc41d6066cb72f2a9c",
+      "source_path": "platform/backend/supplemental_textbook_pages.manifest.json"
+    },
+    {
+      "kind": "runtime",
+      "logical_path": "data/index/supplemental_textbook_pages.index",
+      "size": 11644973,
+      "sha256": "879a02d544e999bfc31813eab76bbd5bf1b8b91a7ec70fb3f4cd65e2d2c5f4ca",
+      "source_path": "data/index/supplemental_textbook_pages.index"
+    },
+    {
+      "kind": "runtime",
+      "logical_path": "data/index/supplemental_textbook_pages.vector.manifest.json",
+      "size": 717,
+      "sha256": "f2fbbbb91988d58f891d90ab8677c7a05732de3308bfde7a1222c53e8bc9425f",
+      "source_path": "data/index/supplemental_textbook_pages.vector.manifest.json"
+    },
+    {
+      "kind": "runtime",
+      "logical_path": "data/index/dict_exam_xuci.json",
+      "size": 360816,
+      "sha256": "2ab17c99c511a3c2024ccaed7191360671e095f6b371c7e0f9efd2f830eee7b1",
+      "source_path": "data/index/dict_exam_xuci.json"
+    },
+    {
+      "kind": "runtime",
+      "logical_path": "data/index/dict_exam_shici.json",
+      "size": 526484,
+      "sha256": "65ab0a1675e0d3307a6132f429508bcb770492dc70c189edab3cd30a6b89a7ee",
+      "source_path": "data/index/dict_exam_shici.json"
+    },
+    {
+      "kind": "runtime",
+      "logical_path": "data/index/dict_exam_xuci_details.json",
+      "size": 457957,
+      "sha256": "920622ad0f9006b125bd9217db8a16cbfd8ff418b937ab6eac6b366c5849f213",
+      "source_path": "data/index/dict_exam_xuci_details.json"
+    },
+    {
+      "kind": "runtime",
+      "logical_path": "data/index/dict_moe_revised.db",
+      "size": 145301504,
+      "sha256": "5b3c0aa6c07fc740faa3e9eb2acb7c01a2a858c49007413f323e75e7cafc709a",
+      "source_path": "data/index/dict_moe_revised.db"
+    }
+  ],
+  "page_mapping": {
+    "book_count": 96,
+    "required_r2_prefixes": [
+      "pages/",
+      "pages/dict_xuci/",
+      "pages/dict_changyong/"
+    ]
+  },
+  "runtime_facts": {
+    "textbook_mineru_rows": 21925,
+    "dict_moe_revised_rows": 163916,
+    "dict_moe_revised_headwords": 161136
+  },
+  "release_rules": [
+    "code changes must be pushed to GitHub before or together with deployment",
+    "runtime data changes must be synchronized to VPS before production cutover",
+    "page-image changes must be synchronized to R2 before production cutover",
+    "deploy_vps.sh must verify this manifest before cutover"
+  ]
+}

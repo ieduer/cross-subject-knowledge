@@ -30,6 +30,9 @@ if [ -f "${SOURCE_ROOT}/backend/supplemental_textbook_pages.vector.manifest.json
 fi
 SUPPLEMENTAL_VECTOR_INDEX_DST="${RUNTIME_ROOT}/data/index/supplemental_textbook_pages.index"
 SUPPLEMENTAL_VECTOR_MANIFEST_DST="${RUNTIME_ROOT}/data/index/supplemental_textbook_pages.vector.manifest.json"
+BOOK_MAP_SRC="${SOURCE_ROOT}/frontend/assets/pages/book_map.json"
+FRONTEND_VERSION_SRC="${SOURCE_ROOT}/frontend/assets/version.json"
+RELEASE_MANIFEST_PATH="${SOURCE_ROOT}/release_manifest.json"
 
 cd "$SOURCE_ROOT"
 
@@ -61,6 +64,21 @@ if [ ! -f "${RUNTIME_ROOT}/data/index/textbook_chunks.index" ]; then
   exit 1
 fi
 
+if [ ! -s "${BOOK_MAP_SRC}" ]; then
+  echo "ERROR: missing or empty frontend page map ${BOOK_MAP_SRC}"
+  exit 1
+fi
+
+if [ ! -s "${FRONTEND_VERSION_SRC}" ]; then
+  echo "ERROR: missing or empty frontend version ledger ${FRONTEND_VERSION_SRC}"
+  exit 1
+fi
+
+if [ ! -s "${RELEASE_MANIFEST_PATH}" ]; then
+  echo "ERROR: missing or empty release manifest ${RELEASE_MANIFEST_PATH}"
+  exit 1
+fi
+
 install_if_distinct() {
   local src="${1:?src_required}"
   local dst="${2:?dst_required}"
@@ -89,6 +107,24 @@ env_true() {
     0|false|FALSE|False|no|NO|No) return 1 ;;
     *) return 0 ;;
   esac
+}
+
+verify_built_image_release_assets() {
+  docker run --rm --entrypoint sh "${build_tag}" -lc '
+    test -s /app/frontend/assets/pages/book_map.json &&
+    test -s /app/frontend/assets/version.json &&
+    test -s /app/frontend/index.html &&
+    test -s /app/frontend/dict.html
+  ' >/dev/null
+}
+
+verify_release_manifest_alignment() {
+  python3 "${SOURCE_ROOT}/scripts/verify_release_manifest.py" \
+    --manifest "${RELEASE_MANIFEST_PATH}" \
+    --source-root "${SOURCE_ROOT}" \
+    --runtime-root "${RUNTIME_ROOT}" \
+    --check source \
+    --check runtime
 }
 
 host_cache_has_model() {
@@ -155,6 +191,11 @@ warm_precision_agent() {
 echo "=== deploy start $(date -u '+%Y-%m-%d %H:%M:%S UTC') commit=${commit_sha} ==="
 df -h /
 
+if ! verify_release_manifest_alignment; then
+  echo "ERROR: release manifest alignment check failed"
+  exit 1
+fi
+
 if docker ps -a --format '{{.Names}}' | grep -qx "${CONTAINER_NAME}"; then
   rollback_image="$(docker inspect --format '{{.Image}}' "${CONTAINER_NAME}")"
 fi
@@ -165,6 +206,11 @@ fi
 
 export DOCKER_BUILDKIT=1
 docker build --pull -t "${build_tag}" -t "${REPO_NAME}:latest" .
+
+if ! verify_built_image_release_assets; then
+  echo "ERROR: built image is missing required frontend release assets"
+  exit 1
+fi
 
 migrate_legacy_st_cache
 
