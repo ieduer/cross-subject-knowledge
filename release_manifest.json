@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-11T14:36:55.640411+00:00",
-  "git_head": "32c69d3b69cb2ad5d31b7c9abe4ec65420a2328d",
+  "generated_at": "2026-03-11T15:26:41.781604+00:00",
+  "git_head": "33430fa149ae546feab64aae1a1c45e8a67a1f2c",
   "frontend_version": "2026.03.11-r30",
   "source_of_truth": {
     "local_workspace": "authoritative",
@@ -13,8 +13,8 @@
     {
       "kind": "source",
       "logical_path": "Dockerfile",
-      "size": 1355,
-      "sha256": "59de729b4c698c9c522eacdea60257bfbc75ed19512f76cad0fa17e2805add75"
+      "size": 1391,
+      "sha256": "81e182f30187904c62899480ddb4dfa61012dcd63d43e708b29e12d44f57051b"
     },
     {
       "kind": "source",
@@ -37,8 +37,8 @@
     {
       "kind": "source",
       "logical_path": "backend/entrypoint.sh",
-      "size": 172,
-      "sha256": "4cc0d23dbf99899c4467553caaa318a5cd4033c46c017b04dc6dec09e6f11418"
+      "size": 363,
+      "sha256": "07c195d0bf29569d11cda2b5c2928b08edec6bed90174731021b2c88bed0fa0b"
     },
     {
       "kind": "source",
@@ -49,8 +49,8 @@
     {
       "kind": "source",
       "logical_path": "backend/sync_db.py",
-      "size": 1904,
-      "sha256": "55f2b3119d1852036180cd3a6cf397a4f7c808d38c9e05f1e8a02f02d0fe5a53"
+      "size": 2571,
+      "sha256": "55dcd301704bc1d80bf0b10e86a321e208a26e505f12898481ab23aeeb9b448e"
     },
     {
       "kind": "source",
@@ -133,8 +133,8 @@
     {
       "kind": "source",
       "logical_path": "scripts/deploy_vps.sh",
-      "size": 13040,
-      "sha256": "af5c476eced7e12625fcef41bb79f88d9c634bd373b0a82f6c71c734dcd0534e"
+      "size": 13432,
+      "sha256": "d62f2a4d23a7f1be3d60069d1d6bfaadc184d9724f49753b398896eb203d92f2"
     },
     {
       "kind": "source",
@@ -145,14 +145,14 @@
     {
       "kind": "source",
       "logical_path": "scripts/build_release_manifest.py",
-      "size": 6868,
-      "sha256": "709c5782b39f84a756bf7d00d8d14f22996e24dbda0579b43afeed28790a992f"
+      "size": 9282,
+      "sha256": "161a834da14ee82dd1c61a1b5fe71b9c890fb5188228a242b3872e377c5d582e"
     },
     {
       "kind": "source",
       "logical_path": "scripts/verify_release_manifest.py",
-      "size": 3798,
-      "sha256": "be6b63e7606867e840154cc939dd44cdadecc0836a9ccfd508b1310ba6e1c78d"
+      "size": 6547,
+      "sha256": "c294a574a27f7c80a260c854cf041f02ed55d1d8bc60044b4f787b7d4cdeecbf"
     }
   ],
   "runtime_assets": [
@@ -160,8 +160,67 @@
       "kind": "runtime",
       "logical_path": "data/index/textbook_mineru_fts.db",
       "size": 58892288,
-      "sha256": "766e9878195a0ceb9c385f21884017bc86d51c6066427e542c361a05b05d5f1d",
-      "source_path": "data/index/textbook_mineru_fts.db"
+      "sha256": "b3814c96092ebe90e42675420aa0066a957c51a0be837ea63d67e907726a22e0",
+      "source_path": "data/index/textbook_mineru_fts.db",
+      "runtime_identity": {
+        "type": "sqlite_textbook_runtime_identity_v1",
+        "mutable_tables": [
+          "ai_batch_ingest",
+          "ai_batch_jobs",
+          "ai_chat_logs",
+          "search_logs",
+          "sqlite_sequence"
+        ],
+        "content_tables": {
+          "chunks": {
+            "row_count": 21925,
+            "sha256": "d73e6c4bed9bccce6388ef8411270fdc9aeb67cdbef7d6ebfb52b367567988aa"
+          },
+          "ai_summaries": {
+            "row_count": 17506,
+            "sha256": "9024b21c7da9386f4ed347cd49ac2a1a2946b5f3f292a891d0ea39524c0c10e2"
+          },
+          "ai_explanations": {
+            "row_count": 126,
+            "sha256": "3411be218b600d53652d170c8c8ee8cbb6d40ee430eaf92d65978fcf4c0c3ebf"
+          },
+          "ai_synonyms": {
+            "row_count": 788,
+            "sha256": "427b888ce49c265cd10ec1c6342fc2032c467edb37393549055b2a0b0d57d770"
+          },
+          "concept_map": {
+            "row_count": 1102,
+            "sha256": "dbc7bcc6269e9dc9843391a5868ce87af100fc36f014d5f22fede990713b3563"
+          },
+          "cross_subject_map": {
+            "row_count": 83,
+            "sha256": "aecd745f59f35d5b087a090845b2c9b1c363905d49d2cf575ed38d331a724ea9"
+          },
+          "curated_keywords": {
+            "row_count": 515,
+            "sha256": "0d56877e6f7bf542b1381b1775d301fb576d2eab98e7b3fa048d1216531bead0"
+          },
+          "keyword_counts": {
+            "row_count": 1773,
+            "sha256": "0a1181df496039944a619406c5e1e9f984ad09d5281f29a3d3aee57cc8de70b6"
+          },
+          "ai_gaokao_links": {
+            "row_count": 4029,
+            "sha256": "a1f3beaedba27de965da2c5bd36b5683bbee4d16d38ae2acc6706acd2d4a2a8a"
+          },
+          "ai_relations": {
+            "row_count": 597,
+            "sha256": "b403d9353b08c20e0f0900c825cb002c8d2c5d44cbb3860fc7e02369fe905f3b"
+          }
+        },
+        "fts_shadow_counts": {
+          "chunks_fts": 21925,
+          "chunks_fts_data": 4254,
+          "chunks_fts_idx": 4134,
+          "chunks_fts_docsize": 21925
+        },
+        "integrity_check": "ok"
+      }
     },
     {
       "kind": "runtime",

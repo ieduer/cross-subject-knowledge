@@ -8,6 +8,7 @@ REPO_NAME="textbook-knowledge"
 EMBEDDER_NAME="${EMBEDDER_NAME:-BAAI/bge-m3}"
 RERANKER_NAME="${RERANKER_NAME:-BAAI/bge-reranker-base}"
 RERANKER_ENABLED="${RERANKER_ENABLED:-1}"
+RUNTIME_DB_SYNC_MODE="${RUNTIME_DB_SYNC_MODE:-disabled}"
 HOST_HF_CACHE_ROOT="${RUNTIME_ROOT}/state/cache/huggingface"
 HOST_HF_HUB_CACHE="${HOST_HF_CACHE_ROOT}/hub"
 HOST_LEGACY_ST_CACHE="${RUNTIME_ROOT}/state/cache/sentence_transformers"
@@ -76,6 +77,12 @@ fi
 
 if [ ! -s "${RELEASE_MANIFEST_PATH}" ]; then
   echo "ERROR: missing or empty release manifest ${RELEASE_MANIFEST_PATH}"
+  exit 1
+fi
+
+if [ "${RUNTIME_DB_SYNC_MODE}" != "disabled" ]; then
+  echo "ERROR: deploy_vps.sh requires RUNTIME_DB_SYNC_MODE=disabled"
+  echo "Sync runtime DB assets to ${RUNTIME_ROOT}/data/index explicitly before deploy."
   exit 1
 fi
 
@@ -255,6 +262,7 @@ docker run -d \
   -e PROJECT_ROOT=/app \
   -e DATA_ROOT=/data \
   -e STATE_ROOT=/state \
+  -e RUNTIME_DB_SYNC_MODE="${RUNTIME_DB_SYNC_MODE}" \
   -e EMBEDDER="${EMBEDDER_NAME}" \
   -e RERANKER="${RERANKER_NAME}" \
   -e RERANKER_ENABLED="${RERANKER_ENABLED}" \
@@ -306,6 +314,7 @@ if [ "${healthy}" != "true" ]; then
       -e PROJECT_ROOT=/app \
       -e DATA_ROOT=/data \
       -e STATE_ROOT=/state \
+      -e RUNTIME_DB_SYNC_MODE="${RUNTIME_DB_SYNC_MODE}" \
       -e EMBEDDER="${EMBEDDER_NAME}" \
       -e RERANKER="${RERANKER_NAME}" \
       -e RERANKER_ENABLED="${RERANKER_ENABLED}" \

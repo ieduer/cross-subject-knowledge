@@ -1,7 +1,11 @@
-import os, urllib.request, hashlib
+import os
+import sys
+import urllib.request
 from pathlib import Path
 
 DB_URL = "https://img.rdfzer.com/db-sync/textbook_mineru_fts.db"
+SYNC_MODE = os.getenv("RUNTIME_DB_SYNC_MODE", "disabled").strip().lower()
+SYNC_MODE_R2_TEXTBOOK = "r2_textbook_mineru"
 PROJECT_ROOT = Path(os.getenv("PROJECT_ROOT", Path(__file__).resolve().parents[1])).expanduser().resolve()
 _DEFAULT_DATA_ROOT = PROJECT_ROOT / "data"
 _ALT_DATA_ROOT = PROJECT_ROOT.parent / "data"
@@ -11,6 +15,21 @@ DATA_ROOT = Path(os.getenv("DATA_ROOT", _DEFAULT_DATA_ROOT)).expanduser().resolv
 DB_PATH_PRIMARY = DATA_ROOT / "index" / "textbook_mineru_fts.db"
 DB_PATH_LEGACY = DATA_ROOT / "textbook_mineru_fts.db"
 DB_PATH = DB_PATH_PRIMARY if DB_PATH_PRIMARY.exists() or not DB_PATH_LEGACY.exists() else DB_PATH_LEGACY
+
+def sync_enabled() -> bool:
+    disabled_modes = {"", "0", "false", "off", "no", "disabled", "none"}
+    if SYNC_MODE in disabled_modes:
+        print("Runtime DB sync skipped: RUNTIME_DB_SYNC_MODE is disabled.")
+        return False
+    if SYNC_MODE != SYNC_MODE_R2_TEXTBOOK:
+        print(
+            f"Unsupported RUNTIME_DB_SYNC_MODE={SYNC_MODE!r}. "
+            f"Expected {SYNC_MODE_R2_TEXTBOOK!r} or a disabled value.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    return True
+
 
 def download_db():
     print(f"Checking for DB updates from {DB_URL}...")
@@ -37,4 +56,5 @@ def download_db():
         print(f"Failed to check/download DB update: {e}")
 
 if __name__ == '__main__':
-    download_db()
+    if sync_enabled():
+        download_db()

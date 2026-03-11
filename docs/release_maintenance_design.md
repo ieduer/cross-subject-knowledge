@@ -47,6 +47,44 @@
 
 这样，手工紧急修复不再依赖“自己记得复制哪些文件”。
 
+### 2.5. 运行时主检索库不再允许隐式同步
+
+这次排查还暴露了另一条真正会制造状态漂移的链路：
+
+- 容器启动时自动运行 `backend/sync_db.py`
+- `sync_db.py` 会尝试从 R2 `db-sync/` 路径下载 `textbook_mineru_fts.db`
+
+这条链路直接破坏了四端对齐模型：
+
+- 本机、GitHub、VPS、R2 可以在没有显式发布动作的情况下继续分叉
+- 网站有效并不能证明 VPS `data/index/` 仍等于本轮验收版本
+- 代码发布会夹带运行时数据改写，回滚与验收都失去边界
+
+因此本轮的固定约束是：
+
+- 生产容器默认 `RUNTIME_DB_SYNC_MODE=disabled`
+- `deploy_vps.sh` 强制要求 `RUNTIME_DB_SYNC_MODE=disabled`
+- `sync_db.py` 只保留为显式应急工具，必须手动设置 `RUNTIME_DB_SYNC_MODE=r2_textbook_mineru` 才会执行
+
+未来运行时主检索库的唯一正常更新方式是：
+
+1. 本机生成或确认工件
+2. 显式同步到 VPS `data/index/`
+3. 再部署或重启容器
+
+而不是让容器在启动时自行改写数据盘。
+
+另一个必须同时固定下来的点是 `textbook_mineru_fts.db` 的“活文件”属性：
+
+- 线上流量会继续写 `search_logs` / `ai_chat_logs`
+- 因此整库 SHA 不能长期作为唯一发布对账依据
+
+本轮已把 manifest / verify 规则收成：
+
+- 保留整库 SHA 作为信息字段
+- 对真正的发布校验，改用稳定的 `runtime_identity`
+- `runtime_identity` 只覆盖检索和知识运行所需的核心内容表与 FTS 影子表计数，不把运行时日志表计入错版判断
+
 ### 3. 部署脚本必须拒绝坏包
 
 `platform/scripts/deploy_vps.sh` 现在新增硬性拦截：

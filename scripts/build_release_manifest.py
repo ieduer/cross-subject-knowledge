@@ -16,6 +16,31 @@ PLATFORM_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = PLATFORM_ROOT.parent
 DATA_INDEX = WORKSPACE_ROOT / "data" / "index"
 OUTPUT_PATH = PLATFORM_ROOT / "release_manifest.json"
+TEXTBOOK_DB_MUTABLE_TABLES = frozenset({
+    "search_logs",
+    "ai_chat_logs",
+    "ai_batch_ingest",
+    "ai_batch_jobs",
+    "sqlite_sequence",
+})
+TEXTBOOK_DB_FINGERPRINT_TABLES = (
+    "chunks",
+    "ai_summaries",
+    "ai_explanations",
+    "ai_synonyms",
+    "concept_map",
+    "cross_subject_map",
+    "curated_keywords",
+    "keyword_counts",
+    "ai_gaokao_links",
+    "ai_relations",
+)
+TEXTBOOK_DB_FTS_COUNT_TABLES = (
+    "chunks_fts",
+    "chunks_fts_data",
+    "chunks_fts_idx",
+    "chunks_fts_docsize",
+)
 
 SOURCE_ASSETS = (
     "Dockerfile",
@@ -97,6 +122,45 @@ def file_entry(kind: str, logical_path: str, actual_path: Path, source_path: str
     return payload
 
 
+def sqlite_ordered_table_hash(conn: sqlite3.Connection, table_name: str) -> dict[str, object]:
+    columns = [row[1] for row in conn.execute(f'PRAGMA table_info("{table_name}")').fetchall()]
+    if not columns:
+        return {"row_count": 0, "sha256": hashlib.sha256(f"{table_name}\n".encode("utf-8")).hexdigest()}
+    order_clause = ", ".join(f'"{column}"' for column in columns)
+    digest = hashlib.sha256()
+    row_count = 0
+    query = f'SELECT * FROM "{table_name}" ORDER BY {order_clause}'
+    cursor = conn.execute(query)
+    for row in cursor:
+        digest.update(json.dumps(row, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8"))
+        digest.update(b"\n")
+        row_count += 1
+    return {"row_count": row_count, "sha256": digest.hexdigest()}
+
+
+def textbook_db_runtime_identity(path: Path) -> dict[str, object]:
+    conn = sqlite3.connect(path)
+    try:
+        payload: dict[str, object] = {
+            "type": "sqlite_textbook_runtime_identity_v1",
+            "mutable_tables": sorted(TEXTBOOK_DB_MUTABLE_TABLES),
+            "content_tables": {},
+            "fts_shadow_counts": {},
+            "integrity_check": conn.execute("PRAGMA integrity_check").fetchone()[0],
+        }
+        content_tables = payload["content_tables"]
+        assert isinstance(content_tables, dict)
+        for table_name in TEXTBOOK_DB_FINGERPRINT_TABLES:
+            content_tables[table_name] = sqlite_ordered_table_hash(conn, table_name)
+        fts_counts = payload["fts_shadow_counts"]
+        assert isinstance(fts_counts, dict)
+        for table_name in TEXTBOOK_DB_FTS_COUNT_TABLES:
+            fts_counts[table_name] = conn.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
+        return payload
+    finally:
+        conn.close()
+
+
 def git_head_sha() -> str:
     try:
         return (
@@ -145,14 +209,15 @@ def build_manifest() -> dict[str, object]:
     ]
     runtime_assets = []
     for logical_name, actual_path in RUNTIME_ASSETS:
-        runtime_assets.append(
-            file_entry(
-                "runtime",
-                f"data/index/{logical_name}",
-                actual_path,
-                source_path=str(actual_path.relative_to(WORKSPACE_ROOT)),
-            )
+        entry = file_entry(
+            "runtime",
+            f"data/index/{logical_name}",
+            actual_path,
+            source_path=str(actual_path.relative_to(WORKSPACE_ROOT)),
         )
+        if logical_name == "textbook_mineru_fts.db":
+            entry["runtime_identity"] = textbook_db_runtime_identity(actual_path)
+        runtime_assets.append(entry)
     return {
         "schema_version": 1,
         "generated_at": datetime.now(timezone.utc).isoformat(),

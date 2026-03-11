@@ -9,7 +9,7 @@ Before any data rebuild, deploy, rollback, or search-debugging pass, read [data_
 - Local development machine: code editing, data inspection, lightweight validation
 - Offline processing/build machine: OCR, FAISS rebuild, batch backfill, and large model downloads
 - Production VPS: serves search, graph, gaokao linkage, and AI chat APIs; does not run OCR or FAISS rebuild
-- Cloudflare R2: image and page asset delivery
+- Cloudflare R2: image and page asset delivery only; production runtime DBs should not mutate from R2 during normal startup
 - Cloudflare Worker custom domain `ai.bdfz.net`: external AI gateway bound to Worker service `apis` / `production`
 
 ## Runtime assets
@@ -28,6 +28,12 @@ Production runtime depends on host-mounted directories instead of baking data in
 - `/root/cross-subject-knowledge/state/batch`
 
 The repository also keeps bundled fallback copies of the supplemental index under `backend/`, but production should rely on the synced `data/index/` copies and their manifest.
+
+Runtime DB rule:
+
+- `/data/index/*.db` and `/data/index/*.index` are the authoritative runtime assets once they are synced to the VPS
+- production startup must not implicitly replace them from R2 or any other remote source
+- if a runtime DB needs emergency replacement, do it as an explicit file sync step before deploy or restart
 
 Current page-image boundary:
 

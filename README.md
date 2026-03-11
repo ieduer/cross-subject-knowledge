@@ -44,6 +44,9 @@
 
 - 涉及前端或页图行为的发布，必须从 clean release source 构建，不能直接从 VPS runtime repo 出包
 - 本机是唯一源头：代码更新先固化到 `release_manifest.json`，再推 GitHub；大文件同步到 VPS；页图同步到 R2；四端状态必须按同一轮 release manifest 对齐
+- 运行时大文件不经 GitHub 同步；`data/index/*.db`、`*.index`、runtime JSON 必须显式同步到 VPS，不能指望代码发布顺带带过去
+- R2 当前公开职责只保留页图与图片 CDN；生产容器默认禁用运行时主检索库自动拉取，避免启动时把 VPS 已验收数据盘悄悄改写
+- `textbook_mineru_fts.db` 含运行时日志表，文件级 sha 会随线上流量漂移；发布对账以稳定的运行时语料指纹为准，不再把 `search_logs` / `ai_chat_logs` 的增长误判成错版
 - 若发布涉及页图映射，镜像内必须包含 `frontend/assets/pages/book_map.json`；上线验收时需抽查 live 搜索结果返回非空 `page_url`
 - 手工发布前如需保留人工回滚点，应先按 running image digest 额外打 tag，不要直接把 `textbook-knowledge:latest` 当作回滚锚点
 - 仅 `README.md` / `docs/**` 这类说明文档更新不应触发生产部署；workflow 需继续显式忽略 docs-only push
@@ -401,9 +404,10 @@ RUNTIME_ROOT=/root/cross-subject-knowledge ./scripts/deploy_vps.sh
 3.  在 VPS 上创建临时的干净 release checkout，避免生产目录里历史热补丁或临时改动阻塞发布。
 4.  在 VPS 上先构建新镜像，再停旧容器，避免“构建失败直接打挂线上”。
 5.  部署脚本会同步补充教材索引与补充向量到运行时目录，并预热 `BAAI/bge-reranker-base`，避免首个精确查询才触发冷启动。
-6.  新容器通过 `/api/health` 健康检查后才算部署成功；当前健康闸门要求 DB、FAISS、补充教材索引可用，且在启用 reranker 时确认 `reranker.loaded=true`；失败则自动回滚到上一镜像。
-7.  运行时模型缓存保存在宿主机 `state/cache/`，避免每次发版都把 Hugging Face 缓存烘进镜像。
-8.  部署完成后自动清理悬空镜像，只保留最近几份 `pre-*` 回滚镜像，并删除历史 `build-*` tag。
+6.  生产容器默认以宿主机挂载的 `/data/index/` 为唯一运行时检索库来源；`backend/sync_db.py` 不再作为默认启动链路，只有显式设置 `RUNTIME_DB_SYNC_MODE=r2_textbook_mineru` 时才会执行应急拉库。
+7.  新容器通过 `/api/health` 健康检查后才算部署成功；当前健康闸门要求 DB、FAISS、补充教材索引可用，且在启用 reranker 时确认 `reranker.loaded=true`；失败则自动回滚到上一镜像。
+8.  运行时模型缓存保存在宿主机 `state/cache/`，避免每次发版都把 Hugging Face 缓存烘进镜像。
+9.  部署完成后自动清理悬空镜像，只保留最近几份 `pre-*` 回滚镜像，并删除历史 `build-*` tag。
 
 手工紧急发布不应再从 VPS runtime repo 直接出包。当前统一做法是：
 

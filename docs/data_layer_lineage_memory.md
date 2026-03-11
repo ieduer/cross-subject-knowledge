@@ -241,7 +241,7 @@ Important DB note:
 
 - `textbook_mineru_fts.db` is a mutable runtime file because local smoke tests and production traffic can append telemetry tables and log rows.
 - File-level SHA256 for this DB is therefore not a stable content identity signal by itself.
-- For release verification, pair the DB file SHA with a stable textbook-corpus fingerprint derived from `chunks WHERE source != 'gaokao'`.
+- For release verification, pair the DB file SHA with a stable runtime identity fingerprint derived from the search-critical content tables plus FTS shadow table counts, while excluding mutable telemetry tables such as `search_logs` and `ai_chat_logs`.
 
 ### Production runtime destinations
 
@@ -634,7 +634,7 @@ Conditionally required runtime assets:
 
 Startup behavior from [`platform/backend/entrypoint.sh`](../backend/entrypoint.sh):
 
-1. run `sync_db.py`
+1. optionally run `sync_db.py` only when `RUNTIME_DB_SYNC_MODE` is explicitly enabled
 2. run `preflight.py`
 3. start `uvicorn`
 
@@ -642,11 +642,13 @@ The runtime does not rebuild FAISS or supplemental assets on the VPS.
 
 ### DB drift rule
 
-[`platform/backend/sync_db.py`](../backend/sync_db.py) auto-syncs only:
+[`platform/backend/sync_db.py`](../backend/sync_db.py) is now an explicit emergency path only. When manually enabled, it can sync only:
 
 - `textbook_mineru_fts.db`
 
-It does not auto-sync:
+By default, production startup keeps `RUNTIME_DB_SYNC_MODE=disabled`, so it does not auto-sync any runtime DB.
+
+It never auto-syncs:
 
 - `textbook_chunks.index`
 - `textbook_chunks.manifest.json`

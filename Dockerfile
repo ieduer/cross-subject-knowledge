@@ -8,6 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PROJECT_ROOT=/app \
     DATA_ROOT=/data \
     STATE_ROOT=/state \
+    RUNTIME_DB_SYNC_MODE=disabled \
     PORT=8080 \
     HF_HOME=/state/cache/huggingface \
     HF_HUB_CACHE=/state/cache/huggingface/hub \
