@@ -1,7 +1,22 @@
 {
-  "frontend_refactor_version": "2026.03.10-r27",
-  "updated_at": "2026-03-10",
+  "frontend_refactor_version": "2026.03.11-r30",
+  "updated_at": "2026-03-11",
   "history": [
+    {
+      "version": "2026.03.11-r30",
+      "date": "2026-03-11",
+      "summary": "restored the full current frontend release source, refreshed page-image mapping delivery, and repaired the accidental runtime-based production rollback"
+    },
+    {
+      "version": "2026.03.11-r29",
+      "date": "2026-03-11",
+      "summary": "bundled yearly gaokao full-text payloads into the exam runtime datasets, synchronized the deployed dictionary reports, and finalized the image-first xuci/shici release state"
+    },
+    {
+      "version": "2026.03.11-r28",
+      "date": "2026-03-11",
+      "summary": "added exam-mode xuci/shici views with year-expanded gaokao context, textbook and dictionary original-image evidence, a read-only MOE revised dictionary panel, and temporarily disabled OCR-derived xuci detail UI pending manual correction"
+    },
     {
       "version": "2026.03.10-r27",
       "date": "2026-03-10",

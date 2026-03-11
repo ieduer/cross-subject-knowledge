@@ -60,6 +60,7 @@ def _resolve_data_asset(filename: str) -> Path:
 
 DB_PATH = _resolve_data_asset("textbook_mineru_fts.db")
 DICT_DB_PATH = _resolve_data_asset("dictionary_index.db")
+DICT_MOE_REVISED_DB_PATH = _resolve_data_asset("dict_moe_revised.db")
 DICT_HEADWORD_INDEX_PATH = _resolve_data_asset("dict_headword_pages.json")
 DICT_QC_PATH = _resolve_data_asset("dict_headword_qc.json")
 TEXTBOOK_CLASSICS_MANIFEST_PATH = DATA_ROOT / "index" / "textbook_classics_manifest.json"
@@ -67,6 +68,9 @@ BUNDLED_TEXTBOOK_CLASSICS_MANIFEST_PATH = Path(__file__).with_name("textbook_cla
 TEXTBOOK_VERSION_MANIFEST_PATH = Path(__file__).with_name("textbook_version_manifest.json")
 XUCI_SINGLE_CHAR_INDEX_PATH = DATA_ROOT / "index" / "xuci_single_char_index.json"
 BUNDLED_XUCI_SINGLE_CHAR_INDEX_PATH = Path(__file__).with_name("xuci_single_char_index.json")
+DICT_EXAM_XUCI_PATH = _resolve_data_asset("dict_exam_xuci.json")
+DICT_EXAM_SHICI_PATH = _resolve_data_asset("dict_exam_shici.json")
+DICT_EXAM_XUCI_DETAILS_PATH = _resolve_data_asset("dict_exam_xuci_details.json")
 FRONTEND = Path(__file__).parent.parent / "frontend"
 FAISS_INDEX_PATH = _resolve_data_asset("textbook_chunks.index")
 FAISS_MANIFEST_PATH = _resolve_data_asset("textbook_chunks.manifest.json")
@@ -190,6 +194,8 @@ MATCH_PHRASE_MAX_WINDOW = max(2, int(os.getenv("MATCH_PHRASE_MAX_WINDOW", "6")))
 CHAT_BOOK_QUOTA_PER_BOOK = max(1, int(os.getenv("CHAT_BOOK_QUOTA_PER_BOOK", "2")))
 DICT_TEXTBOOK_RESPONSE_TEXT_LIMIT = max(240, int(os.getenv("DICT_TEXTBOOK_RESPONSE_TEXT_LIMIT", "900")))
 DICT_GAOKAO_RESPONSE_TEXT_LIMIT = max(240, int(os.getenv("DICT_GAOKAO_RESPONSE_TEXT_LIMIT", "900")))
+DICT_EXAM_QUESTION_TEXT_LIMIT = max(1200, int(os.getenv("DICT_EXAM_QUESTION_TEXT_LIMIT", "8000")))
+DICT_EXAM_DATASET_CACHE = _make_runtime_cache(8, 300)
 TRENDING_QUERY_EXCLUDE_RE = re.compile(
     r"(?:concurrency[\W_/-]*smoke|smoke[\W_/-]*test|health[\W_/-]*check|load[\W_/-]*test|synthetic[\W_/-]*smoke|dummy[\W_/-]*smoke)",
     re.IGNORECASE,
@@ -2417,6 +2423,332 @@ def _load_json_list(raw: str | None) -> list:
 
 def _normalize_text_line(text: str | None) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
+
+
+def _normalize_multiline_text(text: str | None) -> str:
+    return (text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def _load_dict_exam_dataset(kind: str) -> dict:
+    path_map = {
+        "xuci": DICT_EXAM_XUCI_PATH,
+        "shici": DICT_EXAM_SHICI_PATH,
+    }
+    label_map = {
+        "xuci": "真题虚词",
+        "shici": "真题实词",
+    }
+    path = path_map.get(kind)
+    if not path:
+        return {
+            "kind": kind,
+            "available": False,
+            "label": label_map.get(kind, kind),
+            "coverage": {"notes": ["未知数据类型。"]},
+            "stats": {"term_count": 0, "occurrence_count": 0, "question_count": 0},
+            "terms": [],
+        }
+
+    if not path.exists():
+        return {
+            "kind": kind,
+            "available": False,
+            "label": label_map[kind],
+            "coverage": {"notes": ["运行时数据尚未生成。"]},
+            "stats": {"term_count": 0, "occurrence_count": 0, "question_count": 0},
+            "terms": [],
+        }
+
+    try:
+        cache_key = (kind, path.stat().st_mtime_ns)
+    except Exception:
+        cache_key = (kind, 0)
+
+    try:
+        cached = DICT_EXAM_DATASET_CACHE.get(cache_key)
+    except Exception:
+        cached = None
+    if cached is not None:
+        return cached
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return {
+            "kind": kind,
+            "available": False,
+            "label": label_map[kind],
+            "coverage": {"notes": [f"运行时数据读取失败：{e}"]},
+            "stats": {"term_count": 0, "occurrence_count": 0, "question_count": 0},
+            "terms": [],
+        }
+
+    if not isinstance(payload, dict):
+        payload = {}
+    payload.setdefault("kind", kind)
+    payload.setdefault("label", label_map[kind])
+    payload.setdefault("available", bool(payload.get("terms")))
+    payload.setdefault("coverage", {"notes": []})
+    payload.setdefault("stats", {"term_count": 0, "occurrence_count": 0, "question_count": 0})
+    payload.setdefault("question_docs", {})
+    payload.setdefault("terms", [])
+
+    try:
+        DICT_EXAM_DATASET_CACHE[cache_key] = payload
+    except Exception:
+        pass
+    return payload
+
+
+def _load_dict_exam_xuci_details_payload() -> dict:
+    path = DICT_EXAM_XUCI_DETAILS_PATH
+    if not path.exists():
+        return {"available": False, "terms": {}, "term_count": 0}
+
+    try:
+        cache_key = ("xuci_details", path.stat().st_mtime_ns)
+    except Exception:
+        cache_key = ("xuci_details", 0)
+
+    try:
+        cached = DICT_EXAM_DATASET_CACHE.get(cache_key)
+    except Exception:
+        cached = None
+    if cached is not None:
+        return cached
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return {
+            "available": False,
+            "terms": {},
+            "term_count": 0,
+            "error": f"运行时数据读取失败：{e}",
+        }
+
+    if not isinstance(payload, dict):
+        payload = {}
+    payload.setdefault("available", bool(payload.get("terms")))
+    payload.setdefault("terms", {})
+    payload.setdefault("term_count", len(payload.get("terms") or {}))
+
+    try:
+        DICT_EXAM_DATASET_CACHE[cache_key] = payload
+    except Exception:
+        pass
+    return payload
+
+
+def _load_dict_exam_xuci_detail(headword: str) -> dict:
+    clean_headword = _clean_query_text(headword)
+    if not clean_headword:
+        return {"available": False, "headword": headword, "detail": None}
+
+    payload = _load_dict_exam_xuci_details_payload()
+    terms = payload.get("terms") or {}
+    detail = terms.get(clean_headword)
+    if not isinstance(detail, dict):
+        return {"available": False, "headword": clean_headword, "detail": None}
+    return {
+        "available": True,
+        "headword": clean_headword,
+        "detail": detail,
+        "built_at": payload.get("built_at"),
+    }
+
+
+def _load_dict_exam_term(kind: str, headword: str) -> tuple[dict, dict | None]:
+    payload = _load_dict_exam_dataset(kind)
+    clean_headword = _clean_query_text(headword)
+    if not clean_headword:
+        return payload, None
+
+    for item in payload.get("terms") or []:
+        if not isinstance(item, dict):
+            continue
+        term_headword = _clean_query_text(item.get("headword"))
+        if term_headword == clean_headword:
+            return payload, item
+    return payload, None
+
+
+def _load_exam_question_row(con, title: str | None, year: int | None, category: str | None):
+    clean_title = str(title or "").strip()
+    if not clean_title:
+        return None
+    rows = con.execute(
+        """
+        SELECT id, title, year, category, text, answer
+        FROM chunks
+        WHERE source = 'gaokao'
+          AND subject = '语文'
+          AND title = ?
+        ORDER BY year DESC, id DESC
+        LIMIT 8
+        """,
+        (clean_title,),
+    ).fetchall()
+    if not rows:
+        return None
+
+    def _row_score(row) -> int:
+        score = 0
+        if clean_title and str(row["title"] or "").strip() == clean_title:
+            score += 12
+        if year is not None and row["year"] == year:
+            score += 8
+        if category and str(row["category"] or "").strip() == category:
+            score += 4
+        return score
+
+    return max(rows, key=_row_score)
+
+
+def _build_exam_question_fallback(occurrences: list[dict], headword: str) -> str:
+    snippets = []
+    seen = set()
+    for item in occurrences:
+        excerpt = _normalize_multiline_text(item.get("excerpt"))
+        if not excerpt:
+            continue
+        compact = _compact_query_text(excerpt)
+        if compact in seen:
+            continue
+        seen.add(compact)
+        snippets.append(excerpt)
+        if len(snippets) >= 6:
+            break
+    if not snippets:
+        return f"当前仅保留到「{headword}」的题目片段，真题全文待补。"
+    return "当前未命中真题全文缓存，以下为该题相关片段：\n\n" + "\n".join(snippets)
+
+
+def _load_dict_exam_questions(kind: str, headword: str) -> dict:
+    clean_headword = _clean_query_text(headword)
+    if not clean_headword:
+        return {"available": False, "kind": kind, "headword": headword, "questions": [], "years": []}
+
+    payload, term = _load_dict_exam_term(kind, clean_headword)
+    if not term:
+        return {
+            "available": False,
+            "kind": kind,
+            "headword": clean_headword,
+            "questions": [],
+            "years": [],
+            "built_at": payload.get("built_at"),
+        }
+
+    grouped: dict[str, dict] = {}
+    for raw_item in term.get("occurrences") or []:
+        if not isinstance(raw_item, dict):
+            continue
+        title = str(raw_item.get("title") or "").strip()
+        category = str(raw_item.get("category") or "").strip()
+        year = raw_item.get("year")
+        try:
+            year_int = int(year) if year is not None else None
+        except Exception:
+            year_int = None
+        paper_key = str(raw_item.get("paper_key") or "").strip()
+        question_key = paper_key or f"{title}|{year_int or ''}|{category}"
+        bucket = grouped.setdefault(
+            question_key,
+            {
+                "question_key": question_key,
+                "paper_key": paper_key or None,
+                "title": title,
+                "year": year_int,
+                "category": category,
+                "paper": str(raw_item.get("paper") or "").strip() or None,
+                "scope_labels": set(),
+                "question_numbers": set(),
+                "glosses": set(),
+                "occurrences": [],
+            },
+        )
+        scope_label = str(raw_item.get("scope_label") or "").strip()
+        if scope_label:
+            bucket["scope_labels"].add(scope_label)
+        try:
+            question_number = int(raw_item.get("question_number"))
+        except Exception:
+            question_number = None
+        if question_number is not None:
+            bucket["question_numbers"].add(question_number)
+        gloss = _normalize_text_line(raw_item.get("gloss"))
+        if gloss:
+            bucket["glosses"].add(gloss)
+        bucket["occurrences"].append(
+            {
+                "scope_label": scope_label,
+                "question_number": question_number,
+                "question_subtype": str(raw_item.get("question_subtype") or "").strip() or None,
+                "option_label": str(raw_item.get("option_label") or "").strip() or None,
+                "gloss": gloss or None,
+                "excerpt": _normalize_multiline_text(raw_item.get("excerpt")),
+            }
+        )
+
+    question_docs = payload.get("question_docs") or {}
+    questions: list[dict] = []
+    con = get_db()
+    try:
+        for item in grouped.values():
+            doc = question_docs.get(item.get("paper_key") or "")
+            text = ""
+            answer = ""
+            source_mode = "runtime_excerpt_fallback"
+            if isinstance(doc, dict):
+                text = _normalize_multiline_text(doc.get("text"))[:DICT_EXAM_QUESTION_TEXT_LIMIT]
+                answer = _normalize_multiline_text(doc.get("answer"))[:DICT_EXAM_QUESTION_TEXT_LIMIT]
+                source_mode = str(doc.get("source_mode") or "bundled_runtime_question")
+            if not text:
+                row = _load_exam_question_row(con, item.get("title"), item.get("year"), item.get("category"))
+                text = _normalize_multiline_text(row["text"])[:DICT_EXAM_QUESTION_TEXT_LIMIT] if row and row["text"] else ""
+                answer = _normalize_multiline_text(row["answer"])[:DICT_EXAM_QUESTION_TEXT_LIMIT] if row and row["answer"] else ""
+                if text:
+                    source_mode = "gaokao_chunks_db"
+            if not text:
+                text = _build_exam_question_fallback(item["occurrences"], clean_headword)
+            questions.append(
+                {
+                    "question_key": item["question_key"],
+                    "paper_key": item["paper_key"],
+                    "title": item["title"],
+                    "year": item["year"],
+                    "category": item["category"],
+                    "paper": item["paper"],
+                    "scope_labels": sorted(item["scope_labels"]),
+                    "question_numbers": sorted(item["question_numbers"]),
+                    "glosses": sorted(item["glosses"]),
+                    "occurrence_count": len(item["occurrences"]),
+                    "occurrences": item["occurrences"],
+                    "source_mode": source_mode,
+                    "text": text,
+                    "answer": answer or None,
+                }
+            )
+    finally:
+        con.close()
+
+    questions.sort(
+        key=lambda item: (
+            -(item.get("year") or 0),
+            item.get("title") or "",
+            item.get("question_key") or "",
+        )
+    )
+    years = sorted({int(item["year"]) for item in questions if item.get("year") is not None}, reverse=True)
+    return {
+        "available": bool(questions),
+        "kind": kind,
+        "headword": clean_headword,
+        "questions": questions,
+        "years": years,
+        "built_at": payload.get("built_at"),
+    }
 
 
 def _format_chat_history_lines(history: list[dict] | None) -> list[str]:
@@ -4773,6 +5105,62 @@ def _get_dict_db() -> Optional[sqlite3.Connection]:
     return con
 
 
+def _get_moe_revised_db() -> Optional[sqlite3.Connection]:
+    if not DICT_MOE_REVISED_DB_PATH.exists() or DICT_MOE_REVISED_DB_PATH.stat().st_size <= 0:
+        return None
+    con = sqlite3.connect(
+        DICT_MOE_REVISED_DB_PATH,
+        check_same_thread=False,
+        timeout=SQLITE_CONNECT_TIMEOUT_SEC,
+    )
+    con.row_factory = sqlite3.Row
+    con.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+    return con
+
+
+def _load_moe_revised_metadata() -> dict:
+    con = _get_moe_revised_db()
+    if con is None:
+        return {
+            "available": False,
+            "label": "教育部《重编国语辞典修订本》",
+            "description": "教育部授权数据包尚未导入站内结果区。",
+            "license": "CC BY-ND 3.0 TW",
+        }
+    try:
+        rows = con.execute("SELECT key, value FROM metadata").fetchall()
+    except sqlite3.DatabaseError:
+        con.close()
+        return {
+            "available": False,
+            "label": "教育部《重编国语辞典修订本》",
+            "description": "教育部授权数据包读取失败。",
+            "license": "CC BY-ND 3.0 TW",
+        }
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+    payload = {}
+    for row in rows:
+        key = row["key"]
+        raw_value = row["value"]
+        try:
+            payload[key] = json.loads(raw_value)
+        except Exception:
+            payload[key] = raw_value
+    payload.setdefault("available", True)
+    payload.setdefault("label", "教育部《重编国语辞典修订本》")
+    payload.setdefault(
+        "description",
+        "本典为一部历史语言辞典，记录中古至现代各类词语，并大量引用古典文献书证，字音部分则兼收现代及传统音读。",
+    )
+    payload.setdefault("license", "CC BY-ND 3.0 TW")
+    return payload
+
+
 def _dict_book_page_offset(dict_source: str) -> int:
     meta = DICT_SOURCE_META.get(dict_source, {})
     return max(0, int(meta.get("book_page_offset") or 0))
@@ -5108,6 +5496,105 @@ def _build_dict_db_entries(clean_q: str, limit: int) -> list[dict]:
         return [_build_dict_entry_payload(row) for row in rows[:limit]]
     finally:
         con.close()
+
+
+def _search_moe_revised_entries(clean_q: str, limit: int) -> dict:
+    metadata = _load_moe_revised_metadata()
+    con = _get_moe_revised_db()
+    if con is None:
+        return {
+            "available": False,
+            "source_id": "moe_revised",
+            "label": metadata.get("label"),
+            "description": metadata.get("description"),
+            "license": metadata.get("license"),
+            "entries": [],
+            "source_mode": "unavailable",
+        }
+
+    compact_q = _compact_query_text(clean_q)
+    seen = set()
+    entries = []
+
+    def append_rows(rows: list[sqlite3.Row], match_mode: str):
+        for row in rows:
+            row_id = row["id"]
+            if row_id in seen:
+                continue
+            seen.add(row_id)
+            headword = row["headword"] or clean_q
+            entries.append(
+                {
+                    "id": row_id,
+                    "headword": headword,
+                    "bopomofo": row["bopomofo"] or "",
+                    "pinyin": row["pinyin"] or "",
+                    "content_text": row["content_text"] or "",
+                    "match_mode": match_mode,
+                    "dict_label": metadata.get("label", "教育部《重编国语辞典修订本》"),
+                    "license": metadata.get("license", "CC BY-ND 3.0 TW"),
+                    "source_url": _build_moe_search_url("dict.revised.moe.edu.tw", headword),
+                }
+            )
+
+    try:
+        exact_rows = con.execute(
+            """
+            SELECT id, headword, bopomofo, pinyin, content_text
+            FROM entries
+            WHERE headword_norm = ?
+            ORDER BY LENGTH(headword) ASC, id ASC
+            LIMIT ?
+            """,
+            (compact_q, limit),
+        ).fetchall()
+        append_rows(exact_rows, "exact_headword")
+
+        if len(entries) < limit:
+            prefix_rows = con.execute(
+                """
+                SELECT id, headword, bopomofo, pinyin, content_text
+                FROM entries
+                WHERE headword_norm LIKE ?
+                ORDER BY
+                    CASE WHEN headword_norm = ? THEN 0 ELSE 1 END,
+                    LENGTH(headword) ASC,
+                    id ASC
+                LIMIT ?
+                """,
+                (f"{compact_q}%", compact_q, max(limit * 2, 8)),
+            ).fetchall()
+            append_rows(prefix_rows, "prefix_headword")
+
+        if len(entries) < limit:
+            like_rows = con.execute(
+                """
+                SELECT id, headword, bopomofo, pinyin, content_text
+                FROM entries
+                WHERE headword_norm LIKE ?
+                ORDER BY LENGTH(headword) ASC, id ASC
+                LIMIT ?
+                """,
+                (f"%{compact_q}%", max(limit * 2, 8)),
+            ).fetchall()
+            append_rows(like_rows, "fuzzy_headword")
+    finally:
+        con.close()
+
+    source_mode = "sqlite_exact" if entries else "sqlite_miss"
+    return {
+        "available": bool(entries),
+        "source_id": "moe_revised",
+        "label": metadata.get("label", "教育部《重编国语辞典修订本》"),
+        "description": metadata.get("description"),
+        "license": metadata.get("license", "CC BY-ND 3.0 TW"),
+        "download_page": metadata.get("download_page"),
+        "built_at": metadata.get("built_at"),
+        "term_count": metadata.get("term_count") or 0,
+        "row_count": metadata.get("row_count") or 0,
+        "source_mode": source_mode,
+        "entries": entries[:limit],
+    }
 
 
 def _book_page_url(book_key: str | None, page: int | None) -> Optional[str]:
@@ -5652,7 +6139,7 @@ def _build_external_reference_payload(query: str) -> dict:
             "match_mode": "exact_term",
             "integration_mode": "deep_link",
             "priority": 1,
-            "summary": "官方大型国语辞典，适合核对本义、书证和历史用法。后续建议用教育部授权包做站内镜像检索。",
+            "summary": "官方大型国语辞典，适合核对本义、书证和历史用法。本站查典页已补只读结果区，这里保留官方原站入口。",
             "url": _build_moe_search_url("dict.revised.moe.edu.tw", compact_query),
             "action_label": "打开重编",
         },
@@ -6544,6 +7031,26 @@ def dict_search(
     }
 
 
+@app.get("/api/dict/moe-revised")
+def dict_moe_revised(
+    q: str = Query(..., min_length=1, max_length=40),
+    limit: int = Query(6, ge=1, le=20),
+):
+    clean_q = _clean_query_text(q)
+    if not clean_q:
+        raise HTTPException(400, "Invalid query")
+    payload = _search_moe_revised_entries(clean_q, limit)
+    payload.update(
+        {
+            "query": q,
+            "query_kind": "single_char" if _is_single_hanzi_query(clean_q) else "term",
+            "display_mode": "read_only_cards",
+            "integration_mode": "local_read_only",
+        }
+    )
+    return payload
+
+
 @app.get("/api/dict/references")
 def dict_references(
     q: str = Query(..., min_length=1, max_length=40),
@@ -6559,6 +7066,31 @@ def dict_references(
 @app.get("/api/dict/status")
 def dict_status():
     return _build_dict_status_payload()
+
+
+@app.get("/api/dict/exam/xuci")
+def dict_exam_xuci():
+    return _load_dict_exam_dataset("xuci")
+
+
+@app.get("/api/dict/exam/shici")
+def dict_exam_shici():
+    return _load_dict_exam_dataset("shici")
+
+
+@app.get("/api/dict/exam/xuci-detail")
+def dict_exam_xuci_detail(
+    headword: str = Query(..., min_length=1, max_length=8),
+):
+    return _load_dict_exam_xuci_detail(headword)
+
+
+@app.get("/api/dict/exam/questions")
+def dict_exam_questions(
+    kind: str = Query(..., pattern="^(xuci|shici)$"),
+    headword: str = Query(..., min_length=1, max_length=8),
+):
+    return _load_dict_exam_questions(kind, headword)
 
 
 @app.get("/api/dict/textbook")

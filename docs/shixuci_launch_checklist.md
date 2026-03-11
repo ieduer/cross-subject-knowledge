@@ -6,6 +6,11 @@
   - `/dict.html`
   - `GET /api/dict/status`
   - `GET /api/dict/search`
+  - `GET /api/dict/moe-revised`
+  - `GET /api/dict/exam/xuci`
+  - `GET /api/dict/exam/shici`
+  - `GET /api/dict/exam/questions`
+  - `GET /api/dict/exam/xuci-detail`
   - `GET /api/dict/textbook`
   - `GET /api/dict/gaokao`
   - `GET /api/dict/references`
@@ -20,35 +25,83 @@
 - `changyong` 当前唯一单字头覆盖率约 `82.03%`
   - 这不是错页问题，是“部分字头暂未覆盖”
   - 前端空状态与外部参考兜底逻辑已存在
+- OCR 详情层当前状态：
+  - `dict_exam_xuci_details.json` 与 `/api/dict/exam/xuci-detail` 保留
+  - 但因识别质量未达上线标准，前端暂未启用 OCR 提要 / 义项 / 思维导图展示
+  - 当前真题页只启用原图、教育部修订本原文、教材例句与年度真题全文
+- `2026-03-11 14:05 UTC` 生产已完成 clean release 修复：
+  - 当前镜像：`textbook-knowledge:build-36617c8-20260311_140512`
+  - 手动回滚锚点：`textbook-knowledge:manual-pre-r30-20260311_0705`
+  - 当前公开前端版本：`2026.03.11-r30`
+  - 主站搜索结果已重新返回非空 `page_url`
+  - `https://img.rdfzer.com/pages/47e3538c5b76/p12.webp` 与 `https://img.rdfzer.com/pages/dict_xuci/p844.webp` 现场抽查均返回 `200`
 
-## 当前阻塞项
+## 当前剩余风险
 
-### 阻塞 1：馆藏辞典页图 CDN 仍未上线
+### 风险 1：OCR 详情层仍处于保留未启用状态
 
-当前抽查全部返回 `404`：
+当前线上页面已经切到“原图 / 原文优先”：
 
-- `https://img.rdfzer.com/pages/dict_xuci/p188.webp`
-- `https://img.rdfzer.com/pages/dict_xuci/p844.webp`
-- `https://img.rdfzer.com/pages/dict_changyong/p99.webp`
-- `https://img.rdfzer.com/pages/dict_changyong/p101.webp`
+- 真题虚词 / 真题实词详情页只展示：
+  - 年份分布
+  - 年度真题全文
+  - 教材例句与原图
+  - 两本馆藏辞典原图
+  - 教育部修订本原文
+- 年度真题全文当前已随运行时考表 JSON 打包
+  - 不再依赖生产 `gaokao` 库回查全文
+- `dict_exam_xuci_details.json` 与 `/api/dict/exam/xuci-detail` 继续保留
+- 待人工校对并提供精确替换版本后，再恢复 OCR 义项层
+
+### 风险 2：`HEAD /dict.html` 仍返回 `405`
+
+当前线上：
+
+- `GET /dict.html` 正常返回 `200`
+- `HEAD /dict.html` 返回 `405 Method Not Allowed`
 
 结论：
 
-- 代码与页码索引已就绪
-- 但学生端上线后会看到“页图待导入”或加载失败
-- 在页图上传到 R2/CDN 之前，不能算可上线状态
+- 页面本身已可用
+- 但运维或外部监控探针若使用 `HEAD`，会误判失败
+- 当前应统一改用 `GET` 作为页面可用性检查
 
-### 阻塞 2：生产环境尚未部署新页面与新数据
+### 风险 3：前端仍保留未启用的 OCR 详情渲染代码
 
-当前只完成本地代码、索引和质检。
+当前状态：
 
-仍未确认：
+- `frontend/assets/dict.js` 仍保留 `renderExamXuciDetailSupplement()` 与 `loadExamXuciDetail()`
+- 但页面已无 `exam-xuci-supplement` 挂载点，也没有启用调用链
 
-- 生产后端是否已加载新 `main.py`
-- 生产前端是否已提供 `/dict.html`
-- 生产数据目录是否已同步：
-  - `dict_headword_pages.json`
-  - `dict_headword_qc.json`
+结论：
+
+- 这不是当前线上功能问题
+- 但后续若有人直接恢复挂载点，旧 OCR 文本 UI 会重新暴露
+- 在人工校对版未到位前，不应恢复这条渲染链
+
+### 风险 4：主站原图链路依赖 `book_map.json` 随镜像进包
+
+`frontend/assets/pages/book_map.json` 当前是主站“查看原文”恢复的关键文件：
+
+- 页面图片本身仍在 CDN
+- 但 live `page_url` 生成仍依赖镜像内的 `book_map.json`
+- 若未来 clean release 漏掉该文件，即使 CDN 图片仍存在，主站也会再次退化成 `page_url=null`
+
+### 风险 5：`latest` 不能视为天然回滚锚点
+
+本轮事故暴露出：
+
+- 运行中的容器镜像
+- `textbook-knowledge:latest`
+- 最近一次 `pre-*` 备份标签
+
+这三者不一定始终指向同一份镜像。
+
+结论：
+
+- 手工发布前必须先核对运行中容器的 image digest
+- 若需要人工回滚锚点，应先手动 tag 运行中 digest
+- 不能直接把 `latest` 当作“当前线上版本”
 
 ## 本轮核查覆盖范围
 
@@ -60,6 +113,7 @@
 - `/dict.html` 页面结构：
   - 教材
   - 馆藏辞典原页
+  - 教育部修订本只读结果区
   - 官方与外部参考
   - 真题
   - AI 多轮对话
@@ -83,6 +137,9 @@
 - `dict/search` 当前优先走：
   - `dict_headword_pages.json`
   - 再回退 `dictionary_index.db`
+- `dict/moe-revised` 当前走：
+  - 教育部《重编国语辞典修订本》授权包本地 SQLite
+  - 学生端只读展示，不改写原文
 - `dict/references` 已接：
   - 教育部《重编国语辞典修订本》
   - 教育部《国语辞典简编本》
@@ -119,6 +176,7 @@
 
 - `/Users/ylsuen/textbook_ai_migration/data/index/dict_headword_pages.json`
 - `/Users/ylsuen/textbook_ai_migration/data/index/dict_headword_qc.json`
+- `/Users/ylsuen/textbook_ai_migration/data/index/dict_moe_revised.db`
 
 建议一并留档：
 
@@ -160,6 +218,12 @@
 ```bash
 curl -sS https://sun.bdfz.net/api/dict/status
 curl -sS "https://sun.bdfz.net/api/dict/search?q=之"
+curl -sS "https://sun.bdfz.net/api/dict/moe-revised?q=之"
+curl -sS "https://sun.bdfz.net/api/dict/exam/xuci"
+curl -sS "https://sun.bdfz.net/api/dict/exam/shici"
+curl -sS "https://sun.bdfz.net/api/dict/exam/questions?kind=xuci&headword=以"
+curl -sS "https://sun.bdfz.net/api/dict/exam/questions?kind=shici&headword=道"
+curl -sS "https://sun.bdfz.net/api/dict/exam/xuci-detail?headword=之"
 curl -sS "https://sun.bdfz.net/api/dict/search?q=觇"
 curl -sS "https://sun.bdfz.net/api/dict/search?q=长"
 curl -sS "https://sun.bdfz.net/api/dict/search?q=所以"
@@ -174,6 +238,11 @@ curl -sS "https://sun.bdfz.net/api/dict/page-images?dict_source=xuci&page=188&co
 
 - `status` 返回 `enabled_sources` 包含 `xuci, changyong`
 - `search?q=之` 返回 `changyong + xuci`
+- `moe-revised?q=之` 返回教育部修订本本地只读结果
+- `exam/xuci` 与 `exam/shici` 返回真题词表 JSON
+- `exam/questions?kind=xuci&headword=以` 返回按年份聚合的真题全文
+- `exam/questions?kind=shici&headword=道` 返回实词真题全文
+- `exam/xuci-detail?headword=之` 返回保留中的 OCR 详情层 JSON
 - `search?q=觇` 返回 `changyong`
 - `search?q=所以` 返回 `xuci`
 - `references?q=斯民` 返回外部参考卡片
@@ -210,6 +279,7 @@ curl -sSI https://img.rdfzer.com/pages/dict_changyong/p101.webp
 - 页面能打开 `/dict.html`
 - 左栏教材只出现古文 / 古诗词
 - 右栏馆藏辞典能打开正确页图
+- 右栏教育部修订本能看到只读原文结果，并能打开教育部原站
 - `之` 同时能看到王力本和虚词本
 - `斯民` 在馆藏未命中时，右栏外部参考正常出现
 - 真题区正常返回
@@ -241,10 +311,11 @@ curl -sSI https://img.rdfzer.com/pages/dict_changyong/p101.webp
 - 代码：`GO`
 - 数据索引：`GO`
 - 质检：`GO`
-- 生产上线：`NO-GO`
+- 生产上线：`GO`
 
-当前唯一明确阻塞项是：
+当前无硬阻塞项。
 
-- 馆藏辞典页图尚未上传到生产 CDN
+当前仅有两项已知剩余风险：
 
-在这一步完成之前，不建议部署。
+- OCR 详情层因识别质量问题暂不启用
+- 监控探针需使用 `GET /dict.html`，不要使用 `HEAD`

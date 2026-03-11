@@ -16,8 +16,8 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&family=Noto+Serif+SC:wght@400;600;700&display=swap"
         rel="stylesheet">
-    <link rel="stylesheet" href="assets/style.css?v=20260310j">
-    <link rel="stylesheet" href="assets/dict.css?v=20260310j">
+    <link rel="stylesheet" href="assets/style.css?v=20260311k">
+    <link rel="stylesheet" href="assets/dict.css?v=20260311g">
 </head>
 
 <body class="dict-page">
@@ -50,6 +50,11 @@
                 </div>
             </section>
 
+            <section class="dict-mode-switch" aria-label="实虚词典模式切换">
+                <button class="dict-mode-btn active" type="button" data-dict-mode="lookup">查典</button>
+                <button class="dict-mode-btn" type="button" data-dict-mode="exam-xuci">真题虚词</button>
+                <button class="dict-mode-btn" type="button" data-dict-mode="exam-shici">真题实词</button>
+            </section>
 
 
             <section id="dict-empty" class="dict-empty">
@@ -62,6 +67,40 @@
                     <button class="dict-suggestion" type="button" data-dict-suggestion="焉">焉</button>
                     <button class="dict-suggestion" type="button" data-dict-suggestion="哉">哉</button>
                 </div>
+            </section>
+
+            <section id="exam-xuci-view" class="dict-results hidden">
+                <article class="dict-panel dict-panel-wide">
+                    <div class="dict-panel-head">
+                        <h2>真题虚词</h2>
+                        <span id="exam-xuci-count" class="dict-count">0</span>
+                    </div>
+                    <div class="dict-exam-meta">
+                        <div id="exam-xuci-coverage" class="dict-exam-coverage"></div>
+                        <div id="exam-xuci-stats" class="dict-exam-stats"></div>
+                    </div>
+                    <div class="dict-exam-shell">
+                        <div id="exam-xuci-list" class="dict-exam-list"></div>
+                        <div id="exam-xuci-detail" class="dict-exam-detail"></div>
+                    </div>
+                </article>
+            </section>
+
+            <section id="exam-shici-view" class="dict-results hidden">
+                <article class="dict-panel dict-panel-wide">
+                    <div class="dict-panel-head">
+                        <h2>真题实词</h2>
+                        <span id="exam-shici-count" class="dict-count">0</span>
+                    </div>
+                    <div class="dict-exam-meta">
+                        <div id="exam-shici-coverage" class="dict-exam-coverage"></div>
+                        <div id="exam-shici-stats" class="dict-exam-stats"></div>
+                    </div>
+                    <div class="dict-exam-shell">
+                        <div id="exam-shici-list" class="dict-exam-list"></div>
+                        <div id="exam-shici-detail" class="dict-exam-detail"></div>
+                    </div>
+                </article>
             </section>
 
             <section id="dict-results" class="dict-results hidden">
@@ -81,6 +120,14 @@
                                 <span id="dict-count" class="dict-count">0</span>
                             </div>
                             <div id="dict-entries" class="dict-panel-body"></div>
+                        </article>
+
+                        <article class="dict-panel">
+                            <div class="dict-panel-head">
+                                <h2>教育部修订本</h2>
+                                <span id="moe-count" class="dict-count">0</span>
+                            </div>
+                            <div id="moe-results" class="dict-panel-body"></div>
                         </article>
                     </div>
                 </div>
@@ -132,7 +179,7 @@
             </div>
         </footer>
     </div>
-    <script src="assets/dict.js?v=20260310j"></script>
+    <script src="assets/dict.js?v=20260311g"></script>
 </body>
 
 </html>

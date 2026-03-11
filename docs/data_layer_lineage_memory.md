@@ -1303,6 +1303,8 @@ After deployment:
 4. confirm supplemental vector loaded state matches the release goal
 5. if page-image scope changed, sample `/api/page-image` for one newly covered supplemental edition and one still-uncovered supplemental-only edition
 6. rerun the regression queries above against live production
+7. if the rollout touches frontend or page-image behavior, confirm the running container image digest is the intended rollback anchor; do not assume `textbook-knowledge:latest` still matches the running container after a manual rollback
+8. if the rollout touches “查看原文” behavior, verify the built image contains `/app/frontend/assets/pages/book_map.json` and that a representative live search result returns a non-null `page_url`
 
 ## Current actionable blockers for this round
 
@@ -1369,3 +1371,11 @@ Before any future update, read this document and explicitly confirm:
 - rollback artifact or previous release anchor
 
 If those six items are not written down, the change is not ready.
+
+## 2026-03-11 deployment incident note
+
+- Incident: a VPS-side manual release was built from the stale runtime repo instead of a clean local release source, and the resulting image lost `frontend/assets/pages/book_map.json`
+- User-facing symptom: live search results degraded to `page_url=null`, so main-site “查看原文” disappeared even though the frontend button code still existed
+- Misleading rollback detail: the previously accepted rollback image also lacked `book_map.json`, so “roll back to the accepted image” was not enough to restore page images
+- Fix that worked: ship a clean off-box release bundle containing the current frontend plus `frontend/assets/pages/book_map.json`, then deploy from that temporary release checkout
+- Guardrail for future manual work: when `latest` may have drifted, tag the running container image digest explicitly before cutover and verify `book_map.json` inside the built image before calling the release good

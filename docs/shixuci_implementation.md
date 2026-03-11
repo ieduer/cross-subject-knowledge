@@ -1,18 +1,69 @@
 # 实虚词典实施说明
 
+## 当前上线状态（2026-03-11）
+
+`/dict.html` 当前已经不是单一“查典页”，而是三模式并存：
+
+- `查典`
+- `真题虚词`
+- `真题实词`
+
+其中：
+
+- `查典` 模式继续保留教材 / 馆藏辞典原页 / 真题 / AI 学习助手主链路
+- `查典` 右栏已新增教育部《重编国语辞典修订本》只读结果区
+- `真题虚词 / 真题实词` 当前启用的是：
+  - 年份分布
+  - 年度真题全文展开
+  - 教材例句与原图
+  - 两本馆藏辞典原图
+  - 教育部《重编国语辞典修订本》原文
+- 年度真题全文当前已随 `dict_exam_xuci.json / dict_exam_shici.json` 一并打包到运行时数据
+  - 不再依赖生产 `gaokao` 库回查全文
+  - 可避免全国卷或部分实词条目退化为“只显示片段摘录”
+- `2026-03-11 14:05 UTC` 已完成一次基于 clean release 的生产修复
+  - 当前线上镜像：`textbook-knowledge:build-36617c8-20260311_140512`
+  - 当前前端版本：`2026.03.11-r30`
+  - 主站综合搜索的“查看原文”链路已恢复
+  - 修复点不是数据回滚，而是把正确的 `frontend/assets/pages/book_map.json` 连同当前前端一起重新装回镜像
+
+本轮同时保留但暂不前端启用：
+
+- `dict_exam_xuci_details.json`
+- `GET /api/dict/exam/xuci-detail`
+
+原因是两本馆藏辞典的 OCR 识别质量当前未达到学生端展示标准，待人工校对并提供精确替换版本后再恢复。
+
+## 当前已知风险（2026-03-11）
+
+- `HEAD /dict.html` 当前返回 `405 Method Not Allowed`
+  - 页面可用性检查需使用 `GET /dict.html`
+- `frontend/assets/dict.js` 内仍保留 OCR 详情层的旧渲染函数
+  - 当前页面没有挂载点，也没有调用链，不会对学生端生效
+  - 后续若恢复 OCR 层，必须以人工校对后的替换数据重新验收，不能直接重新接回旧 UI
+- 线上 `dict_moe_revised.db` 当前文件 SHA 与本地重建版不同
+  - 但已核对 `row_count=163916`、`headword_count=161136`，且 `之 / 焉` 抽样内容一致
+  - 这说明当前更接近“文件级漂移”而不是用户可见内容漂移
+  - 后续若要重发该库，需走显式数据工件同步，不要仅凭采样一致就跳过工件对账
+
 ## 结论
 
 `sun.bdfz.net` 已接入一个新的独立页面 `/dict.html`，并新增了对应的后端 API 骨架：
 
 - `GET /api/dict/search`
+- `GET /api/dict/moe-revised`
 - `GET /api/dict/textbook`
 - `GET /api/dict/gaokao`
+- `GET /api/dict/exam/xuci`
+- `GET /api/dict/exam/shici`
+- `GET /api/dict/exam/questions`
+- `GET /api/dict/exam/xuci-detail`
 - `GET /api/dict/page-images`
 - `POST /api/dict/chat`
 
-当前页面、API、教材/真题侧筛选、AI 多轮对话都已就位。
+当前页面、API、教材/真题侧筛选、真题词表区、教育部修订本只读结果区、AI 多轮对话都已就位。
 
-真正缺的只剩词典数据建库。现阶段不再按“三典同时落地”推进，而是先做严格质检，再只上线达到学生可用标准的来源。当前产品也不再保留拼音字段，学生端统一只展示原页图片，不直接展示 OCR 文字。
+两本馆藏辞典相关的数据建库和接口已存在，但基于 OCR 生成的虚词提要 / 义项 / 思维导图当前不启用。现阶段继续按“学生端优先展示原图和授权原文，不直接展示未校对 OCR 正文”的口径执行。
 
 ## 2026-03-07 页面升级方案
 

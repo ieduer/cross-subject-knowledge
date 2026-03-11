@@ -132,4 +132,6 @@ Docs-only pushes should not reach this deploy path. The workflow is expected to 
 - Production health must treat supplemental availability and reranker readiness as first-class rollout gates, not optional debug fields
 - The main corpus and supplemental index should be regenerated together whenever textbook mappings or book-key normalization changes
 - The production repo can contain hotfix history or manual changes, so deployment should always build from a clean release checkout rather than `git pull` into the runtime directory
+- Main-site “查看原文” behavior still depends on `frontend/assets/pages/book_map.json` being present in the clean release and inside the built image, even though the actual page images live on the CDN; if `book_map.json` is omitted, live search can degrade to `page_url=null`
 - Page-image sync to R2 must stage textbook page maps together with dictionary page trees such as `pages/dict_xuci/` and `pages/dict_changyong/`; a root-level `rclone sync` from textbook-only sources will delete existing dictionary page assets from R2
+- `textbook-knowledge:latest` is not a reliable rollback anchor after manual rollback or failed-cutover handling; before any manual deploy on the VPS, inspect the running container image digest and tag that digest explicitly if a human rollback point is needed
