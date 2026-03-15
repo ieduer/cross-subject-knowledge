@@ -2227,9 +2227,13 @@ def _build_textbook_search_filters(
     *,
     scope_subject: str | None = None,
     book_key: str | None = None,
+    phase: str | None = None,
 ) -> tuple[str, list]:
     where_extra = " AND (c.source = 'mineru' OR c.source IS NULL)"
     filter_params: list = []
+    if phase:
+        where_extra += " AND c.phase = ?"
+        filter_params.append(phase)
     if scope_subject:
         where_extra += " AND c.subject = ?"
         filter_params.append(scope_subject)
@@ -3721,6 +3725,7 @@ def _search_textbook_semantic_candidates(
     *,
     scope_subject: str | None = None,
     book_key: str | None = None,
+    phase: str | None = None,
     limit: int = 24,
 ) -> list[dict]:
     clean_query = _clean_query_text(query_text)
@@ -3729,8 +3734,10 @@ def _search_textbook_semantic_candidates(
     query_vec = _cached_query_embedding(clean_query)
     if query_vec is None:
         return []
+    # Oversample 3x (or 9x with phase filter) for post-filter precision
+    oversample = 3 if not phase else 9
     try:
-        distances, ids = faiss_index.search(query_vec, limit * 3)
+        distances, ids = faiss_index.search(query_vec, limit * oversample)
     except Exception:
         return []
 
@@ -3749,6 +3756,9 @@ def _search_textbook_semantic_candidates(
     placeholders = ",".join("?" for _ in ranked_ids)
     params = [item[0] for item in ranked_ids]
     where_parts = [f"c.id IN ({placeholders})", "(c.source = 'mineru' OR c.source IS NULL)"]
+    if phase:
+        where_parts.append("c.phase = ?")
+        params.append(phase)
     if scope_subject:
         where_parts.append("c.subject = ?")
         params.append(scope_subject)
@@ -4276,6 +4286,7 @@ def _collect_hybrid_search_rows(
     *,
     scope_subject: str | None = None,
     book_key: str | None = None,
+    phase: str | None = None,
     candidate_limit: int = 80,
 ) -> tuple[list[dict], dict]:
     query_profile = _build_precision_query_profile(query, query)
@@ -4283,6 +4294,7 @@ def _collect_hybrid_search_rows(
     textbook_where_extra, textbook_filter_params = _build_textbook_search_filters(
         scope_subject=scope_subject,
         book_key=book_key,
+        phase=phase,
     )
     lexical_limit = max(8, min(24, math.ceil(candidate_limit / max(1, min(len(term_plan), 4)))))
     supplemental_limit = max(12, min(SUPPLEMENTAL_FALLBACK_LIMIT, math.ceil(candidate_limit / 2)))
@@ -4332,6 +4344,7 @@ def _collect_hybrid_search_rows(
             semantic_query,
             scope_subject=scope_subject,
             book_key=book_key,
+            phase=phase,
             limit=max(8, min(18, math.ceil(candidate_limit / 3))),
         ):
             _append_precision_candidate(
@@ -6485,6 +6498,7 @@ def search(
                 query_analysis,
                 scope_subject=textbook_scope_subject,
                 book_key=book_key,
+                phase=phase,
                 candidate_limit=candidate_limit,
             )
             all_rows = list(hybrid_rows)
