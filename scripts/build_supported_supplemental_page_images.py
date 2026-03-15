@@ -18,10 +18,19 @@ import argparse
 import hashlib
 import json
 import re
+import sys
 from pathlib import Path
 
+# Import shared config
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_WORKSPACE_ROOT = _SCRIPT_DIR.parents[1]
+for _p in [str(_WORKSPACE_ROOT / "scripts"), str(_SCRIPT_DIR.parent / "backend")]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-ROOT = Path(__file__).resolve().parents[2]
+from textbook_config import edition_ok
+
+ROOT = _WORKSPACE_ROOT
 PLATFORM_ROOT = ROOT / "platform"
 BACKUP_ROOT = ROOT / "data" / "mineru_output_backup"
 BOOK_MAP_PATH = PLATFORM_ROOT / "frontend" / "assets" / "pages" / "book_map.json"
@@ -34,14 +43,9 @@ WEBP_QUALITY = 60
 PAGE_NUMBER_RE = re.compile(r"^[\s\.]*\d+[\s\.]*$")
 
 
-def _is_supported_runtime_edition(subject: str | None, edition: str | None) -> bool:
-    normalized_subject = str(subject or "").strip()
-    normalized_edition = str(edition or "").strip()
-    return (
-        normalized_edition == "人教版"
-        or (normalized_subject == "英语" and normalized_edition == "北师大版")
-        or (normalized_subject == "化学" and normalized_edition == "鲁科版")
-    )
+def _is_supported_runtime_edition(subject: str | None, edition: str | None, phase: str = "高中") -> bool:
+    """Legacy wrapper — delegates to textbook_config.edition_ok()."""
+    return edition_ok(phase, str(subject or "").strip(), str(edition or "").strip())
 
 
 def _load_json(path: Path) -> dict:

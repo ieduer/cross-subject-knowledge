@@ -86,6 +86,16 @@ if [ "${RUNTIME_DB_SYNC_MODE}" != "disabled" ]; then
   exit 1
 fi
 
+# ── Fail-fast: textbook_config.py consistency ──────────────────────────
+WORKSPACE_ROOT="$(dirname "${SOURCE_ROOT}")"
+if [ -f "${WORKSPACE_ROOT}/scripts/textbook_config.py" ]; then
+  if ! diff --quiet "${WORKSPACE_ROOT}/scripts/textbook_config.py" "${SOURCE_ROOT}/backend/textbook_config.py" 2>/dev/null; then
+    echo "ERROR: platform/backend/textbook_config.py is out of sync with scripts/textbook_config.py"
+    echo "Run: scripts/sync_shared_config.sh"
+    exit 1
+  fi
+fi
+
 install_if_distinct() {
   local src="${1:?src_required}"
   local dst="${2:?dst_required}"

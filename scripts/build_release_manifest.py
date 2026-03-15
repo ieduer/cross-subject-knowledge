@@ -50,6 +50,7 @@ SOURCE_ASSETS = (
     "backend/entrypoint.sh",
     "backend/preflight.py",
     "backend/sync_db.py",
+    "backend/textbook_config.py",
     "backend/textbook_classics_manifest.json",
     "backend/textbook_version_manifest.json",
     "backend/xuci_single_char_index.json",
@@ -202,6 +203,25 @@ def sqlite_row_count(path: Path, query: str) -> int | None:
         conn.close()
 
 
+def verify_textbook_config_sync() -> None:
+    """Fail-fast if scripts/textbook_config.py and platform/backend/textbook_config.py diverge."""
+    import filecmp
+    canonical = WORKSPACE_ROOT / "scripts" / "textbook_config.py"
+    synced = PLATFORM_ROOT / "backend" / "textbook_config.py"
+    if not canonical.exists():
+        raise FileNotFoundError(f"Missing canonical textbook_config.py: {canonical}")
+    if not synced.exists():
+        raise FileNotFoundError(
+            f"Missing synced textbook_config.py: {synced}\n"
+            f"Run: scripts/sync_shared_config.sh"
+        )
+    if not filecmp.cmp(canonical, synced, shallow=False):
+        raise RuntimeError(
+            f"FATAL: {synced} is out of sync with {canonical}.\n"
+            f"Run: scripts/sync_shared_config.sh"
+        )
+
+
 def build_manifest() -> dict[str, object]:
     source_assets = [
         file_entry("source", rel_path, PLATFORM_ROOT / rel_path)
@@ -257,6 +277,7 @@ def build_manifest() -> dict[str, object]:
 
 def main() -> None:
     args = parse_args()
+    verify_textbook_config_sync()
     manifest = build_manifest()
     args.output.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",

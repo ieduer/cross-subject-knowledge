@@ -32,6 +32,7 @@ RELEASE_FILES = (
     "backend/supplemental_textbook_pages.jsonl.gz",
     "backend/supplemental_textbook_pages.manifest.json",
     "backend/sync_db.py",
+    "backend/textbook_config.py",
     "backend/textbook_classics_manifest.json",
     "backend/textbook_version_manifest.json",
     "backend/xuci_single_char_index.json",
@@ -153,8 +154,29 @@ def write_archive(source_dir: Path, archive_path: Path, overwrite: bool) -> None
         tar.add(source_dir, arcname=".")
 
 
+def verify_textbook_config_sync() -> None:
+    """Fail-fast if scripts/textbook_config.py and platform/backend/textbook_config.py diverge."""
+    import filecmp
+    workspace_root = REPO_ROOT.parent
+    canonical = workspace_root / "scripts" / "textbook_config.py"
+    synced = REPO_ROOT / "backend" / "textbook_config.py"
+    if not canonical.exists():
+        raise FileNotFoundError(f"Missing canonical textbook_config.py: {canonical}")
+    if not synced.exists():
+        raise FileNotFoundError(
+            f"Missing synced textbook_config.py: {synced}\n"
+            f"Run: scripts/sync_shared_config.sh"
+        )
+    if not filecmp.cmp(canonical, synced, shallow=False):
+        raise RuntimeError(
+            f"FATAL: {synced} is out of sync with {canonical}.\n"
+            f"Run: scripts/sync_shared_config.sh"
+        )
+
+
 def main() -> None:
     args = parse_args()
+    verify_textbook_config_sync()
     output_dir = args.output_dir.resolve()
     ensure_clean_path(output_dir, args.overwrite)
     output_dir.mkdir(parents=True, exist_ok=True)

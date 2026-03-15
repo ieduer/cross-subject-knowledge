@@ -80,6 +80,11 @@ SUPPLEMENTAL_TEXTBOOK_INDEX_PATH = _resolve_data_asset("supplemental_textbook_pa
 SUPPLEMENTAL_TEXTBOOK_MANIFEST_PATH = _resolve_data_asset("supplemental_textbook_pages.manifest.json")
 SUPPLEMENTAL_VECTOR_INDEX_PATH = _resolve_data_asset("supplemental_textbook_pages.index")
 SUPPLEMENTAL_VECTOR_MANIFEST_PATH = _resolve_data_asset("supplemental_textbook_pages.vector.manifest.json")
+RAW_TEXTBOOK_OCR_INDEX_CANDIDATES = (
+    _resolve_data_asset("mineru_chunks.jsonl"),
+    _resolve_data_asset("mineru_chunks.next.jsonl"),
+    _resolve_data_asset("mineru_chunks.base_from_db.jsonl"),
+)
 BUNDLED_SUPPLEMENTAL_TEXTBOOK_INDEX_GZ_PATH = Path(__file__).with_name("supplemental_textbook_pages.jsonl.gz")
 BUNDLED_SUPPLEMENTAL_TEXTBOOK_INDEX_PATH = Path(__file__).with_name("supplemental_textbook_pages.jsonl")
 BUNDLED_SUPPLEMENTAL_TEXTBOOK_MANIFEST_PATH = Path(__file__).with_name("supplemental_textbook_pages.manifest.json")
@@ -738,36 +743,22 @@ except ImportError:
     pass
 
 
-SUBJECT_META = {
-    "语文": {"icon": "📖", "color": "#e74c3c"},
-    "数学": {"icon": "📐", "color": "#3498db"},
-    "英语": {"icon": "🌍", "color": "#2ecc71"},
-    "物理": {"icon": "⚛️", "color": "#9b59b6"},
-    "化学": {"icon": "🧪", "color": "#e67e22"},
-    "生物学": {"icon": "🧬", "color": "#1abc9c"},
-    "历史": {"icon": "📜", "color": "#f39c12"},
-    "地理": {"icon": "🗺️", "color": "#16a085"},
-    "思想政治": {"icon": "⚖️", "color": "#c0392b"},
-}
-
-EDITION_PATTERNS = (
-    ("A版", ("（A版）", "(A版)", " A版", "_A版_", " A 版", "人民教育出版社 ·北京· A版", "人民教育出版社A版")),
-    ("B版", ("（B版）", "(B版)", " B版", "_B版_", " B 版", "中学数学教材实验研究组", "数学（B版）", "数学(B版)")),
-    ("北师大版", ("北师大版", "北京师范大学出版社", "北京师范大学出版社高中数学编辑室", "王尚志", "保继光", "主编王蔷")),
-    ("冀教版", ("冀教版", "河北教育出版社")),
-    ("外研社版", ("外语教学与研究出版社", "外研社", "Foreign Language Teaching and Research Press", "陈琳")),
-    ("上外教版", ("上海外语教育出版社", "束定芳", "上海外国语大学")),
-    ("重大版", ("重庆大学出版社", "杨晓钰")),
-    ("沪教版", ("上海教育出版社", "上海教育出版社有限公司", "牛津大学出版社", "华东师范大学", "上海市中小学（幼儿园）课程改革委员会组织编写")),
-    ("沪科版", ("上海科学技术出版社", "上海科技教育出版社", "上海世纪出版", "麻生明", "陈寅", "束炳如", "何润伟")),
-    ("苏教版", ("苏教版", "江苏凤凰教育出版社", "江苏凤凰出版传媒", "葛军", "李善良", "王祖浩")),
-    ("鄂教版", ("湖北教育出版社", "武汉中远印务有限公司", "彭双阶", "胡典顺")),
-    ("湘教版", ("湖南教育出版社", "湖南出版中心", "张景中", "黄步高", "邹楚林", "邹伟华")),
-    ("鲁科版", ("鲁科版", "山东科学技术出版社", "总主编王磊陈光巨", "陈光巨")),
-    ("人教版", ("人民教育出版社", "人民教出版社", "人民都育出版社", "课程教材研究所", "人教版")),
-    ("中图版", ("中国地图出版社",)),
-    ("人民出版社版", ("人民出版社",)),
+from textbook_config import (
+    CANONICAL_SUBJECT_META,
+    SUBJECT_ALIASES,
+    EDITION_PATTERNS,
+    SERIES_PATTERNS,
+    normalize_subject,
+    display_subject as _display_subject,
+    subject_meta as _subject_meta_for_phase,
+    edition_ok,
+    catalog_visible,
+    search_enabled,
+    page_image_enabled,
 )
+
+# Back-compat alias: old code references SUBJECT_META
+SUBJECT_META = CANONICAL_SUBJECT_META
 
 REAL_CONTENT_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f-]{27}$", re.IGNORECASE)
 
@@ -1146,9 +1137,14 @@ def _extract_embedded_edition(title: str | None) -> str:
 
 def _parse_subject_from_title(title: str | None) -> str:
     normalized = unicodedata.normalize("NFKC", title or "")
-    for subject_name in SUBJECT_META:
+    # Check canonical subjects first
+    for subject_name in CANONICAL_SUBJECT_META:
         if subject_name in normalized:
             return subject_name
+    # Check aliases
+    for alias, canonical in SUBJECT_ALIASES.items():
+        if alias in normalized:
+            return canonical
     if "习近平新时代中国特色社会主义思想学生读本" in normalized:
         return "思想政治"
     return ""
@@ -1198,14 +1194,11 @@ def _with_edition(base_title: str, edition: str) -> str:
     return f"{cleaned_title}（{cleaned_edition}）"
 
 
-def _is_supported_runtime_edition(subject: str | None, edition: str | None) -> bool:
+def _is_supported_runtime_edition(subject: str | None, edition: str | None, phase: str = "高中") -> bool:
+    """Legacy wrapper — delegates to textbook_config.edition_ok()."""
     normalized_subject = str(subject or "").strip()
     normalized_edition = str(edition or "").strip()
-    return (
-        normalized_edition == "人教版"
-        or (normalized_subject == "英语" and normalized_edition == "北师大版")
-        or (normalized_subject == "化学" and normalized_edition == "鲁科版")
-    )
+    return edition_ok(phase, normalized_subject, normalized_edition)
 
 
 def _normalize_textbook_version_manifest(payload) -> dict:
@@ -1384,7 +1377,7 @@ def _resolve_supplemental_book_meta(path: Path, payload: list[dict] | None = Non
     display_title = raw_title
     display_title = re.sub(r"_content_list$", "", display_title)
     display_title = re.sub(r"_智慧中小学_[0-9a-f\-]{36}$", "", display_title, flags=re.IGNORECASE)
-    display_title = re.sub(r"^高中_[^_]+_", "", display_title)
+    display_title = re.sub(r"^(高中|初中)_[^_]+_", "", display_title)
     display_title = display_title.replace("_", " ").strip()
 
     content_id = _parse_content_id_from_text(str(path))
@@ -1485,6 +1478,13 @@ def _get_supplemental_source_info() -> dict:
     return {"available": False, "source": "absent", "path": None}
 
 
+def _get_raw_textbook_ocr_source_info() -> dict:
+    for path in RAW_TEXTBOOK_OCR_INDEX_CANDIDATES:
+        if path.exists():
+            return {"available": True, "source": "runtime_jsonl", "path": path}
+    return {"available": False, "source": "absent", "path": None}
+
+
 def _normalize_supplemental_page_entry(entry: dict) -> dict | None:
     if not isinstance(entry, dict):
         return None
@@ -1523,6 +1523,45 @@ def _normalize_supplemental_page_entry(entry: dict) -> dict | None:
         "primary_bound": bool(entry.get("primary_bound")),
         "supported": bool(entry.get("supported", True)),
         "synthetic": bool(entry.get("synthetic")),
+    }
+
+
+def _normalize_raw_ocr_entry(entry: dict) -> dict | None:
+    if not isinstance(entry, dict):
+        return None
+    subject = str(entry.get("subject") or "").strip()
+    title = str(entry.get("title") or "").strip()
+    text = _normalize_text_line(entry.get("text"))
+    if not subject or not title or len(text) < 20:
+        return None
+    section_value = entry.get("section")
+    if section_value is None:
+        section_value = entry.get("page")
+    try:
+        section = int(section_value)
+    except Exception:
+        return None
+    logical_page = entry.get("logical_page")
+    try:
+        logical_page_int = int(logical_page) if logical_page is not None else section
+    except Exception:
+        logical_page_int = section
+    book_key = str(entry.get("book_key") or "").strip() or None
+    content_id = str(entry.get("content_id") or "").strip() or None
+    stable_basis = book_key or content_id or f"{subject}:{title}"
+    stable_id = f"ocr:{hashlib.md5(f'{stable_basis}:{section}:{text[:120]}'.encode('utf-8')).hexdigest()[:16]}"
+    return {
+        "id": stable_id,
+        "content_id": content_id,
+        "subject": subject,
+        "title": title,
+        "book_key": book_key,
+        "section": section,
+        "logical_page": logical_page_int,
+        "text": text,
+        "normalized_text": _compact_query_text(text),
+        "source": str(entry.get("source") or "mineru_ocr").strip() or "mineru_ocr",
+        "path": str(entry.get("path") or "").strip() or None,
     }
 
 
@@ -1630,6 +1669,48 @@ def _load_supplemental_textbook_pages() -> tuple[dict, ...]:
         item.pop("_quality_score", None)
         normalized_entries.append(item)
     return tuple(normalized_entries)
+
+
+@functools.lru_cache(maxsize=1)
+def _load_raw_textbook_ocr_pages() -> tuple[dict, ...]:
+    source_info = _get_raw_textbook_ocr_source_info()
+    if not source_info["available"]:
+        return tuple()
+
+    pages_by_key: dict[tuple[str, int], dict] = {}
+    try:
+        with source_info["path"].open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except Exception:
+                    continue
+                normalized = _normalize_raw_ocr_entry(item)
+                if not normalized:
+                    continue
+                normalized["_quality_score"] = _page_text_quality(normalized.get("text") or "")
+                page_key = (
+                    str(normalized.get("book_key") or normalized.get("content_id") or normalized.get("title") or ""),
+                    int(normalized.get("section") or 0),
+                )
+                pages_by_key[page_key] = _pick_better_page(pages_by_key.get(page_key), normalized)
+    except Exception:
+        return tuple()
+
+    pages = list(pages_by_key.values())
+    pages.sort(
+        key=lambda item: (
+            item.get("subject") or "",
+            item.get("title") or "",
+            int(item.get("section") or 0),
+        )
+    )
+    for item in pages:
+        item.pop("_quality_score", None)
+    return tuple(pages)
 
 
 @functools.lru_cache(maxsize=1)
@@ -1790,6 +1871,29 @@ def _count_supplemental_term_hits(
         return 0
     hits = 0
     for entry in _load_supplemental_textbook_pages():
+        if book_key and entry.get("book_key") != book_key:
+            continue
+        if scope_subject and entry.get("subject") != scope_subject:
+            continue
+        if compact_term in entry.get("normalized_text", ""):
+            hits += 1
+            if hits >= cap:
+                break
+    return hits
+
+
+def _count_raw_ocr_term_hits(
+    term: str,
+    *,
+    scope_subject: str | None = None,
+    book_key: str | None = None,
+    cap: int = 24,
+) -> int:
+    compact_term = _compact_query_text(term)
+    if not compact_term:
+        return 0
+    hits = 0
+    for entry in _load_raw_textbook_ocr_pages():
         if book_key and entry.get("book_key") != book_key:
             continue
         if scope_subject and entry.get("subject") != scope_subject:
