@@ -346,6 +346,7 @@ def _resolve_supplemental_book_meta(path: Path, registry: dict, payload: list[di
             "book_key": matched.get("book_key"),
             "subject": matched_subject,
             "edition": matched_edition,
+            "phase": matched.get("phase") or "高中",
             "has_page_images": bool(matched.get("book_key")),
             "primary_bound": True,
             "supported": _is_supported_runtime_edition(matched_subject, matched_edition),
@@ -365,6 +366,7 @@ def _resolve_supplemental_book_meta(path: Path, registry: dict, payload: list[di
         "book_key": synthetic_key,
         "subject": subject_name,
         "edition": edition_hint,
+        "phase": "高中",
         "has_page_images": synthetic_has_page_images,
         "primary_bound": False,
         "supported": _is_supported_runtime_edition(subject_name, edition_hint),
@@ -491,6 +493,7 @@ def build_index(source_root: Path, db_path: Path, output_gz: Path, manifest_path
             book_key,
             {
                 "book_key": book_key,
+                "phase": meta.get("phase") or "高中",
                 "subject": subject,
                 "title": title,
                 "base_title": base_title,
@@ -568,6 +571,7 @@ def build_index(source_root: Path, db_path: Path, output_gz: Path, manifest_path
             entry = {
                 "id": f"supp:{hashlib.md5(f'{book_key}:{page_num}'.encode('utf-8')).hexdigest()[:16]}",
                 "content_id": meta.get("content_id"),
+                "phase": meta.get("phase") or "高中",
                 "subject": subject,
                 "title": title,
                 "base_title": base_title,
@@ -755,6 +759,7 @@ def build_index(source_root: Path, db_path: Path, output_gz: Path, manifest_path
             [
                 {
                     "book_key": item["book_key"],
+                    "phase": item.get("phase", "高中"),
                     "subject": item["subject"],
                     "title": item["title"],
                     "base_title": item["base_title"],
