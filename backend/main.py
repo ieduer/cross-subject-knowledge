@@ -4987,12 +4987,18 @@ def init_search_logs():
                     subject TEXT,
                     book_key TEXT,
                     source TEXT,
+                    phase TEXT,
                     result_count INTEGER DEFAULT 0,
                     ts REAL NOT NULL
                 )
             """)
             con.execute("CREATE INDEX IF NOT EXISTS idx_logs_ts ON search_logs(ts DESC)")
             con.execute("CREATE INDEX IF NOT EXISTS idx_logs_qn ON search_logs(query_normalized)")
+            # Add phase column to existing tables (safe for re-run)
+            try:
+                con.execute("ALTER TABLE search_logs ADD COLUMN phase TEXT")
+            except Exception:
+                pass  # column already exists
             con.commit()
         finally:
             con.close()
@@ -5000,7 +5006,7 @@ def init_search_logs():
 init_search_logs()
 
 
-def log_search(query: str, subject=None, book_key=None, source=None, result_count=0):
+def log_search(query: str, subject=None, book_key=None, source=None, result_count=0, phase=None):
     """Record a search query asynchronously."""
     normalized = re.sub(r'\s+', '', query.strip().lower())
     if len(normalized) < 1 or _is_synthetic_query(normalized):
@@ -5010,8 +5016,8 @@ def log_search(query: str, subject=None, book_key=None, source=None, result_coun
             con = get_db()
             try:
                 con.execute(
-                    "INSERT INTO search_logs (query, query_normalized, subject, book_key, source, result_count, ts) VALUES (?,?,?,?,?,?,?)",
-                    (query.strip(), normalized, subject, book_key, source, result_count, time.time())
+                    "INSERT INTO search_logs (query, query_normalized, subject, book_key, source, phase, result_count, ts) VALUES (?,?,?,?,?,?,?,?)",
+                    (query.strip(), normalized, subject, book_key, source, phase, result_count, time.time())
                 )
                 con.commit()
             finally:
@@ -5034,12 +5040,18 @@ def init_ai_chat_logs():
                     evidence_count INTEGER DEFAULT 0,
                     gaokao_hit_count INTEGER DEFAULT 0,
                     provider TEXT,
+                    phase TEXT,
                     success INTEGER DEFAULT 0,
                     error TEXT,
                     ts REAL NOT NULL
                 )
             """)
             con.execute("CREATE INDEX IF NOT EXISTS idx_ai_chat_logs_ts ON ai_chat_logs(ts DESC)")
+            # Add phase column to existing tables (safe for re-run)
+            try:
+                con.execute("ALTER TABLE ai_chat_logs ADD COLUMN phase TEXT")
+            except Exception:
+                pass  # column already exists
             con.commit()
         finally:
             con.close()
@@ -6618,6 +6630,7 @@ def search(
             book_key=book_key,
             source=source or ("textbook" if book_key or scope_subject else None),
             result_count=total,
+            phase=phase,
         )
 
         return {
