@@ -986,12 +986,18 @@ def _clean_english_analytics_text(text: str | None) -> str:
     return " ".join(cleaned_lines)
 
 
-def _english_source_where(source: str) -> tuple[str, tuple]:
+def _english_source_where(source: str, *, phase: str | None = None) -> tuple[str, tuple]:
+    parts = ["subject = ?"]
+    params: list = ["英语"]
     if source == "gaokao":
-        return "subject = ? AND source = 'gaokao' AND text IS NOT NULL AND text != ''", ("英语",)
-    if source == "textbook":
-        return "subject = ? AND (source = 'mineru' OR source IS NULL) AND text IS NOT NULL AND text != ''", ("英语",)
-    return "subject = ? AND text IS NOT NULL AND text != ''", ("英语",)
+        parts.append("source = 'gaokao'")
+    elif source == "textbook":
+        parts.append("(source = 'mineru' OR source IS NULL)")
+    parts.append("text IS NOT NULL AND text != ''")
+    if phase:
+        parts.append("phase = ?")
+        params.append(phase)
+    return " AND ".join(parts), tuple(params)
 
 
 def _pick_english_display_term(canonical: str, surface_counts: Counter | None) -> str:
@@ -1009,11 +1015,11 @@ def _pick_english_display_term(canonical: str, surface_counts: Counter | None) -
 
 
 @functools.lru_cache(maxsize=8)
-def _build_english_term_stats(db_token: tuple[str, int, int], source: str) -> dict:
+def _build_english_term_stats(db_token: tuple[str, int, int], source: str, *, phase: str | None = None) -> dict:
     if db_token[1] < 0:
         return {"terms": [], "pairs": [], "subjects": ["英语"]}
 
-    where_sql, params = _english_source_where(source)
+    where_sql, params = _english_source_where(source, phase=phase)
     con = get_db()
     try:
         rows = con.execute(f"SELECT text FROM chunks WHERE {where_sql}", params).fetchall()
@@ -1730,6 +1736,7 @@ def _load_supplemental_book_catalog() -> tuple[dict, ...]:
             normalized.append(
                 {
                     "book_key": book_key,
+                    "phase": str(item.get("phase") or "高中").strip(),
                     "subject": subject,
                     "title": title,
                     "base_title": str(item.get("base_title") or title).strip() or title,
@@ -1775,8 +1782,8 @@ def _load_supplemental_book_catalog() -> tuple[dict, ...]:
     )
 
 
-@functools.lru_cache(maxsize=1)
-def _load_supported_textbook_sets() -> dict[str, set[str]]:
+@functools.lru_cache(maxsize=8)
+def _load_supported_textbook_sets(phase: str | None = None) -> dict[str, set[str]]:
     supported_book_keys: set[str] = set()
     supported_content_ids: set[str] = set()
 
@@ -1785,7 +1792,10 @@ def _load_supported_textbook_sets() -> dict[str, set[str]]:
             continue
         subject = str(row.get("subject") or "").strip()
         edition = str(row.get("edition") or "").strip()
-        if not _is_supported_runtime_edition(subject, edition):
+        row_phase = str(row.get("phase") or "高中").strip()
+        if phase and row_phase != phase:
+            continue
+        if not _is_supported_runtime_edition(subject, edition, phase=row_phase):
             continue
         book_key = str(row.get("book_key") or "").strip()
         content_id = str(row.get("content_id") or "").strip()
@@ -1797,7 +1807,10 @@ def _load_supported_textbook_sets() -> dict[str, set[str]]:
     for item in _load_supplemental_book_catalog():
         subject = str(item.get("subject") or "").strip()
         edition = str(item.get("edition") or "").strip()
-        if not _is_supported_runtime_edition(subject, edition):
+        item_phase = str(item.get("phase") or "高中").strip()
+        if phase and item_phase != phase:
+            continue
+        if not _is_supported_runtime_edition(subject, edition, phase=item_phase):
             continue
         book_key = str(item.get("book_key") or "").strip()
         content_id = str(item.get("content_id") or "").strip()
@@ -1818,10 +1831,11 @@ def _is_supported_textbook_book(
     content_id: str | None = None,
     subject: str | None = None,
     edition: str | None = None,
+    phase: str | None = None,
 ) -> bool:
-    if _is_supported_runtime_edition(subject, edition):
+    if _is_supported_runtime_edition(subject, edition, phase=phase or "高中"):
         return True
-    supported_sets = _load_supported_textbook_sets()
+    supported_sets = _load_supported_textbook_sets(phase=phase)
     normalized_book_key = str(book_key or "").strip()
     normalized_content_id = str(content_id or "").strip()
     if normalized_book_key and normalized_book_key in supported_sets["book_keys"]:
@@ -6400,6 +6414,14 @@ def _build_dict_status_payload() -> dict:
     }
 
 
+@app.get("/api/subject-meta")
+def subject_meta_endpoint(
+    phase: str = Query(..., description="学段: 高中 or 初中"),
+):
+    """Return subject metadata for a given phase."""
+    return _subject_meta_for_phase(phase)
+
+
 @app.get("/api/search")
 def search(
     q: str = Query(..., min_length=1, max_length=200),
@@ -6407,6 +6429,7 @@ def search(
     scope_subject: Optional[str] = Query(None, description="Restrict textbook search to one subject across all books"),
     book_key: Optional[str] = Query(None),
     source: Optional[str] = Query(None, description="Filter by source: textbook, gaokao, or all"),
+    phase: Optional[str] = Query(None, description="Filter by phase: 高中, 初中, or None for all"),
     sort: str = Query("relevance"),
     has_images: bool = Query(False),
     limit: int = Query(50, ge=1, le=200),
@@ -6421,6 +6444,9 @@ def search(
 
         where_extra = ""
         filter_params = []
+        if phase:
+            where_extra += " AND c.phase = ?"
+            filter_params.append(phase)
         if subject:
             where_extra += " AND c.subject = ?"
             filter_params.append(subject)
@@ -6615,7 +6641,7 @@ def search(
 
 
 @app.get("/api/search/trending")
-def search_trending():
+def search_trending(phase: Optional[str] = Query(None, description="Filter by phase: 高中, 初中, or None for all")):
     """Return recent queries and popular queries for display."""
     con = get_db()
     try:
@@ -6669,31 +6695,44 @@ def search_trending():
 
 
 @app.get("/api/stats")
-def stats():
+def stats(phase: Optional[str] = Query(None, description="Filter by phase: 高中, 初中, or None for all")):
     """Database statistics (cached 5min)."""
-    if 'stats' in _cache:
-        return _cache['stats']
+    cache_key = f'stats_{phase or "all"}'
+    if cache_key in _cache:
+        return _cache[cache_key]
     con = get_db()
     try:
-        total = con.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-        textbook_count = con.execute("SELECT COUNT(*) FROM chunks WHERE source='mineru' OR source IS NULL").fetchone()[0]
-        gaokao_count = con.execute("SELECT COUNT(*) FROM chunks WHERE source='gaokao'").fetchone()[0]
+        phase_filter = " AND phase = ?" if phase else ""
+        phase_params = (phase,) if phase else ()
+
+        total = con.execute(f"SELECT COUNT(*) FROM chunks WHERE 1=1{phase_filter}", phase_params).fetchone()[0]
+        textbook_count = con.execute(
+            f"SELECT COUNT(*) FROM chunks WHERE (source='mineru' OR source IS NULL){phase_filter}", phase_params
+        ).fetchone()[0]
+        gaokao_count = con.execute(
+            f"SELECT COUNT(*) FROM chunks WHERE source='gaokao'{phase_filter}", phase_params
+        ).fetchone()[0]
         textbook_books = con.execute(
-            "SELECT COUNT(DISTINCT book_key) FROM chunks WHERE source='mineru' OR source IS NULL"
+            f"SELECT COUNT(DISTINCT book_key) FROM chunks WHERE (source='mineru' OR source IS NULL){phase_filter}",
+            phase_params,
         ).fetchone()[0]
         gaokao_multimodal = con.execute(
-            "SELECT COUNT(*) FROM chunks WHERE source='gaokao' AND text LIKE '%https://img.rdfzer.com/gaokao/%'"
+            f"SELECT COUNT(*) FROM chunks WHERE source='gaokao' AND text LIKE '%https://img.rdfzer.com/gaokao/%'{phase_filter}",
+            phase_params,
         ).fetchone()[0]
         dist = con.execute(
-            "SELECT subject, COUNT(*) as cnt FROM chunks GROUP BY subject ORDER BY cnt DESC"
+            f"SELECT subject, COUNT(*) as cnt FROM chunks WHERE 1=1{phase_filter} GROUP BY subject ORDER BY cnt DESC",
+            phase_params,
         ).fetchall()
 
         # Gaokao specific stats
         gaokao_years = con.execute(
-            "SELECT MIN(year) as min_y, MAX(year) as max_y FROM chunks WHERE source='gaokao' AND year IS NOT NULL"
+            f"SELECT MIN(year) as min_y, MAX(year) as max_y FROM chunks WHERE source='gaokao' AND year IS NOT NULL{phase_filter}",
+            phase_params,
         ).fetchone()
         gaokao_by_subject = con.execute(
-            "SELECT subject, COUNT(*) as cnt FROM chunks WHERE source='gaokao' GROUP BY subject ORDER BY cnt DESC"
+            f"SELECT subject, COUNT(*) as cnt FROM chunks WHERE source='gaokao'{phase_filter} GROUP BY subject ORDER BY cnt DESC",
+            phase_params,
         ).fetchall()
         ai_table_counts = {
             "explanations": con.execute("SELECT COUNT(*) FROM ai_explanations").fetchone()[0],
@@ -6729,16 +6768,19 @@ def stats():
                 for r in dist
             ],
         }
-        _cache['stats'] = result
+        _cache[cache_key] = result
         return result
     finally:
         con.close()
 
 
 @app.get("/api/keywords")
-def keywords(limit: int = Query(120, ge=1, le=500)):
+def keywords(
+    limit: int = Query(120, ge=1, le=500),
+    phase: Optional[str] = Query(None, description="Filter by phase: 高中, 初中, or None for all"),
+):
     """Return curated academic keywords (cached 5min)."""
-    cache_key = f'keywords_{limit}'
+    cache_key = f'keywords_{limit}_{phase or "all"}'
     if cache_key in _cache:
         return _cache[cache_key]
     con = get_db()
@@ -6747,10 +6789,20 @@ def keywords(limit: int = Query(120, ge=1, le=500)):
             "SELECT name FROM sqlite_master WHERE type='table' AND name='curated_keywords'"
         ).fetchone()
         if has_table:
-            rows = con.execute(
-                "SELECT term, subject_count, total_count FROM curated_keywords ORDER BY subject_count DESC, total_count DESC LIMIT ?",
-                (limit,)
-            ).fetchall()
+            has_phase_col = any(
+                r[1] == "phase"
+                for r in con.execute("PRAGMA table_info(curated_keywords)").fetchall()
+            )
+            if has_phase_col and phase:
+                rows = con.execute(
+                    "SELECT term, subject_count, total_count FROM curated_keywords WHERE phase = ? ORDER BY subject_count DESC, total_count DESC LIMIT ?",
+                    (phase, limit),
+                ).fetchall()
+            else:
+                rows = con.execute(
+                    "SELECT term, subject_count, total_count FROM curated_keywords ORDER BY subject_count DESC, total_count DESC LIMIT ?",
+                    (limit,)
+                ).fetchall()
             result = {"keywords": [{"term": r["term"], "subjects": r["subject_count"], "count": r["total_count"]} for r in rows]}
         else:
             fallback = ["蛋白质", "DNA", "光合作用", "细胞呼吸", "牛顿第二定律", "勒夏特列原理",
@@ -6878,16 +6930,24 @@ def cross_links():
 
 
 @app.get("/api/books")
-def books():
+def books(phase: Optional[str] = Query(None, description="Filter by phase: 高中, 初中, or None for all")):
     """List all textbooks grouped by subject."""
     con = get_db()
     try:
-        rows = con.execute("""
-            SELECT DISTINCT book_key, title, subject, content_id
-            FROM chunks
-            WHERE source != 'gaokao'
-            ORDER BY subject, title
-        """).fetchall()
+        if phase:
+            rows = con.execute("""
+                SELECT DISTINCT book_key, title, subject, content_id
+                FROM chunks
+                WHERE source != 'gaokao' AND phase = ?
+                ORDER BY subject, title
+            """, (phase,)).fetchall()
+        else:
+            rows = con.execute("""
+                SELECT DISTINCT book_key, title, subject, content_id
+                FROM chunks
+                WHERE source != 'gaokao'
+                ORDER BY subject, title
+            """).fetchall()
         by_subject = {}
         seen_book_keys = set()
         for r in rows:
@@ -6901,6 +6961,7 @@ def books():
                 content_id=r["content_id"] if "content_id" in r.keys() else None,
                 subject=r["subject"],
                 edition=manifest_row.get("edition"),
+                phase=phase,
             ):
                 continue
             if s not in by_subject:
@@ -6927,6 +6988,9 @@ def books():
             book_key = str(item.get("book_key") or "").strip()
             subject = str(item.get("subject") or "").strip()
             title = str(item.get("title") or "").strip()
+            item_phase = str(item.get("phase") or "高中").strip()
+            if phase and item_phase != phase:
+                continue
             if (
                 not book_key
                 or not subject
@@ -6937,6 +7001,7 @@ def books():
                     content_id=item.get("content_id"),
                     subject=subject,
                     edition=item.get("edition"),
+                    phase=phase,
                 )
             ):
                 continue
@@ -6976,6 +7041,7 @@ def books():
 def related(
     q: str = Query(..., min_length=1, max_length=200),
     limit: int = Query(8, ge=1, le=20),
+    phase: Optional[str] = Query(None, description="Filter by phase: 高中, 初中, or None for all"),
 ):
     """Find recognized concepts that co-occur with the query term."""
     con = get_db()
@@ -7031,6 +7097,7 @@ async def chat_context(payload: dict = Body(...)):
     history = payload.get("history") or []
     scope_subject = str(payload.get("scope_subject", "")).strip() or None
     book_key = str(payload.get("book_key", "")).strip() or None
+    phase = str(payload.get("phase", "")).strip() or None  # phase plumbing (Step 3 will deepen)
     return await run_in_threadpool(
         _build_chat_context_for_request,
         query,
@@ -7073,6 +7140,7 @@ async def chat(payload: dict = Body(...)):
     history = payload.get("history") or []
     scope_subject = str(payload.get("scope_subject", "")).strip() or None
     book_key = str(payload.get("book_key", "")).strip() or None
+    phase = str(payload.get("phase", "")).strip() or None  # phase plumbing (Step 3 will deepen)
     if not query or not user_message:
         raise HTTPException(400, "query and user_message are required")
 
@@ -7201,6 +7269,7 @@ def dict_exam_questions(
 def dict_textbook(
     q: str = Query(..., min_length=1, max_length=40),
     limit: int = Query(30, ge=1, le=80),
+    phase: Optional[str] = Query(None, description="Filter by phase: 高中, 初中, or None for all"),
 ):
     clean_q = _clean_query_text(q)
     if not clean_q:
@@ -8146,13 +8215,14 @@ def textbook_links(
 def word_freq(
     source: str = Query("all", description="textbook, gaokao, or all"),
     subject: Optional[str] = Query(None),
+    phase: Optional[str] = Query(None, description="Filter by phase: 高中, 初中, or None for all"),
     limit: int = Query(50, ge=1, le=200),
 ):
     """Word frequency for curated academic terms (pre-computed)."""
     con = get_db()
     try:
         if subject == "英语":
-            stats = _build_english_term_stats(_db_cache_token(), source)
+            stats = _build_english_term_stats(_db_cache_token(), source, phase=phase)
             return {
                 "frequencies": [
                     {"term": item["term"], "count": item["count"]}
@@ -8173,6 +8243,13 @@ def word_freq(
             if subject:
                 where_parts.append("subject = ?")
                 params.append(subject)
+            has_phase_col = any(
+                r[1] == "phase"
+                for r in con.execute("PRAGMA table_info(keyword_counts)").fetchall()
+            )
+            if has_phase_col and phase:
+                where_parts.append("phase = ?")
+                params.append(phase)
             where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
             rows = con.execute(f"""
                 SELECT term, SUM(count) as cnt FROM keyword_counts
@@ -8197,7 +8274,7 @@ def word_freq(
 
 
 @app.get("/api/analytics/heatmap")
-def heatmap():
+def heatmap(phase: Optional[str] = Query(None, description="Filter by phase: 高中, 初中, or None for all")):
     """Cross-subject concept sharing matrix."""
     con = get_db()
     try:
@@ -8244,7 +8321,10 @@ def heatmap():
 
 
 @app.get("/api/analytics/coverage")
-def coverage(limit: int = Query(30, ge=1, le=100)):
+def coverage(
+    limit: int = Query(30, ge=1, le=100),
+    phase: Optional[str] = Query(None, description="Filter by phase: 高中, 初中, or None for all"),
+):
     """Textbook vs Exam concept coverage analysis (pre-computed)."""
     con = get_db()
     try:
@@ -8281,7 +8361,10 @@ def coverage(limit: int = Query(30, ge=1, le=100)):
 
 
 @app.get("/api/analytics/concept-breadth")
-def concept_breadth(limit: int = Query(50, ge=1, le=200)):
+def concept_breadth(
+    limit: int = Query(50, ge=1, le=200),
+    phase: Optional[str] = Query(None, description="Filter by phase: 高中, 初中, or None for all"),
+):
     """Rank curated concepts by cross-subject breadth (cached 5min)."""
     cache_key = f'breadth_{limit}'
     if cache_key in _cache:
@@ -8415,20 +8498,25 @@ def _fetch_graph_local_related(con, center_term: str, center_subjects: set[str],
 
 
 @app.get("/api/graph/search")
-def graph_search(q: str = Query(..., min_length=1)):
+def graph_search(
+    q: str = Query(..., min_length=1),
+    phase: Optional[str] = Query(None, description="Filter by phase: 高中, 初中, or None for all"),
+):
     """Return a concept subgraph centered on the search term."""
     con = get_db()
     try:
         q_clean = q.strip()
+        phase_filter = " AND c.phase = ?" if phase else ""
+        phase_params = (phase,) if phase else ()
 
         # Use FTS for precise subject distribution (not LIKE)
         try:
-            center_dist = con.execute("""
+            center_dist = con.execute(f"""
                 SELECT c.subject, COUNT(*) as cnt
                 FROM chunks c JOIN chunks_fts ON chunks_fts.rowid = c.id
-                WHERE chunks_fts MATCH ? AND c.source = 'mineru'
+                WHERE chunks_fts MATCH ? AND c.source = 'mineru'{phase_filter}
                 GROUP BY c.subject ORDER BY cnt DESC
-            """, (q_clean,)).fetchall()
+            """, (q_clean,) + phase_params).fetchall()
         except Exception:
             center_dist = []
 
@@ -8518,6 +8606,7 @@ def graph_search(q: str = Query(..., min_length=1)):
 def graph_overview(
     mode: str = Query("cross", description="cross=cross-subject, subject=per-subject"),
     subject: Optional[str] = Query(None),
+    phase: Optional[str] = Query(None, description="Filter by phase: 高中, 初中, or None for all"),
     limit: int = Query(60, ge=10, le=200),
 ):
     """Knowledge graph: cross-subject or per-subject concept network."""
@@ -8876,7 +8965,7 @@ def page_image(
 
 
 @app.get("/api/book-pages")
-def book_pages():
+def book_pages(phase: Optional[str] = Query(None, description="Filter by phase: 高中, 初中, or None for all")):
     """Return the full book map for frontend use."""
     return {
         bk: {
@@ -8895,7 +8984,9 @@ def book_pages():
             content_id=info.get("content_id"),
             subject=info.get("subject"),
             edition=info.get("edition"),
+            phase=phase,
         )
+        and (not phase or str(info.get("phase") or "高中").strip() == phase)
     }
 
 
