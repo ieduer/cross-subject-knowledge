@@ -93,7 +93,7 @@ def _load_primary_books(db_path: Path) -> list[dict]:
     try:
         rows = con.execute(
             """
-            SELECT DISTINCT book_key, title, subject, content_id
+            SELECT DISTINCT book_key, title, subject, content_id, phase
             FROM chunks
             WHERE source = 'mineru' OR source IS NULL
             ORDER BY subject, title, book_key
@@ -126,21 +126,30 @@ def _load_primary_books(db_path: Path) -> list[dict]:
         if text:
             text_by_book[str(row["book_key"])].append(text)
 
-    primary_books = []
+    # Deduplicate and validate: each book_key must have exactly one phase
+    books_by_key: dict[str, dict] = {}
     for row in rows:
         book_key = str(row["book_key"] or "").strip()
+        phase = str(row["phase"] or "高中").strip()
+        if book_key in books_by_key:
+            existing_phase = books_by_key[book_key]["phase"]
+            if existing_phase != phase:
+                raise RuntimeError(
+                    f"FATAL: book_key={book_key} has mixed phases: {existing_phase}, {phase}. "
+                    "Each book_key must belong to exactly one phase. Fix the data."
+                )
+            continue  # skip duplicate rows for same book_key
         probe = "\n".join(text_by_book.get(book_key, []))
-        primary_books.append(
-            {
-                "book_key": book_key,
-                "title": str(row["title"] or "").strip(),
-                "subject": str(row["subject"] or "").strip(),
-                "content_id": str(row["content_id"] or "").strip(),
-                "pages": page_counts.get(book_key, 0),
-                "probe": probe,
-            }
-        )
-    return primary_books
+        books_by_key[book_key] = {
+            "book_key": book_key,
+            "phase": phase,
+            "title": str(row["title"] or "").strip(),
+            "subject": str(row["subject"] or "").strip(),
+            "content_id": str(row["content_id"] or "").strip(),
+            "pages": page_counts.get(book_key, 0),
+            "probe": probe,
+        }
+    return list(books_by_key.values())
 
 
 def _build_primary_manifest(primary_books: list[dict], book_map: dict) -> tuple[dict, dict]:
@@ -165,7 +174,7 @@ def _build_primary_manifest(primary_books: list[dict], book_map: dict) -> tuple[
         title = book["title"]
         display_title = _with_edition(title, edition) if edition else title
         record = {
-            "phase": "高中",
+            "phase": book.get("phase") or "高中",
             "subject": book["subject"],
             "title": title,
             "edition": edition,

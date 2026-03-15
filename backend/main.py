@@ -8393,7 +8393,7 @@ def concept_breadth(
     phase: Optional[str] = Query(None, description="Filter by phase: 高中, 初中, or None for all"),
 ):
     """Rank curated concepts by cross-subject breadth (cached 5min)."""
-    cache_key = f'breadth_{limit}'
+    cache_key = f'breadth_{limit}_{phase or "all"}'
     if cache_key in _cache:
         return _cache[cache_key]
     con = get_db()
@@ -8945,6 +8945,7 @@ def page_image(
     book_key: str = Query(..., description="book_key from search result"),
     page: int = Query(..., ge=0, description="Page number (0-indexed)"),
     context: int = Query(4, ge=0, le=8, description="Number of context pages before/after"),
+    phase: Optional[str] = Query(None, description="Filter by phase: 高中, 初中, or None for all"),
 ):
     """Return R2 CDN URLs for a page and surrounding context pages."""
     # Find the book in book_map
@@ -8956,6 +8957,7 @@ def page_image(
         content_id=info.get("content_id"),
         subject=info.get("subject"),
         edition=info.get("edition"),
+        phase=phase,
     ):
         raise HTTPException(404, f"Book not available in current edition scope: {book_key[:60]}")
 
