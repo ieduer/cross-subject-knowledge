@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-11T15:26:41.781604+00:00",
-  "git_head": "33430fa149ae546feab64aae1a1c45e8a67a1f2c",
-  "frontend_version": "2026.03.11-r30",
+  "generated_at": "2026-03-16T05:11:56.289130+00:00",
+  "git_head": "a270edd0bd13658045976be62e3ba4d7fcf73a2b",
+  "frontend_version": "2026.03.15-r31",
   "source_of_truth": {
     "local_workspace": "authoritative",
     "github": "authoritative_for_code_only_after_push",
@@ -31,8 +31,8 @@
     {
       "kind": "source",
       "logical_path": "backend/main.py",
-      "size": 338118,
-      "sha256": "d23e5ae436781a148ae00c932f68122883f4ef50b03de1053b27cdcf70647927"
+      "size": 349221,
+      "sha256": "9a340d7a9a941b0088174e280323fdc941ef5ef897a4b1cd390a336dcbe40b03"
     },
     {
       "kind": "source",
@@ -54,6 +54,12 @@
     },
     {
       "kind": "source",
+      "logical_path": "backend/textbook_config.py",
+      "size": 7288,
+      "sha256": "0adea4915a215f05c1372fe1cce91e0ad6b77067a90d39e920f7fd69f4e63e47"
+    },
+    {
+      "kind": "source",
       "logical_path": "backend/textbook_classics_manifest.json",
       "size": 8746,
       "sha256": "cdf6d6171fae1bb6bbff2628415afa986ec80e7c20687d33ecfb080240dc7996"
@@ -61,8 +67,8 @@
     {
       "kind": "source",
       "logical_path": "backend/textbook_version_manifest.json",
-      "size": 72847,
-      "sha256": "674494d6de4c0acca0e4e9a2f3c265e80d8865bfd4167f6ea9a021e934c88c93"
+      "size": 104941,
+      "sha256": "2071ce9d92923cef9cb3b804ae8c6826fbfee7fca36c4015bafe01e4924be655"
     },
     {
       "kind": "source",
@@ -73,32 +79,44 @@
     {
       "kind": "source",
       "logical_path": "backend/supplemental_textbook_pages.jsonl.gz",
-      "size": 1889049,
-      "sha256": "16937cbe0a7034ccc40b29e7db65fc12f3db5ecf0c0f29cfd431c07e9a75344e"
+      "size": 1891263,
+      "sha256": "b8322a7af3e759d073e3f4251d0a320258a6fb0ed5488b5d3a44d004a045363d"
     },
     {
       "kind": "source",
       "logical_path": "backend/supplemental_textbook_pages.manifest.json",
-      "size": 111821,
-      "sha256": "bd071850079a96976ad6b495c91143ae8fca0bd1f6dd70bc41d6066cb72f2a9c"
+      "size": 17382,
+      "sha256": "742e4dbf62a9c94c25834b181ae0940c8dc3b60773e20293c27fd05f9fec3b8e"
     },
     {
       "kind": "source",
       "logical_path": "frontend/index.html",
-      "size": 13805,
-      "sha256": "174c3906eacc06a63bedacb76296d9f45ea110cb35da38a79e1000314d985d7c"
+      "size": 13900,
+      "sha256": "a1e96ab7ff33b08d903631f2c957186bc867310d78acf8bc7d710cd5c528675f"
     },
     {
       "kind": "source",
       "logical_path": "frontend/dict.html",
-      "size": 9836,
-      "sha256": "63dced4dcfc1f454d888429ee6569e2d90a0674f3fd3c65a12dde53044bf71d8"
+      "size": 9936,
+      "sha256": "2be8b96d6d5b12d9280253fc0bb3fa45aaa6c03406477e4cf1b27ffc90af45ff"
+    },
+    {
+      "kind": "source",
+      "logical_path": "frontend/chuzhong.html",
+      "size": 10519,
+      "sha256": "a0367a8574d905c344f75d52f0af2123af2d6873b987bde76c95c61068829c63"
+    },
+    {
+      "kind": "source",
+      "logical_path": "frontend/chuzhong-dict.html",
+      "size": 9897,
+      "sha256": "ad31b51b1d3da28d24f8037b748966d52dd1bb4d57d75993120d197b274e221b"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/app.js",
-      "size": 121749,
-      "sha256": "57fe3dcce5c0b8685761861809c2d0b8a0795fa5677ffc0a3ccd605252aa7749"
+      "size": 123859,
+      "sha256": "7c6d67106eac6a183ce03555279b3e2a97ca384a159812bead24dfef95b47fa9"
     },
     {
       "kind": "source",
@@ -109,8 +127,8 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/dict.js",
-      "size": 67069,
-      "sha256": "984557b57b86e60ecdb7d68807551f088e73ba4757056beea2c586d20a52a213"
+      "size": 67428,
+      "sha256": "a5c53991c7117face5c6abda626820a1c22486ac3569c789c1de68e21d113d72"
     },
     {
       "kind": "source",
@@ -121,32 +139,32 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/version.json",
-      "size": 7438,
-      "sha256": "686a2d3dcc07cac07e9515a75e54282f53293c5e263bf2631f7a867b7e515be8"
+      "size": 7753,
+      "sha256": "1cd84ef09bef99b6b22944545ac4d1bb10065455ccc192d290510860b48dba16"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/pages/book_map.json",
-      "size": 40261,
-      "sha256": "b005aabe1a5f5ce3311fc849999de54db3ae3bf2b0afb10cc2921b7aeba7485d"
+      "size": 52419,
+      "sha256": "b7d01f55983e59033cc8a5300a5755a49ffc6a7b60b9b8af05ae678a1c10c8cb"
     },
     {
       "kind": "source",
       "logical_path": "scripts/deploy_vps.sh",
-      "size": 13432,
-      "sha256": "d62f2a4d23a7f1be3d60069d1d6bfaadc184d9724f49753b398896eb203d92f2"
+      "size": 15515,
+      "sha256": "535b2d3b14e054026734612072213d555c2b0b53b653e315b8741d753d9a7c05"
     },
     {
       "kind": "source",
       "logical_path": "scripts/stage_clean_release.py",
-      "size": 5651,
-      "sha256": "fc99f99a9b85c8c64bcadff8c73623fb5f10356b6e654448d81d7f3a89ad5231"
+      "size": 6620,
+      "sha256": "d4303ca38dc5d187a961a1b9b1132308eabba0494c0dcffefdcee910c2907311"
     },
     {
       "kind": "source",
       "logical_path": "scripts/build_release_manifest.py",
-      "size": 9282,
-      "sha256": "161a834da14ee82dd1c61a1b5fe71b9c890fb5188228a242b3872e377c5d582e"
+      "size": 10217,
+      "sha256": "46e42d0150e1f443d977e38bb3cffc198b720c8d79c1e4e3a1db9dcc121207ce"
     },
     {
       "kind": "source",
@@ -159,8 +177,8 @@
     {
       "kind": "runtime",
       "logical_path": "data/index/textbook_mineru_fts.db",
-      "size": 58892288,
-      "sha256": "b3814c96092ebe90e42675420aa0066a957c51a0be837ea63d67e907726a22e0",
+      "size": 80961536,
+      "sha256": "a5712dc7c42fa56687f2f7b052d3e69066f242afbf998a5f352e0bb1d95cda6a",
       "source_path": "data/index/textbook_mineru_fts.db",
       "runtime_identity": {
         "type": "sqlite_textbook_runtime_identity_v1",
@@ -173,8 +191,8 @@
         ],
         "content_tables": {
           "chunks": {
-            "row_count": 21925,
-            "sha256": "d73e6c4bed9bccce6388ef8411270fdc9aeb67cdbef7d6ebfb52b367567988aa"
+            "row_count": 24096,
+            "sha256": "d86dfa9c9bc35b6e76921d6e6e06f0a3a87355f3297b91f9660616af832dca3d"
           },
           "ai_summaries": {
             "row_count": 17506,
@@ -190,19 +208,19 @@
           },
           "concept_map": {
             "row_count": 1102,
-            "sha256": "dbc7bcc6269e9dc9843391a5868ce87af100fc36f014d5f22fede990713b3563"
+            "sha256": "efd7cb61f4c202719353761b35f689be680785fdf72be898956f28c20c9111b9"
           },
           "cross_subject_map": {
             "row_count": 83,
-            "sha256": "aecd745f59f35d5b087a090845b2c9b1c363905d49d2cf575ed38d331a724ea9"
+            "sha256": "9d2548f19c272bccb42bae28961c7a001ac2fad9f042ced1e8d8b97d1832e10d"
           },
           "curated_keywords": {
             "row_count": 515,
-            "sha256": "0d56877e6f7bf542b1381b1775d301fb576d2eab98e7b3fa048d1216531bead0"
+            "sha256": "238724a137fe5f43464cb5d2dd0b2d5d351b9b2f5a49e6f9626371f7cecd8987"
           },
           "keyword_counts": {
             "row_count": 1773,
-            "sha256": "0a1181df496039944a619406c5e1e9f984ad09d5281f29a3d3aee57cc8de70b6"
+            "sha256": "6fbbdd7ac0e328525356dd120186c250bbee10908dee8c02f97933e1d49315b1"
           },
           "ai_gaokao_links": {
             "row_count": 4029,
@@ -214,10 +232,10 @@
           }
         },
         "fts_shadow_counts": {
-          "chunks_fts": 21925,
-          "chunks_fts_data": 4254,
-          "chunks_fts_idx": 4134,
-          "chunks_fts_docsize": 21925
+          "chunks_fts": 24096,
+          "chunks_fts_data": 5845,
+          "chunks_fts_idx": 5695,
+          "chunks_fts_docsize": 24096
         },
         "integrity_check": "ok"
       }
@@ -225,29 +243,29 @@
     {
       "kind": "runtime",
       "logical_path": "data/index/textbook_chunks.index",
-      "size": 73445274,
-      "sha256": "2c5a5aa221c6e42ae0e3ca6e841c1a8dbe7b40fba606d5cf2345e59eccde0331",
+      "size": 82355058,
+      "sha256": "456b663becd0c5175d0d2b090ea599c2ddcf48e0ca7605e891a9522cfcc4c8e0",
       "source_path": "data/index/textbook_chunks.index"
     },
     {
       "kind": "runtime",
       "logical_path": "data/index/textbook_chunks.manifest.json",
-      "size": 891,
-      "sha256": "394d69870d116106fdcf7a5f17af9aa0275139340c41a8b029bb7a43f1664155",
+      "size": 890,
+      "sha256": "1de837c1c208722dd8f2392936a4b3f778afc967af13926673a58c605de992cc",
       "source_path": "data/index/textbook_chunks.manifest.json"
     },
     {
       "kind": "runtime",
       "logical_path": "data/index/supplemental_textbook_pages.jsonl.gz",
-      "size": 1889049,
-      "sha256": "16937cbe0a7034ccc40b29e7db65fc12f3db5ecf0c0f29cfd431c07e9a75344e",
+      "size": 1891263,
+      "sha256": "b8322a7af3e759d073e3f4251d0a320258a6fb0ed5488b5d3a44d004a045363d",
       "source_path": "platform/backend/supplemental_textbook_pages.jsonl.gz"
     },
     {
       "kind": "runtime",
       "logical_path": "data/index/supplemental_textbook_pages.manifest.json",
-      "size": 111821,
-      "sha256": "bd071850079a96976ad6b495c91143ae8fca0bd1f6dd70bc41d6066cb72f2a9c",
+      "size": 17382,
+      "sha256": "742e4dbf62a9c94c25834b181ae0940c8dc3b60773e20293c27fd05f9fec3b8e",
       "source_path": "platform/backend/supplemental_textbook_pages.manifest.json"
     },
     {
@@ -294,7 +312,7 @@
     }
   ],
   "page_mapping": {
-    "book_count": 96,
+    "book_count": 117,
     "required_r2_prefixes": [
       "pages/",
       "pages/dict_xuci/",
@@ -302,7 +320,7 @@
     ]
   },
   "runtime_facts": {
-    "textbook_mineru_rows": 21925,
+    "textbook_mineru_rows": 24096,
     "dict_moe_revised_rows": 163916,
     "dict_moe_revised_headwords": 161136
   },

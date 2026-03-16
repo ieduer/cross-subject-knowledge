@@ -1,6 +1,9 @@
 /* ── Cross-Subject Knowledge Platform · Frontend ── */
 
 const API = '';  // same origin
+const PHASE = document.body.dataset.phase || '高中';
+const DISPLAY_PHASE = PHASE;
+window._subjectMeta = {};
 // Canonical external AI gateway for this project: Worker custom domain -> service `apis` / production.
 const AI_API = 'https://ai.bdfz.net/';
 const AI_API_FALLBACK = 'https://apis.bdfz.workers.dev/';
@@ -64,6 +67,7 @@ function logClientAIChat({ query, userMessage, summary, provider, success, error
             provider: provider || aiProviderLabel,
             success: Boolean(success),
             error: error || '',
+            phase: PHASE,
         }),
     }).catch(() => {});
 }
@@ -251,6 +255,7 @@ function buildAIServerPayload(userMessage, history) {
         query: currentQuery,
         user_message: userMessage,
         history,
+        phase: PHASE,
         ...(scope.scope_subject ? { scope_subject: scope.scope_subject } : {}),
         ...(scope.book_key ? { book_key: scope.book_key } : {}),
     };
@@ -309,7 +314,7 @@ function renderAIStarters() {
     } else if (isCrossView) {
         starters = [
             `请先解释「${currentQuery}」在不同学科里的共同核心。`,
-            `「${currentQuery}」在高考里最常见的考法是什么？`,
+            PHASE === '高中' ? `「${currentQuery}」在高考里最常见的考法是什么？` : `「${currentQuery}」在考试中最常见的考法是什么？`,
             `围绕「${currentQuery}」最容易混淆的概念有哪些？`,
             `如果我要复习「${currentQuery}」，应该按什么顺序串起来学？`,
         ];
@@ -452,7 +457,7 @@ ${contextPayload.relation_text || '（无）'}
 教材证据（多学科原文）：
 ${contextPayload.context_text || '（无）'}
 
-高考证据（如有）：
+${PHASE === '高中' ? '高考证据（如有）' : '考试证据（如有）'}：
 ${contextPayload.gaokao_text || '（无）'}
 
 历史对话：
@@ -464,8 +469,8 @@ ${userMessage}
 请按以下结构回答：
 【核心结论】先用 1-2 句讲清本质。
 【学科联动】分点说明不同学科如何描述同一概念，尽量标注出处，格式：[学科·书名·p页码]。
-【高考考法】如果给定证据里有真题，再说明常见考法 / 易错点；没有就写“高考证据不足”。
-【学习建议】给出面向高中生的复习顺序或追问方向。
+${PHASE === '高中' ? '【高考考法】如果给定证据里有真题，再说明常见考法 / 易错点；没有就写”高考证据不足”。' : '【考点提示】说明常见考法 / 易错点。'}
+【学习建议】给出面向${DISPLAY_PHASE}生的复习顺序或追问方向。
 
 规则：
 1. 只根据给定证据回答，不要编造页码或教材内容。
@@ -495,7 +500,7 @@ function defaultFollowupPrompts() {
     }
     return [
         `请用一个关键词概括「${currentQuery}」的核心。`,
-        `「${currentQuery}」在高考里最常见的考法是什么？`,
+        PHASE === '高中' ? `「${currentQuery}」在高考里最常见的考法是什么？` : `「${currentQuery}」在考试中最常见的考法是什么？`,
         `围绕「${currentQuery}」最容易混淆的概念有哪些？`,
     ];
 }
@@ -540,7 +545,7 @@ function buildFallbackContextPayload(userMessage, history) {
     const matchedConcepts = Array.from(new Set(
         groups.flatMap(group => (group.results || []).flatMap(result => result.matched_concepts || []))
     )).slice(0, 8);
-    const coverageLine = `覆盖 ${Object.keys(currentData?.subject_counts || {}).length} 个学科，教材命中 ${textbookCount} 条，真题例子 ${gaokaoCount} 条`;
+    const coverageLine = `覆盖 ${Object.keys(currentData?.subject_counts || {}).length} 个学科，教材命中 ${textbookCount} 条` + (gaokaoCount > 0 ? `，真题例子 ${gaokaoCount} 条` : '');
 
     return {
         mode: queryProfile.mode,
@@ -886,7 +891,7 @@ document.querySelectorAll('.nav-btn[data-view]').forEach(btn => {
         const view = document.getElementById('view-' + btn.dataset.view);
         view.classList.add('active');
         if (btn.dataset.view === 'graph') loadGraph();
-        if (btn.dataset.view === 'gaokao') initGaokao();
+        if (btn.dataset.view === 'gaokao' && PHASE === '高中') initGaokao();
         if (btn.dataset.view === 'insights') loadInsights();
     });
 });
@@ -908,7 +913,7 @@ let booksLoaded = false;
 async function loadBooks() {
     if (booksLoaded) return;
     try {
-        const res = await fetch(`${API}/api/books`);
+        const res = await fetch(`${API}/api/books?phase=${encodeURIComponent(PHASE)}`);
         const subjects = await res.json();
         filterScope.innerHTML = '<option value="">全部教材</option>';
 
@@ -988,7 +993,7 @@ function renderCarouselBatch() {
 // Load curated academic keywords from API
 (async () => {
     try {
-        const res = await fetch(`${API}/api/keywords?limit=120`);
+        const res = await fetch(`${API}/api/keywords?limit=120&phase=${encodeURIComponent(PHASE)}`);
         if (res.ok) {
             const data = await res.json();
             const kws = data.keywords || [];
@@ -1009,7 +1014,7 @@ function renderCarouselBatch() {
 // ── Trending Searches ─────────────────────────────────────
 async function loadTrending() {
     try {
-        const res = await fetch(`${API}/api/search/trending`);
+        const res = await fetch(`${API}/api/search/trending?phase=${encodeURIComponent(PHASE)}`);
         if (!res.ok) return;
         const data = await res.json();
         const section = document.getElementById('trending-section');
@@ -1060,7 +1065,7 @@ async function doSearch(q, { subject = null } = {}) {
     relatedBarEl.classList.add('hidden');
 
     // Build search URL with advanced filters
-    const params = new URLSearchParams({ q, limit: 100 });
+    const params = new URLSearchParams({ q, limit: 100, phase: PHASE });
     if (currentSubjectFilter) params.set('subject', currentSubjectFilter);
 
     const scopeValue = filterScope.value;
@@ -1119,7 +1124,7 @@ async function loadRelated(searchData, q) {
             .map(([term, count]) => ({ term, count }));
 
         if (data.length === 0) {
-            const res = await fetch(`${API}/api/related?q=${encodeURIComponent(q)}&limit=10`);
+            const res = await fetch(`${API}/api/related?q=${encodeURIComponent(q)}&limit=10&phase=${encodeURIComponent(PHASE)}`);
             data = await res.json();
         }
 
@@ -1229,7 +1234,7 @@ function renderResults(data, filterSubject = null, subjectCountsOverride = null)
                 <div class="result-card" onclick="this.classList.toggle('expanded')">
                     <div class="result-meta">
                         <span class="result-title">${escHtml(r.title)} · §${r.section}</span>
-                        ${r.source === 'gaokao' ? '<span class="source-badge gaokao">📝 真题</span>' : '<span class="source-badge textbook">📚 教材</span>'}
+                        ${r.source === 'gaokao' ? '<span class="source-badge gaokao">' + (PHASE === '高中' ? '📝 真题' : '📝 考试') + '</span>' : '<span class="source-badge textbook">📚 教材</span>'}
                         ${renderMatchChannelBadge(r)}
                         ${r.image_count > 0 ? `<span class="img-badge">📷 ${r.image_count}</span>` : ''}
                         ${r.page_url ? `<span class="page-badge" title="第 ${r.page_num} 页 / 共 ${r.total_pages} 页">📄 p${r.logical_page ?? r.page_num}</span>` : ''}
@@ -1262,8 +1267,11 @@ function renderResults(data, filterSubject = null, subjectCountsOverride = null)
 }
 
 function getSubjectIcon(s) {
-    const map = { '语文': '📖', '数学': '📐', '英语': '🌍', '物理': '⚛️', '化学': '🧪', '生物学': '🧬', '历史': '📜', '地理': '🗺️', '思想政治': '⚖️' };
-    return map[s] || '📚';
+    return (window._subjectMeta[s] && window._subjectMeta[s].icon) || '📚';
+}
+
+function getSubjectColor(s) {
+    return (window._subjectMeta[s] && window._subjectMeta[s].color) || '#666';
 }
 
 function renderMatchChannelBadge(result) {
@@ -1357,7 +1365,7 @@ function renderEvidenceTrace(result, subject, subjectBreadth, query) {
 
     if (result.source === 'gaokao') {
         evidenceChips.push(
-            `<span class="evidence-chip exam">${escHtml([result.year, result.category].filter(Boolean).join(' · ') || '高考真题')}</span>`
+            `<span class="evidence-chip exam">${escHtml([result.year, result.category].filter(Boolean).join(' · ') || (PHASE === '高中' ? '高考真题' : '考试题'))}</span>`
         );
     } else {
         evidenceChips.push(
@@ -1682,7 +1690,7 @@ async function loadGraph(mode = 'cross', subject = '') {
     container.innerHTML = '<div class="loading" style="padding-top:40vh">加载知识图谱…</div>';
 
     try {
-        let url = `${API}/api/graph/overview?mode=${mode}&limit=80`;
+        let url = `${API}/api/graph/overview?mode=${mode}&limit=80&phase=${encodeURIComponent(PHASE)}`;
         if (subject) url += `&subject=${encodeURIComponent(subject)}`;
         const res = await fetch(url);
         const data = await res.json();
@@ -1723,7 +1731,7 @@ function renderGraphNew(data, container, mode) {
 
     subjectNodes.forEach(n => {
         n.r = 28;
-        n.color = SUBJ_COLORS[n.id] || '#6c5ce7';
+        n.color = getSubjColors()[n.id] || '#6c5ce7';
         n.fx = null; n.fy = null;  // not fixed initially
         nodeMap[n.id] = n;
     });
@@ -2003,17 +2011,18 @@ function applyLiveStatsToUI(data) {
         const nSubjects = data.subjects_count || (data.subjects || []).length;
         const nTotal = (data.total_chunks || 0).toLocaleString();
         const nGaokao = (data.gaokao_chunks || 0).toLocaleString();
-        heroSub.textContent = `覆盖高中 ${nSubjects} 科 · ${nTotal} 条结构化语料 · ${nGaokao} 道高考真题`;
+        const gaokaoLabel = PHASE === '高中' && Number(nGaokao.replace(/,/g, '')) > 0 ? ` · ${nGaokao} 道高考真题` : '';
+        heroSub.textContent = `覆盖${DISPLAY_PHASE} ${nSubjects} 科 · ${nTotal} 条结构化语料${gaokaoLabel}`;
     }
 
     const gaokaoHeroSub = document.getElementById('gk-hero-sub');
-    if (gaokaoHeroSub) {
+    if (gaokaoHeroSub && PHASE === '高中') {
         const [startYear, endYear] = data.gaokao_year_range || [];
         const yearRange = startYear && endYear ? `${startYear}-${endYear}` : '历年';
-        const nGaokao = (data.gaokao_chunks || 0).toLocaleString();
+        const nGaokao2 = (data.gaokao_chunks || 0).toLocaleString();
         const nTextbook = (data.textbook_chunks || 0).toLocaleString();
         const multimodal = data.gaokao_multimodal ? ` · ${data.gaokao_multimodal.toLocaleString()} 道含图题` : '';
-        gaokaoHeroSub.textContent = `${yearRange} · ${nGaokao} 道真题${multimodal} · 与 ${nTextbook} 条教材语料联动检索`;
+        gaokaoHeroSub.textContent = `${yearRange} · ${nGaokao2} 道真题${multimodal} · 与 ${nTextbook} 条教材语料联动检索`;
     }
 
     const aboutScaleText = document.getElementById('about-scale-text');
@@ -2026,7 +2035,7 @@ function applyLiveStatsToUI(data) {
                 `${nBooks} 本已入库教材`,
                 `${DOWNLOADABLE_LIBRARY_BOOKS} 本 PDF 下载`,
                 `${(data.total_chunks || 0).toLocaleString()} 条语料`,
-                `${(data.gaokao_chunks || 0).toLocaleString()} 道真题`,
+                ...(PHASE === '高中' && (data.gaokao_chunks || 0) > 0 ? [`${(data.gaokao_chunks || 0).toLocaleString()} 道真题`] : []),
                 data.faiss_enabled
                     ? `FAISS ${(data.faiss_vectors || 0).toLocaleString()} 向量`
                     : 'FAISS 未启用',
@@ -2045,7 +2054,10 @@ function applyLiveStatsToUI(data) {
         const [startYear, endYear] = data.gaokao_year_range || [];
         const yearRange = startYear && endYear ? `${startYear}-${endYear}` : '历年';
         const multimodal = data.gaokao_multimodal ? `，其中 <strong>${data.gaokao_multimodal.toLocaleString()}</strong> 道含图题` : '';
-        aboutCorpusText.innerHTML = `全文检索基于 SQLite FTS5，当前共有 <strong>${nTotal}</strong> 条结构化语料（教材 ${nTextbook} / 真题 ${nGaokao}），覆盖 <strong>${nSubjects}</strong> 个学科；真题时间范围为 <strong>${yearRange}</strong>${multimodal}。`;
+        const gaokaoCorpusPart = PHASE === '高中' && Number(String(nGaokao).replace(/,/g, '')) > 0
+            ? ` / 真题 ${nGaokao}），覆盖 <strong>${nSubjects}</strong> 个学科；真题时间范围为 <strong>${yearRange}</strong>${multimodal}。`
+            : `），覆盖 <strong>${nSubjects}</strong> 个学科。`;
+        aboutCorpusText.innerHTML = `全文检索基于 SQLite FTS5，当前共有 <strong>${nTotal}</strong> 条结构化语料（教材 ${nTextbook}${gaokaoCorpusPart}`;
     }
 
     const aboutAiText = document.getElementById('about-ai-text');
@@ -2059,7 +2071,8 @@ function applyLiveStatsToUI(data) {
     const aboutPrecomputeText = document.getElementById('about-precompute-text');
     if (aboutPrecomputeText) {
         const tables = data.ai_tables || {};
-        aboutPrecomputeText.textContent = `AI 预计算已入库：解读 ${Number(tables.explanations || 0).toLocaleString()}、同义/别名 ${Number(tables.synonyms || 0).toLocaleString()}、关系 ${Number(tables.relations || 0).toLocaleString()}、教材摘要 ${Number(tables.summaries || 0).toLocaleString()}、真题关联 ${Number(tables.gaokao_links || 0).toLocaleString()}。`;
+        const gaokaoLinksPart = PHASE === '高中' && Number(tables.gaokao_links || 0) > 0 ? `、真题关联 ${Number(tables.gaokao_links || 0).toLocaleString()}` : '';
+        aboutPrecomputeText.textContent = `AI 预计算已入库：解读 ${Number(tables.explanations || 0).toLocaleString()}、同义/别名 ${Number(tables.synonyms || 0).toLocaleString()}、关系 ${Number(tables.relations || 0).toLocaleString()}、教材摘要 ${Number(tables.summaries || 0).toLocaleString()}${gaokaoLinksPart}。`;
     }
 
     const aboutRuntimeText = document.getElementById('about-runtime-text');
@@ -2074,8 +2087,14 @@ function applyLiveStatsToUI(data) {
 }
 
 (async function init() {
+    // Fetch subject metadata for this phase
     try {
-        const res = await fetch(`${API}/api/stats`);
+        const metaRes = await fetch(`${API}/api/subject-meta?phase=${encodeURIComponent(PHASE)}`);
+        if (metaRes.ok) window._subjectMeta = await metaRes.json();
+    } catch (_) { /* silent */ }
+
+    try {
+        const res = await fetch(`${API}/api/stats?phase=${encodeURIComponent(PHASE)}`);
         const data = await res.json();
         const el = document.getElementById('stats-bar');
         el.innerHTML = data.subjects.map(s =>
@@ -2084,6 +2103,12 @@ function applyLiveStatsToUI(data) {
         el.classList.remove('hidden');
         applyLiveStatsToUI(data);
     } catch (e) { /* silent */ }
+
+    // Hide gaokao nav for non-高中 phases
+    if (PHASE !== '高中') {
+        const gkBtn = document.querySelector('[data-view="gaokao"]');
+        if (gkBtn) gkBtn.style.display = 'none';
+    }
 })();
 
 // ── Gaokao View ─────────────────────────────────────────────────
@@ -2356,7 +2381,7 @@ async function requestGaokaoAI(questionId, btn) {
         const crossSubjectContext = buildGaokaoSourceContext(linkData.cross_links, 3);
         const sourceItems = [...(linkData.links || []).slice(0, 3), ...(linkData.cross_links || []).slice(0, 2)];
 
-        const prompt = `你是一位高考命题研究专家。请分析以下高考真题与教材内容之间的关系。
+        const prompt = `你是一位${PHASE === '高中' ? '高考' : '中考'}命题研究专家。请分析以下${PHASE === '高中' ? '高考' : '中考'}真题与教材内容之间的关系。
 
 【真题元数据】
 标题：${linkData.question_title || ''}
@@ -2385,7 +2410,7 @@ ${crossSubjectContext || '（未找到直接跨学科教材）'}
 易错提醒：
 
 要求：
-1. 220 字以内，语言简洁，面向高中生。
+1. 220 字以内，语言简洁，面向${DISPLAY_PHASE}生。
 2. 只根据给定证据回答，不要编造教材内容。
 3. 如果跨学科证据不足，必须明确写“跨学科证据不足”。`;
 
@@ -2469,18 +2494,21 @@ document.querySelectorAll('.insight-tab').forEach(tab => {
     });
 });
 
-const SUBJ_COLORS = {
-    '数学': '#3498db', '物理': '#e74c3c', '化学': '#2ecc71', '生物': '#f39c12',
-    '地理': '#1abc9c', '历史': '#9b59b6', '语文': '#e67e22', '英语': '#34495e',
-    '思想政治': '#f1c40f', 'hanjia': '#95a5a6',
-};
+function getSubjColors() {
+    const colors = { 'hanjia': '#95a5a6' };
+    for (const [k, v] of Object.entries(window._subjectMeta)) {
+        colors[v.display_subject || k] = v.color;
+        colors[k] = v.color;
+    }
+    return colors;
+}
 
 async function loadInsights() {
     if (insightsLoaded) return;
     insightsLoaded = true;
     // Populate subject selector from stats
     try {
-        const sr = await fetch(`${API}/api/stats`);
+        const sr = await fetch(`${API}/api/stats?phase=${encodeURIComponent(PHASE)}`);
         const sd = await sr.json();
         const sel = document.getElementById('freq-subject');
         sd.subjects.forEach(s => {
@@ -2506,7 +2534,7 @@ async function loadFreqChart() {
     const source = document.getElementById('freq-source').value;
     const subject = document.getElementById('freq-subject').value;
     try {
-        const url = `${API}/api/analytics/word-freq?source=${source}&limit=30${subject ? '&subject=' + encodeURIComponent(subject) : ''}`;
+        const url = `${API}/api/analytics/word-freq?source=${source}&limit=30&phase=${encodeURIComponent(PHASE)}${subject ? '&subject=' + encodeURIComponent(subject) : ''}`;
         const res = await fetch(url);
         const data = await res.json();
         const freqs = data.frequencies || [];
@@ -2581,7 +2609,7 @@ async function loadHeatmap() {
     const container = document.getElementById('heatmap-chart');
     container.innerHTML = '<div class="loading">加载学科关联矩阵…</div>';
     try {
-        const res = await fetch(`${API}/api/analytics/heatmap`);
+        const res = await fetch(`${API}/api/analytics/heatmap?phase=${encodeURIComponent(PHASE)}`);
         const data = await res.json();
         renderHeatmap(container, data);
     } catch (e) { container.innerHTML = `<div class="loading">加载失败: ${e.message}</div>`; }
@@ -2656,7 +2684,7 @@ function renderHeatmap(container, data) {
             .attr('x', margin.left + i * cellSize + cellSize / 2 - 1)
             .attr('y', margin.top - 8)
             .attr('text-anchor', 'middle')
-            .attr('fill', SUBJ_COLORS[s] || '#ccc')
+            .attr('fill', getSubjColors()[s] || '#ccc')
             .attr('font-size', '12px')
             .attr('font-weight', '500')
             .text(s);
@@ -2665,7 +2693,7 @@ function renderHeatmap(container, data) {
             .attr('y', margin.top + i * cellSize + cellSize / 2)
             .attr('dy', '0.35em')
             .attr('text-anchor', 'end')
-            .attr('fill', SUBJ_COLORS[s] || '#ccc')
+            .attr('fill', getSubjColors()[s] || '#ccc')
             .attr('font-size', '12px')
             .attr('font-weight', '500')
             .text(s);
@@ -2683,7 +2711,7 @@ function renderHeatmap(container, data) {
 // ── Coverage Analysis ──
 async function loadCoverage() {
     try {
-        const res = await fetch(`${API}/api/analytics/coverage?limit=15`);
+        const res = await fetch(`${API}/api/analytics/coverage?limit=15&phase=${encodeURIComponent(PHASE)}`);
         const data = await res.json();
         renderCoverageList('coverage-hidden', data.hidden_exam_focus, 'exam');
         renderCoverageList('coverage-low', data.low_exam_focus, 'textbook');
@@ -2722,7 +2750,7 @@ async function loadBreadth() {
     const container = document.getElementById('breadth-chart');
     container.innerHTML = '<div class="loading">加载概念广度排名…</div>';
     try {
-        const res = await fetch(`${API}/api/analytics/concept-breadth?limit=30`);
+        const res = await fetch(`${API}/api/analytics/concept-breadth?limit=30&phase=${encodeURIComponent(PHASE)}`);
         const data = await res.json();
         renderBreadth(container, data.concepts || []);
     } catch (e) { container.innerHTML = `<div class="loading">加载失败</div>`; }
@@ -2790,7 +2818,7 @@ async function loadSearchGraph(term) {
     if (existing) existing.remove();
 
     try {
-        const res = await fetch(`${API}/api/graph/search?q=${encodeURIComponent(term)}`);
+        const res = await fetch(`${API}/api/graph/search?q=${encodeURIComponent(term)}&phase=${encodeURIComponent(PHASE)}`);
         const data = await res.json();
         if (!data.nodes || data.nodes.length < 3) return;
 
@@ -2828,7 +2856,7 @@ function renderSearchSubgraph(container, data) {
         .force('collision', d3.forceCollide(25));
 
     const link = svg.append('g').selectAll('line').data(links).join('line')
-        .attr('stroke', d => SUBJ_COLORS[d.subject] || '#6c5ce7')
+        .attr('stroke', d => getSubjColors()[d.subject] || '#6c5ce7')
         .attr('stroke-opacity', 0.4)
         .attr('stroke-width', 1.5);
 
@@ -2843,7 +2871,7 @@ function renderSearchSubgraph(container, data) {
 
     node.append('circle')
         .attr('r', d => d.type === 'center' ? 18 : d.type === 'subject' ? 14 : 10)
-        .attr('fill', d => d.type === 'center' ? '#6c5ce7' : d.type === 'subject' ? (SUBJ_COLORS[d.id] || '#555') : 'rgba(108,92,231,0.5)')
+        .attr('fill', d => d.type === 'center' ? '#6c5ce7' : d.type === 'subject' ? (getSubjColors()[d.id] || '#555') : 'rgba(108,92,231,0.5)')
         .attr('stroke', d => d.type === 'center' ? '#a29bfe' : 'none')
         .attr('stroke-width', 2);
 

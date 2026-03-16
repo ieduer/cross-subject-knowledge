@@ -131,7 +131,9 @@ verify_built_image_release_assets() {
     test -s /app/frontend/assets/pages/book_map.json &&
     test -s /app/frontend/assets/version.json &&
     test -s /app/frontend/index.html &&
-    test -s /app/frontend/dict.html
+    test -s /app/frontend/dict.html &&
+    test -s /app/frontend/chuzhong.html &&
+    test -s /app/frontend/chuzhong-dict.html
   ' >/dev/null
 }
 
@@ -211,6 +213,17 @@ df -h /
 if ! verify_release_manifest_alignment; then
   echo "ERROR: release manifest alignment check failed"
   exit 1
+fi
+
+# ── Fail-fast: git HEAD must match release manifest ──────────────────────────
+manifest_git_head="$(python3 -c "import json;print(json.load(open('${RELEASE_MANIFEST_PATH}'))['git_head'])" 2>/dev/null || echo "")"
+if [ -n "${manifest_git_head}" ]; then
+  actual_head="$(git rev-parse HEAD)"
+  if [ "${manifest_git_head}" != "${actual_head}" ]; then
+    echo "ERROR: git HEAD (${actual_head}) does not match release manifest git_head (${manifest_git_head})"
+    echo "Rebuild release manifest or checkout the correct commit."
+    exit 1
+  fi
 fi
 
 if docker ps -a --format '{{.Names}}' | grep -qx "${CONTAINER_NAME}"; then
@@ -343,6 +356,18 @@ fi
 echo "=== health ==="
 cat /tmp/textbook_health.json
 echo
+
+# ── Post-deploy: verify served frontend version matches expectation ──────────
+expected_version="$(python3 -c "import json;print(json.load(open('${FRONTEND_VERSION_SRC}'))['frontend_refactor_version'])" 2>/dev/null || echo "")"
+if [ -n "${expected_version}" ]; then
+  served_version="$(curl -sf http://127.0.0.1:8080/assets/version.json 2>/dev/null | python3 -c "import json,sys;print(json.load(sys.stdin)['frontend_refactor_version'])" 2>/dev/null || echo "")"
+  if [ -n "${served_version}" ] && [ "${expected_version}" != "${served_version}" ]; then
+    echo "WARNING: served frontend version (${served_version}) != expected (${expected_version})"
+    echo "This may indicate stale Docker cache or incomplete build."
+  elif [ -n "${served_version}" ]; then
+    echo "=== frontend version verified: ${served_version} ==="
+  fi
+fi
 
 prune_legacy_st_cache
 

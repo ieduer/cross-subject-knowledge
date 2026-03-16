@@ -58,6 +58,8 @@ SOURCE_ASSETS = (
     "backend/supplemental_textbook_pages.manifest.json",
     "frontend/index.html",
     "frontend/dict.html",
+    "frontend/chuzhong.html",
+    "frontend/chuzhong-dict.html",
     "frontend/assets/app.js",
     "frontend/assets/style.css",
     "frontend/assets/dict.js",

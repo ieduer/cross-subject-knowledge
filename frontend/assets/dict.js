@@ -1,4 +1,5 @@
 const API = '';
+const PHASE = document.body.dataset.phase || '高中';
 
 const state = {
     mode: 'lookup',
@@ -1275,6 +1276,7 @@ async function sendChatMessage(message, { silentUser = false, queryKey = state.q
                 textbook_context: state.textbookContext,
                 gaokao_context: state.gaokaoContext,
                 history: historyForRequest,
+                phase: PHASE,
             }),
         });
         if (queryKey !== state.queryKey || expectedQuery !== state.query) {
@@ -1282,7 +1284,7 @@ async function sendChatMessage(message, { silentUser = false, queryKey = state.q
         }
         state.chatHistory.pop();
         if (silentUser) {
-            state.chatHistory.push({ role: 'user', content: `请系统梳理「${state.query}」的教材、词典与真题要点。` });
+            state.chatHistory.push({ role: 'user', content: `请系统梳理「${state.query}」的教材、词典${PHASE === '高中' ? '与真题' : ''}要点。` });
         }
         state.chatHistory.push({ role: 'assistant', content: String(data.answer || 'AI 没有返回内容。') });
     } catch (error) {
@@ -1310,15 +1312,18 @@ async function runSearch(initialQuery) {
     state.queryKey = queryKey;
     el.input.value = query;
     resetPanelsForSearch();
-    history.replaceState({}, '', `/dict.html?q=${encodeURIComponent(query)}`);
+    history.replaceState({}, '', `${PHASE === '初中' ? '/chuzhong-dict.html' : '/dict.html'}?q=${encodeURIComponent(query)}`);
 
     try {
-        const [textbookResult, dictResult, moeResult, gaokaoResult] = await Promise.allSettled([
-            fetchJson(`${API}/api/dict/textbook?q=${encodeURIComponent(query)}&limit=30`),
+        const fetches = [
+            fetchJson(`${API}/api/dict/textbook?q=${encodeURIComponent(query)}&limit=30&phase=${encodeURIComponent(PHASE)}`),
             fetchJson(`${API}/api/dict/search?q=${encodeURIComponent(query)}&limit=20`),
             fetchJson(`${API}/api/dict/moe-revised?q=${encodeURIComponent(query)}&limit=6`),
-            fetchJson(`${API}/api/dict/gaokao?q=${encodeURIComponent(query)}&limit=20`),
-        ]);
+            PHASE === '高中'
+                ? fetchJson(`${API}/api/dict/gaokao?q=${encodeURIComponent(query)}&limit=20`)
+                : Promise.resolve({ results: [] }),
+        ];
+        const [textbookResult, dictResult, moeResult, gaokaoResult] = await Promise.allSettled(fetches);
 
         const textbookFailed = textbookResult.status === 'rejected';
         const dictFailed = dictResult.status === 'rejected';
@@ -1373,7 +1378,7 @@ async function runSearch(initialQuery) {
         state.searchInFlight = false;
         if (evidenceReady) {
             setChatPending(false);
-            void sendChatMessage(`请分析「${query}」这个字或词：先抓教材中的核心义项，再对应真题拿分点。`, { silentUser: true, queryKey, expectedQuery: query });
+            void sendChatMessage(`请分析「${query}」这个字或词：先抓教材中的核心义项，再对应${PHASE === '高中' ? '真题拿分点' : '考点'}。`, { silentUser: true, queryKey, expectedQuery: query });
         } else {
             setChatPending(true);
         }

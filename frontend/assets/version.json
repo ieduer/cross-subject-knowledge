@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.03.11-r30",
-  "updated_at": "2026-03-11",
+  "frontend_refactor_version": "2026.03.15-r31",
+  "updated_at": "2026-03-15",
   "history": [
+    {
+      "version": "2026.03.15-r31",
+      "date": "2026-03-15",
+      "summary": "added junior high (初中) support: 48 textbooks across 9 subjects, phase-aware API/search/AI chat, chuzhong.html/chuzhong-dict.html pages, deploy chain hardening with git HEAD verification and post-deploy version check"
+    },
     {
       "version": "2026.03.11-r30",
       "date": "2026-03-11",

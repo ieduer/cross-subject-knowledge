@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="北大附中 孙玉磊">
-    <title>AI 高中教材 · 北大附中</title>
+    <title>AI 初中教材 · 北大附中</title>
     <meta name="robots" content="index, follow">
     <link rel="icon" href="https://img.bdfz.net/20250503004.webp" type="image/jpeg">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -26,23 +26,22 @@
     <link rel="stylesheet" href="assets/style.css?v=20260315a">
 </head>
 
-<body data-phase="高中">
+<body data-phase="初中">
     <div id="app">
         <!-- Header -->
         <header class="header">
             <div class="header-inner">
                 <div class="logo">
                     <span class="logo-icon">🔗</span>
-                    <span class="logo-text">AI 高中教材</span>
+                    <span class="logo-text">AI 初中教材</span>
                     <span class="logo-badge">BETA</span>
                 </div>
                 <nav class="nav">
                     <button class="nav-btn active" data-view="search">搜索</button>
-                    <button class="nav-btn" data-view="gaokao">📝 真题</button>
                     <button class="nav-btn" data-view="insights">📊 数据</button>
                     <button class="nav-btn" data-view="graph">知识图谱</button>
-                    <a href="/dict.html" class="nav-btn">实虚词典</a>
-                    <a href="/chuzhong.html" class="nav-btn">初中版</a>
+                    <a href="/chuzhong-dict.html" class="nav-btn">实虚词典</a>
+                    <a href="/" class="nav-btn">高中版</a>
                 </nav>
             </div>
         </header>
@@ -51,10 +50,10 @@
         <main id="view-search" class="view active">
             <section class="hero">
                 <h1><span class="gradient-text">这世界真的有学科吗？</span></h1>
-                <p class="hero-sub" id="hero-sub">覆盖高中 9 科 · 加载中…</p>
+                <p class="hero-sub" id="hero-sub">覆盖初中 9 科 · 加载中…</p>
                 <div class="search-box">
                     <span class="search-icon">🔍</span>
-                    <input type="text" id="search-input" placeholder="搜索概念，如：蛋白质、勾股定理、丝绸之路…" autocomplete="off">
+                    <input type="text" id="search-input" placeholder="搜索概念，如：二次函数、力的合成、丝绸之路…" autocomplete="off">
                     <button id="advanced-toggle" class="advanced-toggle active" title="高级搜索">⚙</button>
                     <button id="search-btn" class="search-submit">搜索</button>
                 </div>
@@ -138,76 +137,15 @@
             <section id="results" class="results"></section>
         </main>
 
-        <!-- Gaokao View -->
-        <main id="view-gaokao" class="view">
-            <section class="gaokao-hero">
-                <h2>📝 高考真题库</h2>
-                <p id="gk-hero-sub" class="gaokao-hero-sub">真题库统计加载中…</p>
-            </section>
-
-            <!-- Gaokao Filters -->
-            <div class="gaokao-filters">
-                <div class="filter-group">
-                    <label>📚 学科</label>
-                    <select id="gk-subject">
-                        <option value="">全部学科</option>
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label>📅 年份</label>
-                    <select id="gk-year">
-                        <option value="">全部年份</option>
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label>📋 卷种</label>
-                    <select id="gk-category">
-                        <option value="">全部卷种</option>
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label>📊 题型</label>
-                    <select id="gk-type">
-                        <option value="">全部题型</option>
-                        <option value="objective">客观题</option>
-                        <option value="subjective">主观题</option>
-                    </select>
-                </div>
-                <button id="gk-search-btn" class="gk-search-btn">搜索真题</button>
-            </div>
-
-            <div id="gk-count" class="gk-count hidden"></div>
-            <section id="gk-results" class="gk-results"></section>
-
-            <!-- Textbook Download Link -->
-            <div class="gk-download-link">
-                <a href="https://jks.bdfz.net/" target="_blank" class="download-btn">
-                    📥 教材 PDF 下载 · jks.bdfz.net
-                </a>
-            </div>
-
-            <!-- Gaokao Link Panel (modal) -->
-            <div id="gk-link-panel" class="gk-link-panel hidden">
-                <div class="gk-link-inner">
-                    <div class="gk-link-header">
-                        <h3>📚 教材关联分析</h3>
-                        <button id="gk-link-close" class="gk-link-close">✕</button>
-                    </div>
-                    <div id="gk-link-content" class="gk-link-content"></div>
-                </div>
-            </div>
-        </main>
-
         <!-- Data Insights View -->
         <main id="view-insights" class="view">
             <div class="insights-header">
                 <h2><span class="gradient-text">📊 数据洞察</span></h2>
-                <p>基于 726 个精选学术术语的深度分析</p>
+                <p>基于精选学术术语的深度分析</p>
             </div>
             <div class="insights-tabs">
                 <button class="insight-tab active" data-panel="freq">📈 词频分析</button>
                 <button class="insight-tab" data-panel="heatmap">🔥 学科关联</button>
-                <button class="insight-tab" data-panel="coverage">🎯 考试覆盖</button>
                 <button class="insight-tab" data-panel="breadth">🌐 概念广度</button>
             </div>
             <div class="insights-content">
@@ -217,7 +155,6 @@
                         <select id="freq-source">
                             <option value="all">全部数据</option>
                             <option value="textbook">仅教材</option>
-                            <option value="gaokao">仅真题</option>
                         </select>
                         <select id="freq-subject">
                             <option value="">全部学科</option>
@@ -228,17 +165,6 @@
                 <!-- Heatmap Panel -->
                 <div id="panel-heatmap" class="insight-panel">
                     <div id="heatmap-chart" class="chart-container"></div>
-                </div>
-                <!-- Coverage Panel -->
-                <div id="panel-coverage" class="insight-panel">
-                    <div class="coverage-section">
-                        <h3>🔴 隐性考点 — 真题高频但教材少提</h3>
-                        <div id="coverage-hidden" class="coverage-list"></div>
-                    </div>
-                    <div class="coverage-section">
-                        <h3>🔵 低效学习 — 教材反复出现但真题少考</h3>
-                        <div id="coverage-low" class="coverage-list"></div>
-                    </div>
                 </div>
                 <!-- Concept Breadth Panel -->
                 <div id="panel-breadth" class="insight-panel">

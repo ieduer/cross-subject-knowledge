@@ -26,7 +26,7 @@ def _load_primary_books(db_path: Path) -> dict[str, dict]:
     try:
         rows = con.execute(
             """
-            SELECT DISTINCT book_key, title, subject, content_id
+            SELECT DISTINCT book_key, title, subject, content_id, phase
             FROM chunks
             WHERE source = 'mineru' OR source IS NULL
             ORDER BY subject, title, book_key
@@ -48,6 +48,7 @@ def _load_primary_books(db_path: Path) -> dict[str, dict]:
             "title": str(row["title"] or "").strip(),
             "subject": str(row["subject"] or "").strip(),
             "content_id": str(row["content_id"] or "").strip(),
+            "phase": str(row["phase"] or "高中").strip(),
         }
         for row in rows
         if str(row["book_key"] or "").strip()
@@ -180,9 +181,14 @@ def verify_runtime_data(
             f"supplemental searchable book count mismatch: rows={len(supplemental_books_seen)} catalog={len(supported_searchable_books)}"
         )
 
+    phase_counts: Counter[str] = Counter()
+    for info in primary_books.values():
+        phase_counts[info.get("phase", "高中")] += 1
+
     summary = {
         "status": "ok" if not issues else "failed",
         "primary_db_books": len(primary_books),
+        "primary_db_books_by_phase": dict(sorted(phase_counts.items())),
         "book_map_books": len(book_map),
         "book_map_primary_books": len(primary_books) - len(missing_book_map_keys),
         "book_map_supplemental_books": len(supplemental_page_map_keys),

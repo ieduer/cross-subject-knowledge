@@ -38,6 +38,8 @@ RELEASE_FILES = (
     "backend/xuci_single_char_index.json",
     "frontend/index.html",
     "frontend/dict.html",
+    "frontend/chuzhong.html",
+    "frontend/chuzhong-dict.html",
     "frontend/assets/app.js",
     "frontend/assets/style.css",
     "frontend/assets/dict.js",

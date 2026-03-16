@@ -1842,6 +1842,11 @@ def _is_supported_textbook_book(
         return True
     if _is_real_content_id(normalized_content_id) and normalized_content_id in supported_sets["content_ids"]:
         return True
+    # Fallback: detect edition from book_key when not in manifest
+    if normalized_book_key and not edition:
+        detected = _detect_edition_label(normalized_book_key, Path(), "")
+        if detected and _is_supported_runtime_edition(subject, detected, phase=phase or "高中"):
+            return True
     return False
 
 
@@ -3341,11 +3346,16 @@ def _fetch_chat_rows(
     limit: int,
     scope_subject: str | None = None,
     book_key: str | None = None,
+    phase: str | None = None,
 ):
     candidate_limit = _candidate_window_limit(limit, multiplier=2, minimum=max(8, limit * 2), cap=160)
     where_parts = ["c.source = ?"]
     like_params: list[object] = [source]
     fts_params: list[object] = [source]
+    if phase:
+        where_parts.append("c.phase = ?")
+        like_params.append(phase)
+        fts_params.append(phase)
     if source != "gaokao" and book_key:
         where_parts.append("c.book_key = ?")
         like_params.append(book_key)
@@ -3506,6 +3516,7 @@ def _fetch_chat_rows_for_terms(
     limit: int,
     scope_subject: str | None = None,
     book_key: str | None = None,
+    phase: str | None = None,
 ):
     rows = []
     existing_ids = set()
@@ -3521,6 +3532,7 @@ def _fetch_chat_rows_for_terms(
             limit=per_term_limit,
             scope_subject=scope_subject,
             book_key=book_key,
+            phase=phase,
         ):
             row_id = row["id"]
             if row_id in existing_ids:
@@ -4049,16 +4061,22 @@ def _collect_precision_candidates(
     round_index: int = 0,
     scope_subject: str | None = None,
     book_key: str | None = None,
+    phase: str | None = None,
 ) -> tuple[list[dict], list[str]]:
     search_terms = _build_precision_search_terms(query_profile, query_analysis, round_index=round_index)
     bucket: dict[int | str, dict] = {}
 
     for priority, term in enumerate(search_terms):
+        _phase_where = " AND (c.source = 'mineru' OR c.source IS NULL)"
+        _phase_params: list = []
+        if phase:
+            _phase_where += " AND c.phase = ?"
+            _phase_params.append(phase)
         rows = _search_chunks_by_term(
             con,
             term,
-            where_extra=" AND (c.source = 'mineru' OR c.source IS NULL)",
-            filter_params=[],
+            where_extra=_phase_where,
+            filter_params=_phase_params,
             candidate_limit=18,
             sort="relevance",
         )
@@ -4085,6 +4103,7 @@ def _collect_precision_candidates(
         query_profile.get("target") or query,
         scope_subject=scope_subject,
         book_key=book_key,
+        phase=phase,
         limit=18,
     ):
         _append_precision_candidate(
@@ -4444,6 +4463,7 @@ def _build_precision_chat_context_payload(
     *,
     scope_subject: str | None = None,
     book_key: str | None = None,
+    phase: str | None = None,
 ) -> dict:
     query_profile = _build_precision_query_profile(query, user_message)
     query_analysis = _analyze_search_query(con, query, scope_subject=scope_subject, book_key=book_key)
@@ -4459,6 +4479,7 @@ def _build_precision_chat_context_payload(
             round_index=round_index,
             scope_subject=scope_subject,
             book_key=book_key,
+            phase=phase,
         )
         reranked = _rerank_precision_candidates(user_message or query, query_profile, candidates)[: max(RERANKER_MAX_CANDIDATES, 16)]
         rounds.append(
@@ -4551,6 +4572,7 @@ def _build_precision_chat_context_payload(
         "evidence": evidence,
         "groups": list(groups_by_subject.values()),
         "gaokao_examples": [],
+        "phase": phase,
     }
 
 
@@ -4562,6 +4584,7 @@ def _build_chat_context_payload_legacy(
     *,
     scope_subject: str | None = None,
     book_key: str | None = None,
+    phase: str | None = None,
 ) -> dict:
     clean_q = _clean_query_text(query)
     if not clean_q:
@@ -4593,9 +4616,10 @@ def _build_chat_context_payload_legacy(
         limit=16,
         scope_subject=scope_subject,
         book_key=book_key,
+        phase=phase,
     )
     gaokao_rows = []
-    if not book_key:
+    if not book_key and phase != "初中":
         gaokao_rows = _fetch_chat_rows_for_terms(
             con,
             retrieval_terms,
@@ -4739,6 +4763,7 @@ def _build_chat_context_payload_legacy(
             f"围绕「{query}」最容易混淆的概念有哪些？",
             f"如果我要复习「{query}」，应该按什么顺序串起来学？",
         ],
+        "phase": phase,
     }
 
 
@@ -4750,6 +4775,7 @@ def _build_chat_context_payload(
     *,
     scope_subject: str | None = None,
     book_key: str | None = None,
+    phase: str | None = None,
 ) -> dict:
     if _is_precision_query(query, user_message):
         return _build_precision_chat_context_payload(
@@ -4759,6 +4785,7 @@ def _build_chat_context_payload(
             history=history,
             scope_subject=scope_subject,
             book_key=book_key,
+            phase=phase,
         )
     return _build_chat_context_payload_legacy(
         con,
@@ -4767,6 +4794,7 @@ def _build_chat_context_payload(
         history=history,
         scope_subject=scope_subject,
         book_key=book_key,
+        phase=phase,
     )
 
 
@@ -4777,6 +4805,7 @@ def _build_chat_context_for_request(
     *,
     scope_subject: str | None = None,
     book_key: str | None = None,
+    phase: str | None = None,
 ) -> dict:
     con = get_db()
     try:
@@ -4787,6 +4816,7 @@ def _build_chat_context_for_request(
             history=history,
             scope_subject=scope_subject,
             book_key=book_key,
+            phase=phase,
         )
     finally:
         con.close()
@@ -4799,7 +4829,19 @@ def _build_chat_prompt_legacy(query: str, user_message: str, context_payload: di
     if not history_text:
         history_text = "（无）"
 
-    return f"""你是一位资深跨学科教育专家。用户当前搜索词是「{context_payload.get('query') or query}」。
+    _phase = context_payload.get("phase")
+    _display_phase = "初中" if _phase == "初中" else "高中"
+
+    _gaokao_evidence = ""
+    _gaokao_instruction = ""
+    if _phase == "初中":
+        _gaokao_evidence = "考试真题证据：\n（初中暂无考试真题数据）"
+        _gaokao_instruction = "【考点提示】根据教材证据总结可能的考查方向；如证据不足就写\"证据不足\"。"
+    else:
+        _gaokao_evidence = f"高考证据（如有）：\n{context_payload.get('gaokao_text') or '（无）'}"
+        _gaokao_instruction = "【高考考法】如果给定证据里有真题，再说明常见考法 / 易错点；没有就写\"高考证据不足\"。"
+
+    return f"""你是一位资深跨学科教育专家，面向{_display_phase}学生。用户当前搜索词是「{context_payload.get('query') or query}」。
 
 本轮检索关注词：
 { "、".join(context_payload.get("search_terms_used") or [query]) }
@@ -4819,8 +4861,7 @@ def _build_chat_prompt_legacy(query: str, user_message: str, context_payload: di
 教材证据（多学科原文）：
 {context_payload.get('context_text') or '（无）'}
 
-高考证据（如有）：
-{context_payload.get('gaokao_text') or '（无）'}
+{_gaokao_evidence}
 
 历史对话：
 {history_text}
@@ -4831,14 +4872,14 @@ def _build_chat_prompt_legacy(query: str, user_message: str, context_payload: di
 请按以下结构回答：
 【核心结论】先用 1-2 句讲清本质。
 【学科联动】分点说明不同学科如何描述同一概念，尽量标注出处，格式：[学科·书名·p页码]。
-【高考考法】如果给定证据里有真题，再说明常见考法 / 易错点；没有就写“高考证据不足”。
-【学习建议】给出面向高中生的复习顺序或追问方向。
+{_gaokao_instruction}
+【学习建议】给出面向{_display_phase}生的复习顺序或追问方向。
 
 规则：
 1. 只根据给定证据回答，不要编造页码或教材内容。
-2. 如果证据不足，必须明确说“证据不足”。
+2. 如果证据不足，必须明确说"证据不足"。
 3. 若用户追问，保持连续回答，不重复整段前文。
-4. 可以参考“概念别名 / 关系提示”组织答案，但不能把它们当成教材原文引用。
+4. 可以参考"概念别名 / 关系提示"组织答案，但不能把它们当成教材原文引用。
 5. 语言简洁、具体，避免空泛套话。
 6. 总长度尽量控制在 280 字以内。"""
 
@@ -4867,7 +4908,10 @@ def _build_precision_chat_prompt(
         "process": "过程检索",
     }.get(intent, "精准检索")
 
-    return f"""你是一位严谨的教材检索助手。当前搜索词是「{context_payload.get('query') or query}」，用户当前要解决的是「{target}」的{intent_label}。
+    _phase = context_payload.get("phase")
+    _display_phase = "初中" if _phase == "初中" else "高中"
+
+    return f"""你是一位严谨的教材检索助手，面向{_display_phase}学生。当前搜索词是「{context_payload.get('query') or query}」，用户当前要解决的是「{target}」的{intent_label}。
 
 Agent 检索轮次：{len(rounds)} 轮
 本轮检索关注词：
@@ -4891,8 +4935,8 @@ Agent 检索轮次：{len(rounds)} 轮
 请按以下规则回答：
 1. 先直接回答问题本身，不要先空泛铺垫。
 2. 只能根据教材证据作答，每个核心判断尽量附 1 个出处，格式：[学科·书名·p页码]。
-3. 如果用户在问“定义”，先给最短可背诵表述，再补 1-2 个关键特征。
-4. 如果证据不足或检索结果彼此不一致，必须明确写“教材证据不足”。
+3. 如果用户在问"定义"，先给最短可背诵表述，再补 1-2 个关键特征。
+4. 如果证据不足或检索结果彼此不一致，必须明确写"教材证据不足"。
 5. 忽略低相关结果，不要为了凑字数复述无关内容。
 6. 若用户继续追问，保持连续回答，不重复整段前文。
 7. 总长度尽量控制在 220 字以内。"""
@@ -5068,6 +5112,7 @@ def _write_ai_chat_log(
     provider: str,
     success: bool,
     error: str | None = None,
+    phase: str | None = None,
 ):
     try:
         with _write_lock:
@@ -5077,8 +5122,8 @@ def _write_ai_chat_log(
                     """
                     INSERT INTO ai_chat_logs (
                         query, user_message, subject_count, evidence_count, gaokao_hit_count,
-                        provider, success, error, ts
-                    ) VALUES (?,?,?,?,?,?,?,?,?)
+                        provider, success, error, phase, ts
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         query.strip(),
@@ -5089,6 +5134,7 @@ def _write_ai_chat_log(
                         provider,
                         1 if success else 0,
                         error,
+                        phase,
                         time.time(),
                     ),
                 )
@@ -5107,6 +5153,7 @@ def log_ai_chat(
     provider: str | None = None,
     success: bool,
     error: str | None = None,
+    phase: str | None = None,
 ):
     summary = context_payload.get("summary") or {}
     _write_ai_chat_log(
@@ -5116,6 +5163,7 @@ def log_ai_chat(
         provider=provider or AI_SERVICE_LABEL,
         success=success,
         error=error,
+        phase=phase or context_payload.get("phase"),
     )
 
 
@@ -6167,9 +6215,21 @@ def _build_dict_chat_prompt(
     textbook_context: str,
     gaokao_context: str,
     history: list[dict] | None,
+    phase: str | None = None,
 ) -> str:
     history_text = "\n".join(_format_chat_history_lines(history)) or "（无）"
-    return f"""你是“实虚词典”的古汉语学习教练。用户当前检索的是「{headword}」。
+    _display_phase = "初中" if phase == "初中" else "高中"
+
+    _gaokao_section = ""
+    _gaokao_instruction = ""
+    if phase == "初中":
+        _gaokao_section = "考试真题证据：\n（初中暂无考试真题数据）"
+        _gaokao_instruction = '【考点提示】根据教材证据总结可能的考查方向；如证据不足就写"证据不足"。'
+    else:
+        _gaokao_section = f"语文真题中的古文 / 古诗词证据：\n{gaokao_context[:4000] or '（无）'}"
+        _gaokao_instruction = "【真题拿分】只根据给定真题证据，总结高频考法、常见误判、答题抓手。"
+
+    return f'''你是"实虚词典"的古汉语学习教练，面向{_display_phase}学生。用户当前检索的是「{headword}」。
 
 词典证据：
 {dict_context[:5000] or '（无）'}
@@ -6177,8 +6237,7 @@ def _build_dict_chat_prompt(
 教材中的古文 / 古诗词证据：
 {textbook_context[:5000] or '（无）'}
 
-语文真题中的古文 / 古诗词证据：
-{gaokao_context[:4000] or '（无）'}
+{_gaokao_section}
 
 历史对话：
 {history_text}
@@ -6187,17 +6246,17 @@ def _build_dict_chat_prompt(
 {user_message}
 
 请按这个结构回答：
-【字词定位】先说明这是实词、虚词，或两者兼有；若证据不足，明确写“证据不足”。
+【字词定位】先说明这是实词、虚词，或两者兼有；若证据不足，明确写"证据不足"。
 【教材必记】只根据给定教材证据，提炼最该记住的义项、句法位置、固定搭配。
-【真题拿分】只根据给定真题证据，总结高频考法、常见误判、答题抓手。
+{_gaokao_instruction}
 【速记方法】给出可直接背诵的 3-6 条记忆或辨析规则。
 
 规则：
 1. 只能依据给定证据，不得编造出处、页码、义项或例句。
 2. 若同一字在三本词典解释不同，要点明差异。
 3. 若用户追问，保持上下文连续，不重复整段前文。
-4. 语言尽量具体，面向高中语文得分。
-5. 优先使用简体；若涉及《辞源》原字头，可顺带标出繁体。"""
+4. 语言尽量具体，面向{_display_phase}语文。
+5. 优先使用简体；若涉及《辞源》原字头，可顺带标出繁体。'''
 
 
 def _build_dict_context_block(entries: list[dict]) -> str:
@@ -6235,13 +6294,15 @@ def _build_dict_gaokao_context_block(results: list[dict]) -> str:
     return "\n\n".join(blocks)
 
 
-def _build_dict_chat_context_for_request(headword: str) -> dict:
+def _build_dict_chat_context_for_request(headword: str, *, phase: str | None = None) -> dict:
     dict_payload = dict_search(headword, limit=8)
     textbook_payload = dict_textbook(headword, limit=8)
-    gaokao_payload = dict_gaokao(headword, limit=6)
     dict_entries = dict_payload.get("entries") or []
     textbook_results = textbook_payload.get("results") or []
-    gaokao_results = gaokao_payload.get("results") or []
+    gaokao_results: list[dict] = []
+    if phase != "初中":
+        gaokao_payload = dict_gaokao(headword, limit=6)
+        gaokao_results = gaokao_payload.get("results") or []
     return {
         "dict_entries": dict_entries,
         "textbook_results": textbook_results,
@@ -6249,6 +6310,7 @@ def _build_dict_chat_context_for_request(headword: str) -> dict:
         "dict_context": _build_dict_context_block(dict_entries),
         "textbook_context": _build_dict_textbook_context_block(textbook_results),
         "gaokao_context": _build_dict_gaokao_context_block(gaokao_results),
+        "phase": phase,
         "summary": {
             "subject_count": 1 if textbook_results or gaokao_results else 0,
             "evidence_count": len(dict_entries) + len(textbook_results) + len(gaokao_results),
@@ -7124,7 +7186,7 @@ async def chat_context(payload: dict = Body(...)):
     history = payload.get("history") or []
     scope_subject = str(payload.get("scope_subject", "")).strip() or None
     book_key = str(payload.get("book_key", "")).strip() or None
-    phase = str(payload.get("phase", "")).strip() or None  # phase plumbing (Step 3 will deepen)
+    phase = str(payload.get("phase", "")).strip() or None
     return await run_in_threadpool(
         _build_chat_context_for_request,
         query,
@@ -7132,6 +7194,7 @@ async def chat_context(payload: dict = Body(...)):
         history,
         scope_subject=scope_subject,
         book_key=book_key,
+        phase=phase,
     )
 
 
@@ -7167,7 +7230,7 @@ async def chat(payload: dict = Body(...)):
     history = payload.get("history") or []
     scope_subject = str(payload.get("scope_subject", "")).strip() or None
     book_key = str(payload.get("book_key", "")).strip() or None
-    phase = str(payload.get("phase", "")).strip() or None  # phase plumbing (Step 3 will deepen)
+    phase = str(payload.get("phase", "")).strip() or None
     if not query or not user_message:
         raise HTTPException(400, "query and user_message are required")
 
@@ -7178,13 +7241,14 @@ async def chat(payload: dict = Body(...)):
         history,
         scope_subject=scope_subject,
         book_key=book_key,
+        phase=phase,
     )
     prompt = _build_chat_prompt(query, user_message, context_payload, history=history)
     try:
         ai_data = await _call_ai_service(prompt)
-        await run_in_threadpool(log_ai_chat, query, user_message, context_payload, success=True)
+        await run_in_threadpool(log_ai_chat, query, user_message, context_payload, success=True, phase=phase)
     except HTTPException as e:
-        await run_in_threadpool(log_ai_chat, query, user_message, context_payload, success=False, error=str(e.detail))
+        await run_in_threadpool(log_ai_chat, query, user_message, context_payload, success=False, error=str(e.detail), phase=phase)
         raise
 
     return {
@@ -7550,7 +7614,8 @@ async def dict_chat(payload: dict = Body(...)):
         raise HTTPException(400, "headword and user_message are required")
 
     history = payload.get("history") or []
-    context_payload = await run_in_threadpool(_build_dict_chat_context_for_request, headword)
+    phase = str(payload.get("phase", "")).strip() or None
+    context_payload = await run_in_threadpool(_build_dict_chat_context_for_request, headword, phase=phase)
     prompt = _build_dict_chat_prompt(
         headword,
         user_message,
@@ -7558,12 +7623,13 @@ async def dict_chat(payload: dict = Body(...)):
         textbook_context=context_payload.get("textbook_context", ""),
         gaokao_context=context_payload.get("gaokao_context", ""),
         history=history,
+        phase=phase,
     )
     try:
         ai_data = await _call_ai_service(prompt)
-        await run_in_threadpool(log_ai_chat, headword, user_message, context_payload, success=True)
+        await run_in_threadpool(log_ai_chat, headword, user_message, context_payload, success=True, phase=phase)
     except HTTPException as e:
-        await run_in_threadpool(log_ai_chat, headword, user_message, context_payload, success=False, error=str(e.detail))
+        await run_in_threadpool(log_ai_chat, headword, user_message, context_payload, success=False, error=str(e.detail), phase=phase)
         raise
     return {
         "answer": ai_data.get("answer"),
@@ -9030,3 +9096,11 @@ if FRONTEND.exists():
     @app.get("/dict.html", response_class=HTMLResponse)
     def dict_page():
         return (FRONTEND / "dict.html").read_text(encoding="utf-8")
+
+    @app.get("/chuzhong.html", response_class=HTMLResponse)
+    def chuzhong_page():
+        return (FRONTEND / "chuzhong.html").read_text(encoding="utf-8")
+
+    @app.get("/chuzhong-dict.html", response_class=HTMLResponse)
+    def chuzhong_dict_page():
+        return (FRONTEND / "chuzhong-dict.html").read_text(encoding="utf-8")
