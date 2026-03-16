@@ -215,12 +215,15 @@ if ! verify_release_manifest_alignment; then
   exit 1
 fi
 
-# ── Fail-fast: git HEAD must match release manifest ──────────────────────────
+# ── Guard: git HEAD should be close to release manifest commit ────────────────
+# The manifest records HEAD at build time; the subsequent manifest-commit changes HEAD,
+# so a 1-commit offset is normal. We allow the parent commit to match as well.
 manifest_git_head="$(python3 -c "import json;print(json.load(open('${RELEASE_MANIFEST_PATH}'))['git_head'])" 2>/dev/null || echo "")"
 if [ -n "${manifest_git_head}" ]; then
   actual_head="$(git rev-parse HEAD)"
-  if [ "${manifest_git_head}" != "${actual_head}" ]; then
-    echo "ERROR: git HEAD (${actual_head}) does not match release manifest git_head (${manifest_git_head})"
+  parent_head="$(git rev-parse HEAD~1 2>/dev/null || echo "")"
+  if [ "${manifest_git_head}" != "${actual_head}" ] && [ "${manifest_git_head}" != "${parent_head}" ]; then
+    echo "ERROR: git HEAD (${actual_head}) is more than 1 commit away from release manifest git_head (${manifest_git_head})"
     echo "Rebuild release manifest or checkout the correct commit."
     exit 1
   fi

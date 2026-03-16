@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-16T05:11:56.289130+00:00",
-  "git_head": "a270edd0bd13658045976be62e3ba4d7fcf73a2b",
+  "generated_at": "2026-03-16T05:14:21.234022+00:00",
+  "git_head": "24d93d525641a79e77ea473c08b651ad1939e245",
   "frontend_version": "2026.03.15-r31",
   "source_of_truth": {
     "local_workspace": "authoritative",
@@ -151,8 +151,8 @@
     {
       "kind": "source",
       "logical_path": "scripts/deploy_vps.sh",
-      "size": 15515,
-      "sha256": "535b2d3b14e054026734612072213d555c2b0b53b653e315b8741d753d9a7c05"
+      "size": 15793,
+      "sha256": "ffda062c5d82bb851c57f8c183df017073b6960bec20678ccba4d5153e38e4e6"
     },
     {
       "kind": "source",
