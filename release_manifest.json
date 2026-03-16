@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-16T06:27:21.937313+00:00",
-  "git_head": "f57e24de437a046f1444768f6b6d4e1162c32a70",
+  "generated_at": "2026-03-16T09:51:57.201096+00:00",
+  "git_head": "8e1aab4ac8bce42484c67c454aaff2c6d2b4e6e8",
   "frontend_version": "2026.03.15-r31",
   "source_of_truth": {
     "local_workspace": "authoritative",
@@ -13,8 +13,8 @@
     {
       "kind": "source",
       "logical_path": "Dockerfile",
-      "size": 1391,
-      "sha256": "81e182f30187904c62899480ddb4dfa61012dcd63d43e708b29e12d44f57051b"
+      "size": 1421,
+      "sha256": "e68e3a04e30c529293e4ecc7358ead935cf82a118baae7b3316bb5165d0a4bee"
     },
     {
       "kind": "source",
