@@ -6913,8 +6913,11 @@ def keywords(
                     "SELECT term, subject_count, total_count FROM curated_keywords ORDER BY subject_count DESC, total_count DESC LIMIT ?",
                     (limit,)
                 ).fetchall()
-            result = {"keywords": [{"term": r["term"], "subjects": r["subject_count"], "count": r["total_count"]} for r in rows]}
-        else:
+            if rows:
+                result = {"keywords": [{"term": r["term"], "subjects": r["subject_count"], "count": r["total_count"]} for r in rows]}
+            else:
+                rows = None  # fall through to fallback
+        if not has_table or rows is None:
             if phase == "初中":
                 fallback = ["一次函数", "化学方程式", "光合作用", "丝绸之路", "勾股定理", "欧姆定律",
                             "细胞", "地球运动", "法治", "光的折射", "二元一次方程", "生态系统",
