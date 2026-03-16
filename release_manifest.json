@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-16T05:14:21.234022+00:00",
-  "git_head": "24d93d525641a79e77ea473c08b651ad1939e245",
+  "generated_at": "2026-03-16T06:01:10.694051+00:00",
+  "git_head": "3ecc3c0c45d74917d02109b5d53cb24ce6304698",
   "frontend_version": "2026.03.15-r31",
   "source_of_truth": {
     "local_workspace": "authoritative",
@@ -178,7 +178,7 @@
       "kind": "runtime",
       "logical_path": "data/index/textbook_mineru_fts.db",
       "size": 80961536,
-      "sha256": "a5712dc7c42fa56687f2f7b052d3e69066f242afbf998a5f352e0bb1d95cda6a",
+      "sha256": "4e40b77da1e960b3d0fb91675e6279b2e2e63929ef4261cc6a39af6257a34e27",
       "source_path": "data/index/textbook_mineru_fts.db",
       "runtime_identity": {
         "type": "sqlite_textbook_runtime_identity_v1",
