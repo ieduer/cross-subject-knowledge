@@ -226,7 +226,7 @@ if [ -n "${manifest_git_head}" ]; then
   if [ "${manifest_git_head}" = "${actual_head}" ]; then
     echo "git HEAD guard: exact match ✓"
   else
-    parent_head="$(git rev-parse HEAD~1 2>/dev/null || echo "")"
+    parent_head="$(git rev-parse --verify HEAD~1 2>/dev/null || echo "")"
     if [ -n "${parent_head}" ] && [ "${manifest_git_head}" = "${parent_head}" ]; then
       echo "git HEAD guard: parent match ✓ (manifest is 1 commit behind HEAD, normal)"
     elif [ -z "${parent_head}" ]; then
