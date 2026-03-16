@@ -1512,6 +1512,13 @@ def _normalize_supplemental_page_entry(entry: dict) -> dict | None:
     stable_id = str(entry.get("id") or "").strip()
     if not stable_id:
         stable_id = f"supp:{hashlib.md5(f'{subject}:{title}:{section}'.encode('utf-8')).hexdigest()[:16]}"
+    # Infer phase from title: "义务教育" → 初中, default 高中
+    raw_phase = str(entry.get("phase") or "").strip()
+    if not raw_phase:
+        if "义务教育" in title or "初中" in title:
+            raw_phase = "初中"
+        else:
+            raw_phase = "高中"
     return {
         "id": stable_id,
         "content_id": str(entry.get("content_id") or "").strip() or None,
@@ -1520,6 +1527,7 @@ def _normalize_supplemental_page_entry(entry: dict) -> dict | None:
         "base_title": base_title,
         "edition": str(entry.get("edition") or "").strip(),
         "book_key": str(entry.get("book_key") or "").strip() or None,
+        "phase": raw_phase,
         "section": section,
         "logical_page": logical_page_int,
         "text": text,
@@ -2264,6 +2272,7 @@ def _collect_legacy_search_rows(
     include_supplemental: bool = True,
     seen_ids: set | None = None,
     rank_shift: float = 0.0,
+    phase: str | None = None,
 ) -> list[dict]:
     rows = []
     local_seen = seen_ids if seen_ids is not None else set()
@@ -2304,6 +2313,7 @@ def _collect_legacy_search_rows(
             search_plan,
             scope_subject=scope_subject,
             book_key=book_key,
+            phase=phase,
             limit=max(SUPPLEMENTAL_FALLBACK_LIMIT, candidate_limit),
         )
         for row in supplemental_rows:
@@ -2408,6 +2418,7 @@ def _search_supplemental_textbook_pages(
     *,
     scope_subject: str | None = None,
     book_key: str | None = None,
+    phase: str | None = None,
     limit: int = 80,
 ) -> list[dict]:
     compact_query = _compact_query_text(query)
@@ -2421,6 +2432,8 @@ def _search_supplemental_textbook_pages(
         if book_key and entry.get("book_key") != book_key:
             continue
         if scope_subject and entry.get("subject") != scope_subject:
+            continue
+        if phase and entry.get("phase") != phase:
             continue
 
         matched = None
@@ -3818,6 +3831,7 @@ def _search_supplemental_semantic_candidates(
     *,
     scope_subject: str | None = None,
     book_key: str | None = None,
+    phase: str | None = None,
     limit: int = 18,
 ) -> list[dict]:
     clean_query = _clean_query_text(query_text)
@@ -3846,6 +3860,8 @@ def _search_supplemental_semantic_candidates(
         if book_key and entry.get("book_key") != book_key:
             continue
         if scope_subject and entry.get("subject") != scope_subject:
+            continue
+        if phase and entry.get("phase") != phase:
             continue
         results.append(
             {
@@ -4379,6 +4395,7 @@ def _collect_hybrid_search_rows(
             semantic_query,
             scope_subject=scope_subject,
             book_key=book_key,
+            phase=phase,
             limit=max(6, min(12, math.ceil(candidate_limit / 4))),
         ):
             _append_precision_candidate(
@@ -4396,6 +4413,7 @@ def _collect_hybrid_search_rows(
         term_plan,
         scope_subject=scope_subject,
         book_key=book_key,
+        phase=phase,
         limit=supplemental_limit,
     )
     for index, row in enumerate(supplemental_rows):
@@ -6577,7 +6595,7 @@ def search(
             )
             all_rows = list(hybrid_rows)
             seen_ids = {row.get("id") for row in all_rows if row.get("id") is not None}
-            include_gaokao = not book_key and not scope_subject and source != "textbook"
+            include_gaokao = not book_key and not scope_subject and source != "textbook" and phase != "初中"
             if include_gaokao:
                 gaokao_where_extra = " AND c.source = 'gaokao'"
                 gaokao_filter_params = []
@@ -6614,6 +6632,7 @@ def search(
                 scope_subject=textbook_scope_subject,
                 book_key=book_key,
                 source=source,
+                phase=phase,
             )
             all_rows = _merge_ranked_rows(all_rows, sort=sort)
 
@@ -6734,15 +6753,17 @@ def search_trending(phase: Optional[str] = Query(None, description="Filter by ph
     """Return recent queries and popular queries for display."""
     con = get_db()
     try:
+        phase_filter = " AND phase = ?" if phase else ""
+        phase_params = [phase] if phase else []
         # Recent unique queries (last 50, deduplicated, max 15)
-        recent_rows = con.execute("""
+        recent_rows = con.execute(f"""
             SELECT query, MAX(ts) as latest_ts, MAX(result_count) as cnt
             FROM search_logs
-            WHERE result_count > 0
+            WHERE result_count > 0{phase_filter}
             GROUP BY query_normalized
             ORDER BY latest_ts DESC
             LIMIT 50
-        """).fetchall()
+        """, phase_params).fetchall()
         recent = []
         for row in recent_rows:
             query = row["query"]
@@ -6757,15 +6778,15 @@ def search_trending(phase: Optional[str] = Query(None, description="Filter by ph
 
         # Popular queries (last 7 days, by frequency, min 2 searches)
         week_ago = time.time() - 7 * 86400
-        popular_rows = con.execute("""
+        popular_rows = con.execute(f"""
             SELECT query, query_normalized, COUNT(*) as freq, MAX(result_count) as cnt
             FROM search_logs
-            WHERE ts > ? AND result_count > 0
+            WHERE ts > ? AND result_count > 0{phase_filter}
             GROUP BY query_normalized
             HAVING freq >= 2
             ORDER BY freq DESC
             LIMIT 50
-        """, (week_ago,)).fetchall()
+        """, [week_ago] + phase_params).fetchall()
         popular = []
         for row in popular_rows:
             query = row["query"]
@@ -6894,9 +6915,14 @@ def keywords(
                 ).fetchall()
             result = {"keywords": [{"term": r["term"], "subjects": r["subject_count"], "count": r["total_count"]} for r in rows]}
         else:
-            fallback = ["蛋白质", "DNA", "光合作用", "细胞呼吸", "牛顿第二定律", "勒夏特列原理",
-                        "氧化还原", "基因表达", "丝绸之路", "全球变暖", "元素周期表", "椭圆",
-                        "自然选择", "分离定律", "盖斯定律", "平衡移动", "文艺复兴", "电磁波"]
+            if phase == "初中":
+                fallback = ["一次函数", "化学方程式", "光合作用", "丝绸之路", "勾股定理", "欧姆定律",
+                            "细胞", "地球运动", "法治", "光的折射", "二元一次方程", "生态系统",
+                            "物态变化", "辛亥革命", "全等三角形", "酸碱盐", "大洲大洋", "文言文"]
+            else:
+                fallback = ["蛋白质", "DNA", "光合作用", "细胞呼吸", "牛顿第二定律", "勒夏特列原理",
+                            "氧化还原", "基因表达", "丝绸之路", "全球变暖", "元素周期表", "椭圆",
+                            "自然选择", "分离定律", "盖斯定律", "平衡移动", "文艺复兴", "电磁波"]
             result = {"keywords": [{"term": t, "subjects": 0, "count": 0} for t in fallback]}
         _cache[cache_key] = result
         return result
@@ -7368,13 +7394,15 @@ def dict_textbook(
 
     con = get_db()
     try:
+        dict_phase_filter = " AND phase = ?" if phase else ""
+        dict_phase_params = [phase] if phase else []
         rows = con.execute(
-            """
+            f"""
             SELECT id, subject, title, book_key, section, logical_page, text
             FROM chunks
             WHERE source = 'mineru'
               AND subject = '语文'
-              AND text LIKE ?
+              AND text LIKE ?{dict_phase_filter}
             ORDER BY
                 CASE
                     WHEN INSTR(text, ?) > 0 THEN INSTR(text, ?)
@@ -7384,7 +7412,7 @@ def dict_textbook(
                 id
             LIMIT ?
             """,
-            (f"%{clean_q}%", clean_q, clean_q, max(limit * 6, 120)),
+            [f"%{clean_q}%"] + dict_phase_params + [clean_q, clean_q, max(limit * 6, 120)],
         ).fetchall()
 
         matches = []
@@ -8371,14 +8399,17 @@ def heatmap(phase: Optional[str] = Query(None, description="Filter by phase: 高
     """Cross-subject concept sharing matrix."""
     con = get_db()
     try:
+        hm_phase_filter = " WHERE phase = ?" if phase else ""
+        hm_phase_params = [phase] if phase else []
         # Get all curated concepts and their subject associations
-        curated = {r["term"] for r in con.execute("SELECT term FROM curated_keywords").fetchall()}
+        curated_sql = "SELECT term FROM curated_keywords" + (" WHERE phase = ?" if phase else "")
+        curated = {r["term"] for r in con.execute(curated_sql, hm_phase_params).fetchall()}
 
-        rows = con.execute("""
+        rows = con.execute(f"""
             SELECT concept, subject, SUM(count) as cnt
-            FROM concept_map
+            FROM concept_map{hm_phase_filter}
             GROUP BY concept, subject
-        """).fetchall()
+        """, hm_phase_params).fetchall()
 
         # Build concept -> set of subjects
         concept_subjects = {}
@@ -8423,13 +8454,15 @@ def coverage(
     try:
         has_kc = con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='keyword_counts'").fetchone()
         if has_kc:
-            rows = con.execute("""
+            cov_phase_filter = " WHERE phase = ?" if phase else ""
+            cov_phase_params = [phase] if phase else []
+            rows = con.execute(f"""
                 SELECT term,
                     COALESCE(SUM(CASE WHEN source='textbook' THEN count END), 0) as textbook,
                     COALESCE(SUM(CASE WHEN source='gaokao' THEN count END), 0) as gaokao
-                FROM keyword_counts GROUP BY term
+                FROM keyword_counts{cov_phase_filter} GROUP BY term
                 HAVING textbook > 0 OR gaokao > 0
-            """).fetchall()
+            """, cov_phase_params).fetchall()
         else:
             return {"hidden_exam_focus": [], "low_exam_focus": []}
 
@@ -8464,12 +8497,14 @@ def concept_breadth(
         return _cache[cache_key]
     con = get_db()
     try:
-        rows = con.execute("""
+        cb_phase_filter = " WHERE ck.phase = ?" if phase else ""
+        cb_phase_params = [phase, limit] if phase else [limit]
+        rows = con.execute(f"""
             SELECT ck.term, ck.subject_count, ck.total_count
-            FROM curated_keywords ck
+            FROM curated_keywords ck{cb_phase_filter}
             ORDER BY ck.subject_count DESC, ck.total_count DESC
             LIMIT ?
-        """, (limit,)).fetchall()
+        """, cb_phase_params).fetchall()
 
         result = {
             "concepts": [
@@ -8508,15 +8543,17 @@ GRAPH_GENERIC_TERMS = {
 }
 
 
-def _fetch_graph_local_related(con, center_term: str, center_subjects: set[str], limit: int = 15) -> list[dict]:
+def _fetch_graph_local_related(con, center_term: str, center_subjects: set[str], limit: int = 15, phase: str | None = None) -> list[dict]:
     """Mine related graph concepts from the center term's own high-signal chunks."""
+    gr_phase_filter = " AND c.phase = ?" if phase else ""
+    gr_phase_params = [phase] if phase else []
     try:
-        chunk_rows = con.execute("""
+        chunk_rows = con.execute(f"""
             SELECT c.subject, c.text
             FROM chunks c JOIN chunks_fts ON chunks_fts.rowid = c.id
-            WHERE chunks_fts MATCH ? AND c.source = 'mineru'
+            WHERE chunks_fts MATCH ? AND c.source = 'mineru'{gr_phase_filter}
             LIMIT 80
-        """, (center_term,)).fetchall()
+        """, [center_term] + gr_phase_params).fetchall()
     except Exception:
         return []
 
@@ -8526,8 +8563,9 @@ def _fetch_graph_local_related(con, center_term: str, center_subjects: set[str],
     if not signal_chunks:
         return []
 
-    curated_rows = con.execute("SELECT term, subject_count, total_count FROM curated_keywords").fetchall()
-    concept_rows = con.execute("SELECT concept, subject FROM concept_map").fetchall()
+    gr_phase_where = " WHERE phase = ?" if phase else ""
+    curated_rows = con.execute(f"SELECT term, subject_count, total_count FROM curated_keywords{gr_phase_where}", gr_phase_params).fetchall()
+    concept_rows = con.execute(f"SELECT concept, subject FROM concept_map{gr_phase_where}", gr_phase_params).fetchall()
 
     concept_subjects: dict[str, set[str]] = {}
     for row in concept_rows:
@@ -8622,13 +8660,13 @@ def graph_search(
         cluster_related = []
         try:
             clusters = con.execute(
-                "SELECT DISTINCT cluster_name FROM cross_subject_map WHERE concept = ?",
-                (q_clean,)
+                f"SELECT DISTINCT cluster_name FROM cross_subject_map WHERE concept = ?{phase_filter}",
+                (q_clean,) + phase_params
             ).fetchall()
             for cl in clusters:
                 siblings = con.execute(
-                    "SELECT concept, subject FROM cross_subject_map WHERE cluster_name = ? AND concept != ?",
-                    (cl["cluster_name"], q_clean)
+                    f"SELECT concept, subject FROM cross_subject_map WHERE cluster_name = ? AND concept != ?{phase_filter}",
+                    (cl["cluster_name"], q_clean) + phase_params
                 ).fetchall()
                 for s in siblings:
                     cluster_related.append({
@@ -8644,7 +8682,7 @@ def graph_search(
         # ── Priority 2: local co-mentions in high-signal center chunks ─────
         curated_related = []
         seen_terms = {r["term"] for r in cluster_related}
-        for item in _fetch_graph_local_related(con, q_clean, center_subjects, limit=20):
+        for item in _fetch_graph_local_related(con, q_clean, center_subjects, limit=20, phase=phase):
             if item["term"] == q_clean or item["term"] in seen_terms:
                 continue
             curated_related.append(item)
@@ -8705,6 +8743,9 @@ def graph_overview(
     """Knowledge graph: cross-subject or per-subject concept network."""
     con = get_db()
     try:
+        go_phase_filter = " AND phase = ?" if phase else ""
+        go_phase_where = " WHERE phase = ?" if phase else ""
+        go_phase_params = [phase] if phase else []
         nodes = []
         links = []
 
@@ -8728,10 +8769,10 @@ def graph_overview(
                         }
                     )
             else:
-                rows = con.execute("""
+                rows = con.execute(f"""
                     SELECT concept, count FROM concept_map
-                    WHERE subject = ? ORDER BY count DESC LIMIT ?
-                """, (subject, limit)).fetchall()
+                    WHERE subject = ?{go_phase_filter} ORDER BY count DESC LIMIT ?
+                """, [subject] + go_phase_params + [limit]).fetchall()
                 concepts = [{"term": r["concept"], "count": r["count"]} for r in rows]
                 for c in concepts:
                     nodes.append({"id": c["term"], "type": "concept", "weight": c["count"]})
@@ -8741,11 +8782,11 @@ def graph_overview(
                 for i, t1 in enumerate(terms[:30]):
                     for t2 in terms[i+1:30]:
                         try:
-                            co = con.execute("""
+                            co = con.execute(f"""
                                 SELECT COUNT(*) as cnt FROM chunks c
                                 JOIN chunks_fts ON chunks_fts.rowid = c.id
-                                WHERE c.subject = ? AND chunks_fts MATCH ?
-                            """, (subject, f'"{t1}" AND "{t2}"')).fetchone()
+                                WHERE c.subject = ? AND chunks_fts MATCH ?{go_phase_filter}
+                            """, [subject, f'"{t1}" AND "{t2}"'] + go_phase_params).fetchone()
                             if co and co["cnt"] >= 2:
                                 links.append({"source": t1, "target": t2, "weight": co["cnt"]})
                         except Exception:
@@ -8757,10 +8798,10 @@ def graph_overview(
 
             # ── Layer 1: cross_subject_map clusters (high quality) ───
             try:
-                cluster_rows = con.execute("""
-                    SELECT cluster_name, concept, subject FROM cross_subject_map
+                cluster_rows = con.execute(f"""
+                    SELECT cluster_name, concept, subject FROM cross_subject_map{go_phase_where}
                     ORDER BY cluster_name
-                """).fetchall()
+                """, go_phase_params).fetchall()
             except Exception:
                 cluster_rows = []
 
@@ -8777,7 +8818,7 @@ def graph_overview(
                     if cid not in cluster_node_ids:
                         cluster_node_ids.add(cid)
                         subjs = con.execute(
-                            "SELECT DISTINCT subject FROM concept_map WHERE concept = ?", (cid,)
+                            f"SELECT DISTINCT subject FROM concept_map WHERE concept = ?{go_phase_filter}", [cid] + go_phase_params
                         ).fetchall()
                         nodes.append({
                             "id": cid, "type": "concept",
@@ -8800,16 +8841,16 @@ def graph_overview(
             # ── Layer 2: top cross-subject concepts (≥3 subjects, supplement) ─
             extra_needed = max(0, limit - len(cluster_node_ids))
             if extra_needed > 0:
-                rows = con.execute("""
+                rows = con.execute(f"""
                     SELECT concept, COUNT(DISTINCT subject) as subj_count, SUM(count) as total
-                    FROM concept_map GROUP BY concept
+                    FROM concept_map{go_phase_where} GROUP BY concept
                     HAVING subj_count >= 3
                     ORDER BY subj_count DESC, total DESC LIMIT ?
-                """, (extra_needed,)).fetchall()
+                """, go_phase_params + [extra_needed]).fetchall()
                 for r in rows:
                     if r["concept"] not in cluster_node_ids:
                         subjs = con.execute(
-                            "SELECT DISTINCT subject FROM concept_map WHERE concept = ?", (r["concept"],)
+                            f"SELECT DISTINCT subject FROM concept_map WHERE concept = ?{go_phase_filter}", [r["concept"]] + go_phase_params
                         ).fetchall()
                         nodes.append({
                             "id": r["concept"], "type": "concept",
@@ -9081,7 +9122,7 @@ def book_pages(phase: Optional[str] = Query(None, description="Filter by phase: 
             edition=info.get("edition"),
             phase=phase,
         )
-        and (not phase or str(info.get("phase") or "高中").strip() == phase)
+        and (not phase or (str(info.get("phase") or ("初中" if bk.startswith("初中_") else "高中")).strip() == phase))
     }
 
 

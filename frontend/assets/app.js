@@ -962,8 +962,11 @@ const relatedBarEl = document.getElementById('related-bar');
 searchBtn.addEventListener('click', () => doSearch(searchInput.value));
 searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(searchInput.value); });
 // ── Dynamic Concept Carousel ──────────────────────────────
-const FALLBACK_CONCEPTS = ['蛋白质', 'DNA', '能量守恒', '丝绸之路', '温室效应', '光合作用', '平衡', '电子',
-    '氧化还原', '细胞分裂', '力学', '概率', '函数', '文艺复兴', '全球化', '化学键', '自然选择', '电磁波'];
+const FALLBACK_CONCEPTS = PHASE === '初中'
+    ? ['一次函数', '化学方程式', '光合作用', '丝绸之路', '勾股定理', '欧姆定律', '细胞', '地球运动',
+       '法治', '光的折射', '二元一次方程', '生态系统', '物态变化', '辛亥革命', '全等三角形', '酸碱盐', '大洲大洋', '文言文']
+    : ['蛋白质', 'DNA', '能量守恒', '丝绸之路', '温室效应', '光合作用', '平衡', '电子',
+       '氧化还原', '细胞分裂', '力学', '概率', '函数', '文艺复兴', '全球化', '化学键', '自然选择', '电磁波'];
 let allConcepts = [...FALLBACK_CONCEPTS];
 const carousel = document.getElementById('concept-carousel');
 const CAROUSEL_SIZE = 4;
