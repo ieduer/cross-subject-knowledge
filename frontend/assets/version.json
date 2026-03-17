@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.03.15-r31",
-  "updated_at": "2026-03-15",
+  "frontend_refactor_version": "2026.03.17-r32",
+  "updated_at": "2026-03-17",
   "history": [
+    {
+      "version": "2026.03.17-r32",
+      "date": "2026-03-17",
+      "summary": "初中 data quality fixes: corrected page offsets for 14 初中 books, rebuilt derived concept/keyword/graph tables with phase-aware data (初中 980 concepts + 335 keywords), fixed dict/chat AI 500 error (Query object SQLite binding bug), uploaded 初中 inline content images to R2, trending phase isolation to prevent 高中 terms in 初中 results"
+    },
     {
       "version": "2026.03.15-r31",
       "date": "2026-03-15",

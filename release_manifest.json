@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-17T05:07:12.796468+00:00",
-  "git_head": "f1b5826fbd3139caa87e2b4428ee9135f35be4e3",
-  "frontend_version": "2026.03.15-r31",
+  "generated_at": "2026-03-17T05:17:47.402933+00:00",
+  "git_head": "0b30a8ccac7ce1dfc80c84caee34de54ae404d28",
+  "frontend_version": "2026.03.17-r32",
   "source_of_truth": {
     "local_workspace": "authoritative",
     "github": "authoritative_for_code_only_after_push",
@@ -139,8 +139,8 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/version.json",
-      "size": 7753,
-      "sha256": "1cd84ef09bef99b6b22944545ac4d1bb10065455ccc192d290510860b48dba16"
+      "size": 8200,
+      "sha256": "1f1d7c0a7d68097dd53c3fe19e1aaa2ad43857033fc3ee90f5f8071e99d4a122"
     },
     {
       "kind": "source",

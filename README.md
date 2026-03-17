@@ -1,6 +1,6 @@
-# 🔗 AI 高中教材
+# 🔗 AI 中学教材
 
-> 这世界真的有学科吗？ — 发现高中 9 科教材中**隐藏的跨学科联系**，让 AI 帮你综合解读
+> 这世界真的有学科吗？ — 发现初高中 9 科共 **117 本**教材中**隐藏的跨学科联系**，让 AI 帮你综合解读
 
 **在线体验 → [sun.bdfz.net](https://sun.bdfz.net)**
 
@@ -10,13 +10,14 @@
 
 ## ✨ 核心功能
 
-- 🔍 **跨学科搜索** — 搜索一个概念，按学科分组展示不同教材中的内容
+- 🔍 **跨学科搜索** — 搜索一个概念，按学科分组展示不同教材中的内容，支持高中/初中独立检索
 - 🎯 **精准概念检索** — “晶体的定义” 这类定义型问法会走意图识别、混合召回与重排，不再只按高频词散搜
 - 💡 **自动关联提示** — 检测到概念横跨多学科时，自动提示跨学科联系
 - ✨ **AI 教材解读** — 一键调用 Gemini，支持精确问法优先走后端 agent 检索，也保留跨学科综合解读
-- 🗺️ **知识图谱** — D3.js 力导向交互式图谱，可视化 788 个学术概念在 9 学科间的关联网络，支持缩放/拖拽/悬停高亮
-- 📊 **数据洞察** — 726 个精选学术术语的词频分析、学科关联热力图、考试覆盖分析、概念广度排名
+- 🗺️ **知识图谱** — D3.js 力导向交互式图谱，高中 788 / 初中 335 个学术概念在 9 学科间的关联网络，支持缩放/拖拽/悬停高亮
+- 📊 **数据洞察** — 1,048 个精选学术术语的词频分析、学科关联热力图、考试覆盖分析、概念广度排名
 - 📚 **教材下载** — 全部 316 本高中教材 PDF 可从 [jks.bdfz.net](https://jks.bdfz.net/) 下载
+- 🏫 **初中专区** — 48 本初中 9 科教材独立入口（[sun.bdfz.net/chuzhong.html](https://sun.bdfz.net/chuzhong.html)），数据/热门/图谱/AI 均按学段隔离
 
 数据层、运行时资产与部署边界的长期说明见 [docs/data_layer_lineage_memory.md](docs/data_layer_lineage_memory.md)、[docs/runtime_operations_overview.md](docs/runtime_operations_overview.md)、[docs/release_maintenance_design.md](docs/release_maintenance_design.md) 和 [docs/textbook_identity_audit.md](docs/textbook_identity_audit.md)。任何数据重建、检索排障、部署或回滚前，先看 `data_layer_lineage_memory.md`；涉及手工发布、clean release source 或回滚锚点时，再看 `release_maintenance_design.md`；涉及教材版本和“同一本是否被拆开”时再看 `textbook_identity_audit.md`。
 
@@ -25,7 +26,7 @@
 - ⚙️ **高级搜索面板** — 按教材筛选、按排序方式切换（相关度 / 跨学科数 / 含图优先）
 - 🔗 **相关概念推荐** — 搜索后自动推荐共现频率最高的相关概念，点击即搜
 - 📷 **图片标注** — 搜索结果显示图片数量 badge，展开即可查看教材原图
-- 📖 **教材筛选** — 按学科分组的 62 本受支持教材下拉选择器，精准定位当前产品范围内的教材内容
+- 📖 **教材筛选** — 按学科分组的教材下拉选择器（高中 69 + 初中 48 = 117 本），精准定位当前产品范围内的教材内容
 
 ---
 
@@ -124,22 +125,22 @@
 
 | 指标 | 数值 |
 |------|------|
-| 当前公开教材 | **62 本**（主库支持书 **35** 本 + 补充支持书 **27** 本） |
-| 页图映射书目 | **96 本**（主库 **69** 本 + 已补齐页图的补充支持书 **27** 本） |
-| PDF 下载库 | **316 本**（独立教材下载区） |
-| 学科覆盖 | **9 科**：语文、数学、英语、物理、化学、生物学、历史、地理、思想政治 |
-| 结构化语料 | **21,925 条**（主库教材 **17,896** + 高考真题 **4,029**） |
-| 补充教材页索引 | **2,843 页**（按当前公开支持范围收口后的运行时补充语料；底层 OCR 审计源仍为 `251` 份文件 / `31,170` 个合并源页） |
-| 补充教材向量 | **2,843 条**（`BAAI/bge-m3`，与当前补充页源 fingerprint / sha256 一致） |
+| 主库教材 | **117 本**（高中 **69** 本 + 初中 **48** 本） |
+| 补充教材 | **27 本**（高中公开支持范围内的补充教材） |
+| 页图映射书目 | **117 本**（高中 9,502 页 + 初中 6,712 页 = **16,214 页** webp） |
+| PDF 下载库 | **316 本**（高中独立教材下载区） |
+| 学科覆盖 | **9 科** × 2 学段：语文、数学、英语、物理、化学、生物学、历史、地理、思想政治/道德与法治 |
+| 结构化语料 | **24,096 条**（高中教材 **12,559** + 初中教材 **7,508** + 高考真题 **4,029**） |
+| 补充教材页索引 | **2,843 页**（高中公开支持范围内的补充语料） |
 | 高考真题 | **4,029 道**（`2002-2025`，其中 **651** 道含图题） |
-| 学术概念图谱 | **788 个**概念，1,723 条学科映射，83 条跨学科聚合记录 |
-| 精选术语 | **726 个**精选学术术语 |
-| 教材插图 | **87,156 张**（3.4 GB，由 R2 CDN 全球分发） |
-| FTS 索引大小 | **56 MB**（SQLite FTS5 运行库） |
-| FAISS 索引大小 | **70 MB**（`BAAI/bge-m3`，17,896 向量） |
+| 学术概念图谱 | **2,675 条**概念映射（高中 1,695 + 初中 980），**166 条**跨学科聚合 |
+| 精选术语 | **1,048 个**（高中 713 + 初中 335） |
+| 教材内容插图 | **33,449 张**（高中 20,562 + 初中 12,887，由 R2 CDN 全球分发） |
+| FTS 索引大小 | **77 MB**（SQLite FTS5 运行库） |
+| FAISS 索引大小 | **79 MB**（`BAAI/bge-m3`，20,067 向量） |
 | Docker 运行镜像 | **2.07 GB**（CPU-only，运行时数据和缓存走宿主机挂载） |
 
-### 概念图谱各学科分布
+### 概念图谱各学科分布（高中）
 
 | 学科 | 概念数 | 示例 |
 |------|--------|------|
@@ -153,7 +154,9 @@
 | 🗺️ 地理 | 154 | — |
 | 🌍 英语 | 67 | — |
 
-> **跨学科概念 TOP 5**：古希腊(9科)、现代化(8科)、环境保护(8科)、地震(8科)、火山(8科)
+> **跨学科概念 TOP 5**（高中）：古希腊(9科)、现代化(8科)、环境保护(8科)、地震(8科)、火山(8科)
+
+初中共 **335 个**精选术语、**980 条**概念映射、**83 条**跨学科聚合，覆盖 9 学科。
 
 ### 各学科语料分布
 
@@ -191,17 +194,17 @@
     │               ├── FastAPI 后端 (Python 3.13)
     │               ├── NLP/ML 引擎
     │               │   ├── BAAI/bge-m3 ── 多语言语义向量 (1024D)
-    │               │   ├── FAISS ── 17,896 条教材向量稠密检索
+    │               │   ├── FAISS ── 20,067 条教材向量稠密检索
     │               │   ├── BAAI/bge-reranker-base ── precision / hybrid 重排
     │               │   └── Jieba ── 中文分词 + 词性标注
     │               ├── 前端 (HTML/CSS/JS + D3.js + KaTeX)
-    │               ├── SQLite FTS5 检索库 (56MB)
+    │               ├── SQLite FTS5 检索库 (77MB)
     │               ├── 补充教材页索引 (15,185 页 gzip + manifest)
     │               ├── 补充教材向量 (15,185 条，FAISS)
     │               └── 宿主机挂载 data/index + state/cache
     │
     ├── HTTPS → img.rdfzer.com (Cloudflare R2 CDN)
-    │           └── 87,156 张教材原图（3.4GB，全球加速，免费出站）
+    │           └── 33,449 张教材内容插图 + 16,214 张页面图（3.4GB，全球加速，免费出站）
     │
     └── HTTPS → ai.bdfz.net (Cloudflare Worker custom domain)
                 └── service: apis / production → Gemini API 最大 key 池
@@ -221,7 +224,9 @@
 /app/                           # 镜像内代码
 ├── backend/main.py             # FastAPI 应用
 ├── frontend/
-│   ├── index.html              # 主页（搜索/真题/图谱/数据/关于）
+│   ├── index.html              # 高中主页（搜索/真题/图谱/数据/关于）
+│   ├── chuzhong.html           # 初中主页（搜索/图谱/数据/关于）
+│   ├── chuzhong-dict.html      # 初中实虚词典
 │   └── assets/
 │       ├── style.css
 │       └── app.js
@@ -242,7 +247,7 @@
     └── hub/                    # HF / Transformers / sentence-transformers 共享模型快照
 ```
 
-> 📷 **图片不在 Docker 中** — 87K 张原图托管在 Cloudflare R2（`img.rdfzer.com`），前端通过 CDN URL 直接加载。
+> 📷 **图片不在 Docker 中** — 所有教材原图与页面图托管在 Cloudflare R2（`img.rdfzer.com`），前端通过 CDN URL 直接加载。
 
 ---
 
@@ -311,17 +316,17 @@ CREATE VIRTUAL TABLE chunks_fts USING fts5(text, content=chunks, content_rowid=i
 **脚本**：`scripts/27_rebuild_concepts.py`
 
 - 从 996 个精心策划的学术术语出发，经过 Unicode 规范化 + 通用词过滤后保留 875 个
-- 逐条匹配 19,723 条 chunk 文本，生成 `concept_map`（学科-概念-频次映射）
-- 同时生成 `curated_keywords`、`keyword_counts`、`cross_subject_map`
+- 逐条匹配 20,067 条教材 chunk 文本，按学段（高中/初中）生成 `concept_map`（学科-概念-频次映射）
+- 同时生成 `curated_keywords`、`keyword_counts`、`cross_subject_map`，均含 phase 字段
 - 支持希腊字母（σ键、α粒子、γ射线）的 Unicode NFKC 规范化匹配
 
 **产物**：
 | 表 | 行数 | 说明 |
 |------|------|------|
-| `concept_map` | 1,714 | 学科-概念-频次三元组 |
-| `curated_keywords` | 720 | 精选学术术语 |
-| `keyword_counts` | 2,825 | 术语按学科和来源的频次统计 |
-| `cross_subject_map` | 83 | 跨学科概念聚类 |
+| `concept_map` | 2,675 | 学科-概念-频次三元组（高中 1,695 + 初中 980） |
+| `curated_keywords` | 1,048 | 精选学术术语（高中 713 + 初中 335） |
+| `keyword_counts` | 3,740 | 术语按学科和来源的频次统计 |
+| `cross_subject_map` | 166 | 跨学科概念聚类（高中 83 + 初中 83） |
 
 ### Phase 5: 图片上传
 
@@ -366,24 +371,29 @@ RUNTIME_ROOT=/root/cross-subject-knowledge ./scripts/deploy_vps.sh
 
 ## VPS 推荐规格
 
-当前线上运行时实测：
+当前线上运行时实测（2026-03-17，高中 69 + 初中 48 = 117 本教材）：
 
-- 应用容器常驻内存约 **1.2 GiB**
-- 宿主机总内存 **5.8 GiB** 时运行稳定
-- 运行时数据目录约 **< 1 GiB**
-- 生产风险点主要不在数据库，而在 **Docker 镜像体积** 和 **历史镜像堆积**
+- 应用容器常驻内存约 **735 MiB**（启动峰值含模型加载约 2.2 GiB）
+- 宿主机总内存 **5.8 GiB** / 已用约 **2.4 GiB** / 可用 **3.4 GiB**，运行稳定
+- CPU 4 核 AMD EPYC，idle 负载 < 0.1，健康检查期间短暂 100%
+- 运行时数据目录约 **826 MB**（DB 77MB + FAISS 79MB + 补充索引 + manifest 等）
+- 模型缓存（`state/cache/`）约 **5.4 GB**（bge-m3 + bge-reranker-base）
+- Docker 镜像 **2.07 GB**；磁盘总占用（项目 + 镜像 + 缓存）约 **10 GB**
+- 宿主机磁盘 99 GB，已用 58 GB（61%），含历史数据和其他服务
 
 推荐规格：
 
-- **最低可用**：2 vCPU / 4 GB RAM / 25 GB SSD
-- **推荐生产**：4 vCPU / 8 GB RAM / 60 GB SSD
-- **如果同机还跑别的服务或要在 VPS 本机 `docker build`**：建议 4 vCPU / 8 GB RAM / 80 GB SSD
+- **最低可用**：2 vCPU / 4 GB RAM / 40 GB SSD
+- **推荐生产**：4 vCPU / 8 GB RAM / 80 GB SSD
+- **如果同机还跑别的服务或要在 VPS 本机 `docker build`**：建议 4 vCPU / 8 GB RAM / 100 GB SSD
 
 说明：
 
 - 本项目生产不需要 GPU
 - FAISS 重建和批量数据加工继续放在离线机器，本 VPS 只承担运行时检索与对话服务
-- 模型缓存现在建议落在宿主机 `state/cache/`，不要再烘进镜像层
+- 模型缓存（bge-m3 2.2GB + bge-reranker-base 1.1GB）落在宿主机 `state/cache/`，不要烘进镜像层
+- 无 swap 运行正常，但建议配置 2GB swap 作为安全余量
+- 磁盘空间需预留历史回滚镜像（每个 2.07GB）和日志增长空间
 
 ---
 
@@ -504,7 +514,7 @@ RUNTIME_ROOT=/root/cross-subject-knowledge ./scripts/deploy_vps.sh
 |---|---|---|
 | CPU | 2 核 | 4 核 |
 | 内存 | 4 GB | 8 GB |
-| 磁盘 | 25 GB | 60 GB |
+| 磁盘 | 40 GB | 80 GB |
 | OS | Ubuntu 22.04+ | Ubuntu 24.04 |
 | Docker | 必须 | ✅ |
 
@@ -561,11 +571,11 @@ certbot --nginx -d your-domain.com
 |------|------|------|
 | 中文向量模型 | `BAAI/bge-m3` | 1024D 多语言/长文本嵌入，2.2GB，全面提升语义理解度 |
 | 重排模型 | `BAAI/bge-reranker-base` | CrossEncoder，用于 precision / hybrid 查询最终重排 |
-| 向量检索 | `faiss-cpu` | 17,896 向量 IndexIDMap，70MB |
+| 向量检索 | `faiss-cpu` | 20,067 向量 IndexIDMap，79MB |
 | API 缓存 | `cachetools` | TTLCache (5min, maxsize=64) 加速读密集型高频 API |
-| 中文分词 | `jieba` + POS tagging | 启动时自动加载 `curated_keywords` 的 726 个学术术语为高权重用户词典，精准切词 |
+| 中文分词 | `jieba` + POS tagging | 启动时自动加载 `curated_keywords` 的 1,048 个学术术语为高权重用户词典，精准切词 |
 | 自动部署 | GitHub Actions + `deploy_vps.sh` | 干净 release checkout 构建、健康检查、失败回滚 |
-| 概念图谱 | SQLite `concept_map` | 788 个学术概念，跨学科自动发现 |
+| 概念图谱 | SQLite `concept_map` | 2,675 条概念映射（高中+初中），跨学科自动发现 |
 | 全文检索 | SQLite FTS5 | Porter 分词器，OR 组合查询 |
 | 补充教材兜底 | `supplemental_textbook_pages.jsonl.gz` | 当前公开范围为 `2,843` 页全文匹配，仅保留 `人教版全部`、`英语·北师大版`、`化学·鲁科版` 的补充教材页 |
 | 补充教材向量 | `supplemental_textbook_pages.index` | 当前公开范围为 `2,843` 条 `BAAI/bge-m3` 补充页向量，参与 hybrid semantic recall |
@@ -581,6 +591,32 @@ certbot --nginx -d your-domain.com
 ---
 
 ## 📋 更新日志
+
+### 2026-03-17: 初中数据质量修复 + 实虚词典 AI 修复
+
+**初中数据修复**
+- ✅ 修正 14 本初中教材的 `page_offset` 值（自动检测置信度低，改为人工校核），页面查看器"查看原文"定位准确
+- ✅ 重建派生概念/术语/图谱表：初中新增 980 条概念映射、335 个精选术语、83 条跨学科聚合
+- ✅ 热门搜索词学段隔离：`_current_query_result_count()` 增加 phase 过滤，初中不再出现高中专有词
+- ✅ 上传 48 本初中教材的 12,887 张内容插图到 R2 CDN（`orig/初中_*/`），搜索结果内图片不再 404
+
+**实虚词典 AI 修复**
+- ✅ 修复 `/api/dict/chat` 500 错误：内部调用 `dict_textbook()` 时 `phase` 参数未传递，FastAPI `Query(None)` 对象被当作 SQL 参数绑定导致 `sqlite3.ProgrammingError`
+- ✅ 高中/初中实虚词典 AI 对话均恢复正常
+
+**数据规模更新**
+- ✅ 主库教材：117 本（高中 69 + 初中 48），覆盖 9 学科 × 2 学段
+- ✅ 结构化语料：24,096 条（高中 12,559 + 初中 7,508 + 高考 4,029）
+- ✅ 学术概念：2,675 条映射、1,048 个精选术语、166 条跨学科聚合
+- ✅ 页图：16,214 页 webp（高中 9,502 + 初中 6,712）
+- ✅ FAISS 向量：20,067 条（79MB）
+
+### 2026-03-15: 初中 48 本教材上线
+
+- ✅ 新增初中学段：48 本教材覆盖语文、数学、英语、物理、化学、生物学、历史、地理、道德与法治 9 科
+- ✅ 独立初中入口 `chuzhong.html` / `chuzhong-dict.html`，搜索/AI/图谱/数据洞察均按学段隔离
+- ✅ 所有 API 端点新增 `phase` 参数过滤，高中功能不受影响
+- ✅ 部署链加固：git HEAD 校验 + 部署后版本检查
 
 ### 2026-03-10: 支持范围收口 + 补充教材页图补齐
 
