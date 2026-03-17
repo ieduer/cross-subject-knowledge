@@ -6317,7 +6317,7 @@ def _build_dict_gaokao_context_block(results: list[dict]) -> str:
 
 def _build_dict_chat_context_for_request(headword: str, *, phase: str | None = None) -> dict:
     dict_payload = dict_search(headword, limit=8)
-    textbook_payload = dict_textbook(headword, limit=8)
+    textbook_payload = dict_textbook(headword, limit=8, phase=phase)
     dict_entries = dict_payload.get("entries") or []
     textbook_results = textbook_payload.get("results") or []
     gaokao_results: list[dict] = []
