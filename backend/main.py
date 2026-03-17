@@ -870,42 +870,45 @@ def _is_synthetic_query(query: str | None) -> bool:
     return bool(TRENDING_QUERY_EXCLUDE_RE.search(raw))
 
 
-def _current_query_result_count(con: sqlite3.Connection, query: str, *, cap: int = 200) -> int:
+def _current_query_result_count(con: sqlite3.Connection, query: str, *, phase: str | None = None, cap: int = 200) -> int:
     clean_q = str(query or "").strip()
     if not clean_q:
         return 0
     like_pattern = f"%{clean_q}%"
+    phase_filter = " AND c.phase = ?" if phase else ""
+    phase_filter_plain = " AND phase = ?" if phase else ""
+    phase_params: list = [phase] if phase else []
     try:
         row = con.execute(
-            """
+            f"""
                 SELECT COUNT(*) AS cnt
                 FROM (
                     SELECT c.id
                     FROM chunks c
                     JOIN chunks_fts ON chunks_fts.rowid = c.id
-                    WHERE c.text IS NOT NULL AND c.text != '' AND chunks_fts MATCH ?
+                    WHERE c.text IS NOT NULL AND c.text != '' AND chunks_fts MATCH ?{phase_filter}
                     UNION
                     SELECT id
                     FROM chunks
-                    WHERE text LIKE ?
+                    WHERE text LIKE ?{phase_filter_plain}
                     LIMIT ?
                 )
             """,
-            (clean_q, like_pattern, cap),
+            (clean_q, *phase_params, like_pattern, *phase_params, cap),
         ).fetchone()
         return int(row["cnt"] or 0) if row else 0
     except Exception:
         row = con.execute(
-            """
+            f"""
                 SELECT COUNT(*) AS cnt
                 FROM (
                     SELECT id
                     FROM chunks
-                    WHERE text LIKE ?
+                    WHERE text LIKE ?{phase_filter_plain}
                     LIMIT ?
                 )
             """,
-            (like_pattern, cap),
+            (like_pattern, *phase_params, cap),
         ).fetchone()
         return int(row["cnt"] or 0) if row else 0
 
@@ -6769,7 +6772,7 @@ def search_trending(phase: Optional[str] = Query(None, description="Filter by ph
             query = row["query"]
             if _is_synthetic_query(query):
                 continue
-            current_count = _current_query_result_count(con, query)
+            current_count = _current_query_result_count(con, query, phase=phase)
             if current_count <= 0:
                 continue
             recent.append({"query": query, "count": current_count})
@@ -6792,7 +6795,7 @@ def search_trending(phase: Optional[str] = Query(None, description="Filter by ph
             query = row["query"]
             if _is_synthetic_query(query):
                 continue
-            current_count = _current_query_result_count(con, query)
+            current_count = _current_query_result_count(con, query, phase=phase)
             if current_count <= 0:
                 continue
             popular.append({"query": query, "freq": int(row["freq"] or 0), "count": current_count})
@@ -6898,6 +6901,7 @@ def keywords(
         has_table = con.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='curated_keywords'"
         ).fetchone()
+        rows = None
         if has_table:
             has_phase_col = any(
                 r[1] == "phase"
