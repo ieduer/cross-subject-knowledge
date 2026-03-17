@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-17T02:34:36.782286+00:00",
-  "git_head": "226077164fbb3a45f128d3ed53e0a906cc05ef92",
+  "generated_at": "2026-03-17T02:59:56.804785+00:00",
+  "git_head": "97bd68a35f4b01886242d2b209efec3ffec74257",
   "frontend_version": "2026.03.15-r31",
   "source_of_truth": {
     "local_workspace": "authoritative",
@@ -145,8 +145,8 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/pages/book_map.json",
-      "size": 52419,
-      "sha256": "b7d01f55983e59033cc8a5300a5755a49ffc6a7b60b9b8af05ae678a1c10c8cb"
+      "size": 52402,
+      "sha256": "4422ea7c9f940762d3de2fdb2f88fc0b32172c37bdb6f3a8dcbab5be5765c7b7"
     },
     {
       "kind": "source",
@@ -178,7 +178,7 @@
       "kind": "runtime",
       "logical_path": "data/index/textbook_mineru_fts.db",
       "size": 80961536,
-      "sha256": "4e40b77da1e960b3d0fb91675e6279b2e2e63929ef4261cc6a39af6257a34e27",
+      "sha256": "15a0cdd3916a51fe8243c08cf46821214992bf5f6697bee9fecdcb92f496b8e7",
       "source_path": "data/index/textbook_mineru_fts.db",
       "runtime_identity": {
         "type": "sqlite_textbook_runtime_identity_v1",
@@ -192,7 +192,7 @@
         "content_tables": {
           "chunks": {
             "row_count": 24096,
-            "sha256": "d86dfa9c9bc35b6e76921d6e6e06f0a3a87355f3297b91f9660616af832dca3d"
+            "sha256": "645f067848299aec0e7bf5cb2b848c5e501abb48054fe82dff5ca64172fff313"
           },
           "ai_summaries": {
             "row_count": 17506,
@@ -207,20 +207,20 @@
             "sha256": "427b888ce49c265cd10ec1c6342fc2032c467edb37393549055b2a0b0d57d770"
           },
           "concept_map": {
-            "row_count": 1102,
-            "sha256": "efd7cb61f4c202719353761b35f689be680785fdf72be898956f28c20c9111b9"
+            "row_count": 2675,
+            "sha256": "c7686092920cc48285516bf969d165fdba01794aabbf86db393ebdacc4caf7ed"
           },
           "cross_subject_map": {
-            "row_count": 83,
-            "sha256": "9d2548f19c272bccb42bae28961c7a001ac2fad9f042ced1e8d8b97d1832e10d"
+            "row_count": 166,
+            "sha256": "e437e6ee9daf5440e3603a0dca6a7cad540033ba8a93023aadef8aecd2e666b2"
           },
           "curated_keywords": {
-            "row_count": 515,
-            "sha256": "238724a137fe5f43464cb5d2dd0b2d5d351b9b2f5a49e6f9626371f7cecd8987"
+            "row_count": 1048,
+            "sha256": "5b231d431a0fb57903c85f3609948fd05c821c60d6cacfc8d8e08214216b7a7b"
           },
           "keyword_counts": {
-            "row_count": 1773,
-            "sha256": "6fbbdd7ac0e328525356dd120186c250bbee10908dee8c02f97933e1d49315b1"
+            "row_count": 3740,
+            "sha256": "6606dd4154e19c49d20ef17039b27e7d848ceb9fe000e379d5e1367adb48aea3"
           },
           "ai_gaokao_links": {
             "row_count": 4029,

@@ -4,7 +4,7 @@
     "title": "义务教育教科书_化学九年级上册",
     "display_title": "义务教育教科书_化学九年级上册",
     "pages": 199,
-    "page_offset": -77,
+    "page_offset": 6,
     "content_id": "8c766ffb-8500-5fbb-a77c-c9105023fe26",
     "subject": "化学",
     "edition": ""
@@ -204,7 +204,7 @@
     "title": "义务教育教科书_人文地理下册",
     "display_title": "义务教育教科书_人文地理下册",
     "pages": 114,
-    "page_offset": 21,
+    "page_offset": 4,
     "content_id": "760df962-66d6-5b51-b86c-f9b4d8ddc111",
     "subject": "地理",
     "edition": ""
@@ -234,7 +234,7 @@
     "title": "义务教育教科书_地理八年级上册",
     "display_title": "义务教育教科书_地理八年级上册",
     "pages": 133,
-    "page_offset": 31,
+    "page_offset": 4,
     "content_id": "f62a5433-15f3-5db2-8767-22218c0de464",
     "subject": "地理",
     "edition": ""
@@ -474,7 +474,7 @@
     "title": "义务教育教科书_数学七年级上册",
     "display_title": "义务教育教科书_数学七年级上册",
     "pages": 202,
-    "page_offset": 59,
+    "page_offset": 6,
     "content_id": "4bad090d-a5e6-5624-94d1-c10472b0ecf1",
     "subject": "数学",
     "edition": ""
@@ -484,7 +484,7 @@
     "title": "义务教育教科书_数学七年级下册",
     "display_title": "义务教育教科书_数学七年级下册",
     "pages": 202,
-    "page_offset": 23,
+    "page_offset": 6,
     "content_id": "320cd42b-5c51-5c87-aa7b-8fa4130b5471",
     "subject": "数学",
     "edition": ""
@@ -494,7 +494,7 @@
     "title": "义务教育教科书_数学九年级上册",
     "display_title": "义务教育教科书_数学九年级上册",
     "pages": 163,
-    "page_offset": -2,
+    "page_offset": 6,
     "content_id": "26000b46-e04b-50a5-97e1-7c42e7855eb0",
     "subject": "数学",
     "edition": ""
@@ -504,7 +504,7 @@
     "title": "义务教育教科书_数学九年级下册",
     "display_title": "义务教育教科书_数学九年级下册",
     "pages": 122,
-    "page_offset": 28,
+    "page_offset": 6,
     "content_id": "44d22f1f-89b7-540b-ad9f-af530302c916",
     "subject": "数学",
     "edition": ""
@@ -514,7 +514,7 @@
     "title": "义务教育教科书_数学八年级上册",
     "display_title": "义务教育教科书_数学八年级上册",
     "pages": 182,
-    "page_offset": -202,
+    "page_offset": 6,
     "content_id": "0e6ebd66-a977-5d26-ae1d-9610a95aa137",
     "subject": "数学",
     "edition": ""
@@ -654,7 +654,7 @@
     "title": "义务教育教科书_物理九年级全一册",
     "display_title": "义务教育教科书_物理九年级全一册",
     "pages": 218,
-    "page_offset": 65,
+    "page_offset": 6,
     "content_id": "10150221-eca6-5c3a-912a-916c5be36805",
     "subject": "物理",
     "edition": ""
@@ -674,7 +674,7 @@
     "title": "义务教育教科书_物理八年级下册",
     "display_title": "义务教育教科书_物理八年级下册",
     "pages": 131,
-    "page_offset": -4,
+    "page_offset": 6,
     "content_id": "3fcc920b-4ddf-5d02-b37c-049114b16f13",
     "subject": "物理",
     "edition": ""
@@ -1104,7 +1104,7 @@
     "title": "义务教育教科书_道德与法治七年级上册",
     "display_title": "义务教育教科书_道德与法治七年级上册",
     "pages": 114,
-    "page_offset": -4,
+    "page_offset": 4,
     "content_id": "d3d402fe-e7d0-573f-b7ab-48486f0c6697",
     "subject": "道德与法治",
     "edition": ""
@@ -1114,7 +1114,7 @@
     "title": "义务教育教科书_道德与法治七年级下册",
     "display_title": "义务教育教科书_道德与法治七年级下册",
     "pages": 114,
-    "page_offset": -2,
+    "page_offset": 4,
     "content_id": "bd4e772d-88fa-5e5e-892d-8ed708cf7629",
     "subject": "道德与法治",
     "edition": ""
@@ -1144,7 +1144,7 @@
     "title": "义务教育教科书_道德与法治八年级上册",
     "display_title": "义务教育教科书_道德与法治八年级上册",
     "pages": 122,
-    "page_offset": -4,
+    "page_offset": 4,
     "content_id": "b122d721-cc77-50f8-b87a-a90873b8dc1f",
     "subject": "道德与法治",
     "edition": ""
@@ -1154,7 +1154,7 @@
     "title": "义务教育教科书_道德与法治八年级下册",
     "display_title": "义务教育教科书_道德与法治八年级下册",
     "pages": 127,
-    "page_offset": -4,
+    "page_offset": 4,
     "content_id": "789bf9a4-04d7-50c9-93d5-45c3bd048e55",
     "subject": "道德与法治",
     "edition": ""
