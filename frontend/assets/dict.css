@@ -352,6 +352,76 @@ body.dict-page {
     color: #fdcb6e;
 }
 
+.dict-idiom-entry .dict-entry-headword {
+    font-size: 1.25rem;
+}
+
+.dict-idiom-body .idiom-section {
+    margin: 0.75rem 0;
+}
+
+.dict-idiom-body .idiom-section-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #a29bfe;
+    margin: 0 0 0.3rem 0;
+    letter-spacing: 0.05em;
+}
+
+.dict-idiom-body .idiom-source-text {
+    font-family: 'Noto Serif SC', serif;
+    font-size: 0.92rem;
+    line-height: 1.7;
+    color: #b2bec3;
+}
+
+.dict-idiom-body .idiom-notes {
+    font-size: 0.85rem;
+    color: #636e72;
+    line-height: 1.6;
+}
+
+.dict-idiom-body .idiom-examples {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.dict-idiom-body .idiom-examples li {
+    padding: 0.15rem 0;
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+.dict-idiom-body .idiom-examples li::before {
+    content: '·';
+    margin-right: 0.4rem;
+    color: #636e72;
+}
+
+.dict-idiom-body .idiom-citations {
+    padding-left: 1.5rem;
+    margin: 0;
+}
+
+.dict-idiom-body .idiom-citations li {
+    padding: 0.15rem 0;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: #b2bec3;
+}
+
+.dict-idiom-body .idiom-rel-section {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.5rem;
+}
+
+.dict-idiom-body .idiom-rel-section .idiom-rel b {
+    color: #636e72;
+    font-weight: 500;
+}
+
 .dict-page-entry {
     display: flex;
     flex-direction: column;

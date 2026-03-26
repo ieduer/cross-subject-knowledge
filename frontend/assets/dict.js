@@ -1220,20 +1220,64 @@ function renderMoeRevisedEntries(payload) {
     }).join('');
 }
 
+function renderIdiomSections(sections) {
+    if (!sections || typeof sections !== 'object') return '';
+    const parts = [];
+    if (sections.definition) {
+        parts.push(`<div class="idiom-section"><h4 class="idiom-section-title">释义</h4><p>${escHtml(sections.definition)}</p></div>`);
+    }
+    if (sections.story) {
+        parts.push(`<div class="idiom-section"><h4 class="idiom-section-title">典故说明</h4><p>${escHtml(sections.story)}</p></div>`);
+    }
+    if (sections.source_text) {
+        const sourceLabel = sections.source_name ? escHtml(sections.source_name) : '典源';
+        parts.push(`<div class="idiom-section"><h4 class="idiom-section-title">典源 · ${sourceLabel}</h4><p class="idiom-source-text">${escHtml(sections.source_text).replace(/\n/g, '<br>')}</p></div>`);
+    }
+    if (sections.source_notes) {
+        parts.push(`<div class="idiom-section"><h4 class="idiom-section-title">注解</h4><p class="idiom-notes">${escHtml(sections.source_notes).replace(/\n/g, '<br>')}</p></div>`);
+    }
+    if (sections.usage_description) {
+        parts.push(`<div class="idiom-section"><h4 class="idiom-section-title">语义</h4><p>${escHtml(sections.usage_description)}</p></div>`);
+    }
+    if (sections.usage_category) {
+        parts.push(`<div class="idiom-section"><h4 class="idiom-section-title">使用类别</h4><p>${escHtml(sections.usage_category)}</p></div>`);
+    }
+    if (sections.usage_examples) {
+        const examples = sections.usage_examples.split('\n').filter(Boolean);
+        parts.push(`<div class="idiom-section"><h4 class="idiom-section-title">例句</h4><ul class="idiom-examples">${examples.map(e => `<li>${escHtml(e.trim())}</li>`).join('')}</ul></div>`);
+    }
+    if (sections.citations) {
+        const cites = sections.citations.split('\n').filter(Boolean);
+        parts.push(`<div class="idiom-section"><h4 class="idiom-section-title">书证</h4><ol class="idiom-citations">${cites.map(c => `<li>${escHtml(c.replace(/^\d+\.\s*/, '').trim())}</li>`).join('')}</ol></div>`);
+    }
+    if (sections.discrimination) {
+        parts.push(`<div class="idiom-section"><h4 class="idiom-section-title">辨似</h4><p>${escHtml(sections.discrimination).replace(/\n/g, '<br>')}</p></div>`);
+    }
+    if (sections.synonyms || sections.antonyms) {
+        const relParts = [];
+        if (sections.synonyms) relParts.push(`<span class="idiom-rel"><b>近义：</b>${escHtml(sections.synonyms)}</span>`);
+        if (sections.antonyms) relParts.push(`<span class="idiom-rel"><b>反义：</b>${escHtml(sections.antonyms)}</span>`);
+        parts.push(`<div class="idiom-section idiom-rel-section">${relParts.join('')}</div>`);
+    }
+    if (sections.ref_words) {
+        parts.push(`<div class="idiom-section"><h4 class="idiom-section-title">参考词语</h4><p>${escHtml(sections.ref_words)}</p></div>`);
+    }
+    return parts.join('');
+}
+
 function renderMoeIdiomEntries(payload) {
     const entries = Array.isArray(payload && payload.entries) ? payload.entries : [];
     const count = Number(payload && payload.entries ? entries.length : 0);
     state.idiomEntries = entries;
     el.idiomCount.textContent = String(count);
 
-    const description = String(payload && payload.description || '').trim();
-    const metaChips = [
-        payload && payload.license ? `<span>${escHtml(String(payload.license))}</span>` : '',
-        payload && payload.term_count ? `<span>${escHtml(String(payload.term_count))} 成语</span>` : '',
-        payload && payload.built_at ? `<span>更新 ${escHtml(String(payload.built_at).slice(0, 10))}</span>` : '',
-    ].filter(Boolean).join('');
-
     if (!entries.length) {
+        const description = String(payload && payload.description || '').trim();
+        const metaChips = [
+            payload && payload.license ? `<span>${escHtml(String(payload.license))}</span>` : '',
+            payload && payload.term_count ? `<span>${escHtml(String(payload.term_count))} 成语</span>` : '',
+            payload && payload.built_at ? `<span>更新 ${escHtml(String(payload.built_at).slice(0, 10))}</span>` : '',
+        ].filter(Boolean).join('');
         const intro = description ? `
             <article class="dict-entry-card dict-moe-intro">
                 <div class="dict-entry-source moe-idiom">${escHtml(String(payload && payload.label || '教育部《成语典》'))}</div>
@@ -1248,37 +1292,26 @@ function renderMoeIdiomEntries(payload) {
         return;
     }
 
-    const intro = `
-        <article class="dict-entry-card dict-moe-intro">
-            <div class="dict-entry-source moe-idiom">${escHtml(String(payload && payload.label || '教育部《成语典》'))}</div>
-            ${description ? `<div class="dict-entry-text dict-moe-intro-text">${escHtml(description)}</div>` : ''}
-            <div class="dict-page-meta">
-                ${metaChips || '<span>只读结果区</span>'}
-                <span>原文授权展示</span>
-            </div>
-        </article>
-    `;
-
-    el.idiomResults.innerHTML = intro + entries.map(item => {
+    el.idiomResults.innerHTML = entries.map(item => {
         const pronunciation = [item.bopomofo, item.pinyin].filter(Boolean).join(' · ');
         const matchLabel = item.match_mode === 'exact_headword'
-            ? '成语精确命中'
+            ? '精确命中'
             : item.match_mode === 'prefix_headword'
-                ? '成语前缀命中'
-                : '相关成语命中';
+                ? '前缀命中'
+                : '相关命中';
+        const sectionsHtml = item.sections ? renderIdiomSections(item.sections) : '';
+        const bodyHtml = sectionsHtml || formatReadOnlyText(item.content_text || '') || '<p>暂无可展示释义。</p>';
         return `
-            <article class="dict-entry-card dict-moe-entry">
-                <div class="dict-entry-source moe-idiom">教育部成语典</div>
+            <article class="dict-entry-card dict-moe-entry dict-idiom-entry">
                 <div class="dict-entry-top">
                     <span class="dict-entry-headword">${escHtml(item.headword || state.query)}</span>
                     ${pronunciation ? `<span class="dict-entry-pinyin">${escHtml(pronunciation)}</span>` : ''}
-                    <span class="dict-verified is-soft">官方授权</span>
                 </div>
                 <div class="dict-page-meta">
-                    <span>${escHtml(matchLabel)}</span>
+                    <span class="dict-entry-source moe-idiom">${escHtml(matchLabel)}</span>
                     <span>${escHtml(String(item.license || 'CC BY-ND 3.0 TW'))}</span>
                 </div>
-                <div class="dict-entry-text dict-moe-text">${formatReadOnlyText(item.content_text || '') || '<p>暂无可展示释义。</p>'}</div>
+                <div class="dict-entry-text dict-idiom-body">${bodyHtml}</div>
                 <div class="dict-entry-actions">
                     <a class="dict-action-link" href="${escHtml(item.source_url || '#')}" target="_blank" rel="noopener noreferrer">打开教育部成语典原站</a>
                 </div>

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-26T04:22:18.286272+00:00",
-  "git_head": "5c83bcd170300f318ea2cb3863d9f7b4d22b531f",
+  "generated_at": "2026-03-26T04:57:07.214481+00:00",
+  "git_head": "ba5b7b255a43e8857f7352cadbbf64b4851c6dda",
   "frontend_version": "2026.03.17-r32",
   "source_of_truth": {
     "local_workspace": "authoritative",
@@ -31,8 +31,8 @@
     {
       "kind": "source",
       "logical_path": "backend/main.py",
-      "size": 360853,
-      "sha256": "e2910906dfda1333055e62c9db1fcc3f85348b1ee6f3862388019c4c1f0271a1"
+      "size": 363473,
+      "sha256": "a8589aa81ce49bfcb8a918b534ad5322e87acb6533fd0992f6018483dc11ee0f"
     },
     {
       "kind": "source",
@@ -127,14 +127,14 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/dict.js",
-      "size": 72350,
-      "sha256": "b5e3e17a3d2b58a279e8986991d9d952481652428793c2ed6e7b4c54c154ddb6"
+      "size": 74748,
+      "sha256": "db8dcda5a590608d18ac5b2ebef518d1e3d26c9bd432f7d491a4c54f5391af7e"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/dict.css",
-      "size": 26990,
-      "sha256": "a9fb316f961d56e2e3155a0dd162930b3f053dbbae6d816e2bd2fca90e090d7a"
+      "size": 28257,
+      "sha256": "187184c5b90fc8f72d728d899bd3a2dd6ec7e5dfb771a399a32f8295ebbaf9e0"
     },
     {
       "kind": "source",
@@ -178,7 +178,7 @@
       "kind": "runtime",
       "logical_path": "data/index/textbook_mineru_fts.db",
       "size": 80961536,
-      "sha256": "15a0cdd3916a51fe8243c08cf46821214992bf5f6697bee9fecdcb92f496b8e7",
+      "sha256": "a13055b47cb07da2edf78295a26abcc626d9e246fa250a4df03bf998ff7552b2",
       "source_path": "data/index/textbook_mineru_fts.db",
       "runtime_identity": {
         "type": "sqlite_textbook_runtime_identity_v1",

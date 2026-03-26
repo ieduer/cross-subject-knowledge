@@ -5885,6 +5885,58 @@ def _search_moe_idioms_entries(clean_q: str, limit: int) -> dict:
     seen = set()
     entries = []
 
+    def _parse_idiom_sections(raw_json_str: str) -> dict:
+        """Parse raw_json into structured sections for frontend display."""
+        try:
+            raw = json.loads(raw_json_str) if raw_json_str else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+        sections = {}
+        if raw.get("釋義"):
+            sections["definition"] = raw["釋義"].strip()
+        if raw.get("典故說明"):
+            sections["story"] = raw["典故說明"].strip()
+        source_name = (raw.get("典源文獻名稱") or "").strip()
+        source_text = (raw.get("典源文獻內容") or "").strip()
+        if source_text:
+            import re as _re_local
+            source_text = _re_local.sub(r"\*\d+\*", "", source_text)
+            source_text = _re_local.sub(r"#", "", source_text)
+            source_text = _re_local.sub(r"_x[0-9A-Fa-f]{4}_", "", source_text)
+            source_text = _re_local.sub(r"\n(?!\n)", "", source_text)
+            source_text = _re_local.sub(r"\n{2,}", "\n", source_text)
+            sections["source_text"] = source_text.strip()
+        if source_name:
+            sections["source_name"] = source_name
+        source_notes = (raw.get("典源注解") or "").strip()
+        if source_notes:
+            sections["source_notes"] = source_notes
+        usage_cat = (raw.get("用法說明-使用類別") or "").strip()
+        if usage_cat:
+            sections["usage_category"] = usage_cat
+        usage_desc = (raw.get("用法說明-語義說明") or "").strip()
+        if usage_desc:
+            sections["usage_description"] = usage_desc
+        usage_examples = (raw.get("用法說明-例句") or "").strip()
+        if usage_examples:
+            sections["usage_examples"] = usage_examples
+        citations = (raw.get("書證") or "").strip()
+        if citations:
+            sections["citations"] = citations
+        synonyms = (raw.get("近義成語") or "").strip()
+        if synonyms:
+            sections["synonyms"] = synonyms
+        antonyms = (raw.get("反義成語") or "").strip()
+        if antonyms:
+            sections["antonyms"] = antonyms
+        discrimination = (raw.get("辨似") or raw.get("辨識") or "").strip()
+        if discrimination:
+            sections["discrimination"] = discrimination
+        ref_words = (raw.get("參考詞語") or "").strip()
+        if ref_words:
+            sections["ref_words"] = ref_words
+        return sections
+
     def append_rows(rows: list[sqlite3.Row], match_mode: str):
         for row in rows:
             row_id = row["id"]
@@ -5892,6 +5944,7 @@ def _search_moe_idioms_entries(clean_q: str, limit: int) -> dict:
                 continue
             seen.add(row_id)
             headword = row["headword"] or clean_q
+            sections = _parse_idiom_sections(row["raw_json"] if "raw_json" in row.keys() else "")
             entries.append(
                 {
                     "id": row_id,
@@ -5899,6 +5952,7 @@ def _search_moe_idioms_entries(clean_q: str, limit: int) -> dict:
                     "bopomofo": row["bopomofo"] or "",
                     "pinyin": row["pinyin"] or "",
                     "content_text": row["content_text"] or "",
+                    "sections": sections,
                     "match_mode": match_mode,
                     "dict_label": metadata.get("label", "教育部《成語典》"),
                     "license": metadata.get("license", "CC BY-ND 3.0 TW"),
@@ -5909,7 +5963,7 @@ def _search_moe_idioms_entries(clean_q: str, limit: int) -> dict:
     try:
         exact_rows = con.execute(
             """
-            SELECT id, headword, bopomofo, pinyin, content_text
+            SELECT id, headword, bopomofo, pinyin, content_text, raw_json
             FROM entries
             WHERE headword_norm = ? OR headword_norm = ?
             ORDER BY LENGTH(headword) ASC, id ASC
@@ -5922,7 +5976,7 @@ def _search_moe_idioms_entries(clean_q: str, limit: int) -> dict:
         if len(entries) < limit:
             prefix_rows = con.execute(
                 """
-                SELECT id, headword, bopomofo, pinyin, content_text
+                SELECT id, headword, bopomofo, pinyin, content_text, raw_json
                 FROM entries
                 WHERE headword_norm LIKE ? OR headword_norm LIKE ?
                 ORDER BY
@@ -5938,7 +5992,7 @@ def _search_moe_idioms_entries(clean_q: str, limit: int) -> dict:
         if len(entries) < limit:
             like_rows = con.execute(
                 """
-                SELECT id, headword, bopomofo, pinyin, content_text
+                SELECT id, headword, bopomofo, pinyin, content_text, raw_json
                 FROM entries
                 WHERE headword_norm LIKE ? OR headword_norm LIKE ?
                 ORDER BY LENGTH(headword) ASC, id ASC
