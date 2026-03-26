@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-26T04:57:07.214481+00:00",
-  "git_head": "ba5b7b255a43e8857f7352cadbbf64b4851c6dda",
-  "frontend_version": "2026.03.17-r32",
+  "generated_at": "2026-03-26T08:23:48.317852+00:00",
+  "git_head": "dd8df77eaac44b9db2f8f134f25daa558bfbc6cd",
+  "frontend_version": "2026.03.26-r33",
   "source_of_truth": {
     "local_workspace": "authoritative",
     "github": "authoritative_for_code_only_after_push",
@@ -31,8 +31,8 @@
     {
       "kind": "source",
       "logical_path": "backend/main.py",
-      "size": 363473,
-      "sha256": "a8589aa81ce49bfcb8a918b534ad5322e87acb6533fd0992f6018483dc11ee0f"
+      "size": 363615,
+      "sha256": "66fad8c7f12d0bdc9c0fb22cbbf97682684f3ced1102efdd4a37b5f790795699"
     },
     {
       "kind": "source",
@@ -92,25 +92,25 @@
       "kind": "source",
       "logical_path": "frontend/index.html",
       "size": 13900,
-      "sha256": "a1e96ab7ff33b08d903631f2c957186bc867310d78acf8bc7d710cd5c528675f"
+      "sha256": "3cdb2c795717ecb0cd2bd54ec72d98c6bd6a9b22c767ceb3a5d48a530e72a647"
     },
     {
       "kind": "source",
       "logical_path": "frontend/dict.html",
       "size": 10344,
-      "sha256": "a0cc01c46c758c12a12f24f1e5d8efd0ca247d26618b0d8897a8021ad0fcb7aa"
+      "sha256": "01370a5f4a0793841bb41219604d6ba7e91b10325bbd30624f1c3319beec7b4f"
     },
     {
       "kind": "source",
       "logical_path": "frontend/chuzhong.html",
       "size": 10519,
-      "sha256": "a0367a8574d905c344f75d52f0af2123af2d6873b987bde76c95c61068829c63"
+      "sha256": "b987e80195aaff9d7c645c44de775c9eefe466d7f17b4b7080cb1a69dd7e642d"
     },
     {
       "kind": "source",
       "logical_path": "frontend/chuzhong-dict.html",
       "size": 10305,
-      "sha256": "24365cac54ea6b4c719409bfffd69edf5b4f8b29df8c3923a88183d97035bb09"
+      "sha256": "c9a2289279b493a10d0e8f724bf5f8ee18e3b0c5ca8f1f64e1dfd2f375ef7bce"
     },
     {
       "kind": "source",
@@ -139,8 +139,8 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/version.json",
-      "size": 8200,
-      "sha256": "1f1d7c0a7d68097dd53c3fe19e1aaa2ad43857033fc3ee90f5f8071e99d4a122"
+      "size": 8700,
+      "sha256": "121d37d3cd0debb1330f20048f4da6d237bf2156fde6f7a83038d37d870d4615"
     },
     {
       "kind": "source",
@@ -178,7 +178,7 @@
       "kind": "runtime",
       "logical_path": "data/index/textbook_mineru_fts.db",
       "size": 80961536,
-      "sha256": "a13055b47cb07da2edf78295a26abcc626d9e246fa250a4df03bf998ff7552b2",
+      "sha256": "9454c4f0cc79d4a6c0cb933d7461590c09fc773ed2169e9d27d7f72ac3e5e7b3",
       "source_path": "data/index/textbook_mineru_fts.db",
       "runtime_identity": {
         "type": "sqlite_textbook_runtime_identity_v1",

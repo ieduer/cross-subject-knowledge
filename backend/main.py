@@ -5891,48 +5891,57 @@ def _search_moe_idioms_entries(clean_q: str, limit: int) -> dict:
             raw = json.loads(raw_json_str) if raw_json_str else {}
         except (json.JSONDecodeError, TypeError):
             return {}
+
+        import re as _re_local
+
+        def _clean(val: str) -> str:
+            """Remove XML escape artifacts from raw XLSX cell values."""
+            t = (val or "").strip()
+            if not t:
+                return ""
+            t = _re_local.sub(r"_x[0-9A-Fa-f]{4}_", "", t)
+            t = _re_local.sub(r"\*\d+\*", "", t)
+            t = _re_local.sub(r"#", "", t)
+            return t.strip()
+
         sections = {}
         if raw.get("釋義"):
-            sections["definition"] = raw["釋義"].strip()
+            sections["definition"] = _clean(raw["釋義"])
         if raw.get("典故說明"):
-            sections["story"] = raw["典故說明"].strip()
+            sections["story"] = _clean(raw["典故說明"])
         source_name = (raw.get("典源文獻名稱") or "").strip()
-        source_text = (raw.get("典源文獻內容") or "").strip()
+        source_text = _clean(raw.get("典源文獻內容") or "")
         if source_text:
-            import re as _re_local
-            source_text = _re_local.sub(r"\*\d+\*", "", source_text)
-            source_text = _re_local.sub(r"#", "", source_text)
-            source_text = _re_local.sub(r"_x[0-9A-Fa-f]{4}_", "", source_text)
             source_text = _re_local.sub(r"\n(?!\n)", "", source_text)
             source_text = _re_local.sub(r"\n{2,}", "\n", source_text)
             sections["source_text"] = source_text.strip()
         if source_name:
             sections["source_name"] = source_name
-        source_notes = (raw.get("典源注解") or "").strip()
+        source_notes = _clean(raw.get("典源注解") or "")
         if source_notes:
             sections["source_notes"] = source_notes
-        usage_cat = (raw.get("用法說明-使用類別") or "").strip()
+        usage_cat = _clean(raw.get("用法說明-使用類別") or "")
         if usage_cat:
             sections["usage_category"] = usage_cat
-        usage_desc = (raw.get("用法說明-語義說明") or "").strip()
+        usage_desc = _clean(raw.get("用法說明-語義說明") or "")
         if usage_desc:
             sections["usage_description"] = usage_desc
-        usage_examples = (raw.get("用法說明-例句") or "").strip()
+        usage_examples = _clean(raw.get("用法說明-例句") or "")
         if usage_examples:
             sections["usage_examples"] = usage_examples
-        citations = (raw.get("書證") or "").strip()
+        citations = _clean(raw.get("書證") or "")
         if citations:
             sections["citations"] = citations
-        synonyms = (raw.get("近義成語") or "").strip()
+        synonyms = _clean(raw.get("近義成語") or "")
         if synonyms:
             sections["synonyms"] = synonyms
-        antonyms = (raw.get("反義成語") or "").strip()
+        antonyms = _clean(raw.get("反義成語") or "")
         if antonyms:
             sections["antonyms"] = antonyms
-        discrimination = (raw.get("辨似") or raw.get("辨識") or "").strip()
+        discrimination = _clean(raw.get("辨似") or raw.get("辨識") or "")
         if discrimination:
             sections["discrimination"] = discrimination
-        ref_words = (raw.get("參考詞語") or "").strip()
+        ref_words = _clean(raw.get("參考詞語") or "")
         if ref_words:
             sections["ref_words"] = ref_words
         return sections

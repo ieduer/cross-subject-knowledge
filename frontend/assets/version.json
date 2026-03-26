@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.03.17-r32",
-  "updated_at": "2026-03-17",
+  "frontend_refactor_version": "2026.03.26-r33",
+  "updated_at": "2026-03-26",
   "history": [
+    {
+      "version": "2026.03.26-r33",
+      "date": "2026-03-26",
+      "summary": "integrated MOE idiom dictionary (5489 entries) for both 初中/高中 dict pages, added simplified↔traditional Chinese conversion (opencc) so simplified queries match MOE traditional-only entries, structured idiom display with sections (释义/典故/典源/注解/语义/例句/书证/近反义), fixed _x000D_ XML artifacts in idiom content, enhanced AI chat context with MOE revised + idiom evidence"
+    },
     {
       "version": "2026.03.17-r32",
       "date": "2026-03-17",
