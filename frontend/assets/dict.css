@@ -348,6 +348,10 @@ body.dict-page {
     color: #81ecec;
 }
 
+.dict-entry-source.moe-idiom {
+    color: #fdcb6e;
+}
+
 .dict-page-entry {
     display: flex;
     flex-direction: column;

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-17T05:17:47.402933+00:00",
-  "git_head": "0b30a8ccac7ce1dfc80c84caee34de54ae404d28",
+  "generated_at": "2026-03-26T04:22:18.286272+00:00",
+  "git_head": "5c83bcd170300f318ea2cb3863d9f7b4d22b531f",
   "frontend_version": "2026.03.17-r32",
   "source_of_truth": {
     "local_workspace": "authoritative",
@@ -25,14 +25,14 @@
     {
       "kind": "source",
       "logical_path": "requirements.runtime.txt",
-      "size": 169,
-      "sha256": "b4160fcb610e511269e7b803736b38e69062d3327012b9c46a1f11f92ce2a190"
+      "size": 204,
+      "sha256": "9096979e7e8bc6e8dc50a45a0a3f326ad5c9026645061bedf5aa147b8044b50b"
     },
     {
       "kind": "source",
       "logical_path": "backend/main.py",
-      "size": 352463,
-      "sha256": "0bd6b55367366c7c5f04583909d0ac0805447f65bb8ea144ff9db6041f37324f"
+      "size": 360853,
+      "sha256": "e2910906dfda1333055e62c9db1fcc3f85348b1ee6f3862388019c4c1f0271a1"
     },
     {
       "kind": "source",
@@ -97,8 +97,8 @@
     {
       "kind": "source",
       "logical_path": "frontend/dict.html",
-      "size": 9936,
-      "sha256": "2be8b96d6d5b12d9280253fc0bb3fa45aaa6c03406477e4cf1b27ffc90af45ff"
+      "size": 10344,
+      "sha256": "a0cc01c46c758c12a12f24f1e5d8efd0ca247d26618b0d8897a8021ad0fcb7aa"
     },
     {
       "kind": "source",
@@ -109,8 +109,8 @@
     {
       "kind": "source",
       "logical_path": "frontend/chuzhong-dict.html",
-      "size": 9897,
-      "sha256": "ad31b51b1d3da28d24f8037b748966d52dd1bb4d57d75993120d197b274e221b"
+      "size": 10305,
+      "sha256": "24365cac54ea6b4c719409bfffd69edf5b4f8b29df8c3923a88183d97035bb09"
     },
     {
       "kind": "source",
@@ -127,14 +127,14 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/dict.js",
-      "size": 67428,
-      "sha256": "a5c53991c7117face5c6abda626820a1c22486ac3569c789c1de68e21d113d72"
+      "size": 72350,
+      "sha256": "b5e3e17a3d2b58a279e8986991d9d952481652428793c2ed6e7b4c54c154ddb6"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/dict.css",
-      "size": 26936,
-      "sha256": "3d41d0fee14e1b10ef6129bf84c7c1806a9f12f4d4c698355dc01fa16a6b3612"
+      "size": 26990,
+      "sha256": "a9fb316f961d56e2e3155a0dd162930b3f053dbbae6d816e2bd2fca90e090d7a"
     },
     {
       "kind": "source",

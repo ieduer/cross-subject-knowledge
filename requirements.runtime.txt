@@ -7,3 +7,4 @@ cachetools==7.0.2
 transformers==5.2.0
 huggingface_hub==1.5.0
 httpx==0.28.1
+opencc-python-reimplemented==0.1.7

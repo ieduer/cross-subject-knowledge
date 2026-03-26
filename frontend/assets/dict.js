@@ -17,6 +17,7 @@ const state = {
     chatInFlight: false,
     dictEntries: [],
     moeEntries: [],
+    idiomEntries: [],
     searchSeq: 0,
     examData: {
         xuci: null,
@@ -45,6 +46,8 @@ const el = {
     dictEntries: document.getElementById('dict-entries'),
     moeCount: document.getElementById('moe-count'),
     moeResults: document.getElementById('moe-results'),
+    idiomCount: document.getElementById('idiom-count'),
+    idiomResults: document.getElementById('idiom-results'),
     gkCount: document.getElementById('gk-count'),
     gkResults: document.getElementById('gk-results'),
     chatMessages: document.getElementById('chat-messages'),
@@ -1019,6 +1022,14 @@ function buildMoeRevisedContext(entries) {
     }).join('\n\n');
 }
 
+function buildMoeIdiomContext(entries) {
+    return (entries || []).slice(0, 4).map(item => {
+        const pronunciation = [item.bopomofo, item.pinyin].filter(Boolean).join(' · ');
+        const meta = pronunciation ? ` · ${pronunciation}` : '';
+        return `[教育部《成语典》${meta}] ${item.headword}\n${String(item.content_text || '').slice(0, 420)}`;
+    }).join('\n\n');
+}
+
 function buildTextbookContext(results) {
     return (results || []).slice(0, 8).map(item => {
         const page = item.logical_page != null ? `p${item.logical_page}` : '';
@@ -1209,6 +1220,73 @@ function renderMoeRevisedEntries(payload) {
     }).join('');
 }
 
+function renderMoeIdiomEntries(payload) {
+    const entries = Array.isArray(payload && payload.entries) ? payload.entries : [];
+    const count = Number(payload && payload.entries ? entries.length : 0);
+    state.idiomEntries = entries;
+    el.idiomCount.textContent = String(count);
+
+    const description = String(payload && payload.description || '').trim();
+    const metaChips = [
+        payload && payload.license ? `<span>${escHtml(String(payload.license))}</span>` : '',
+        payload && payload.term_count ? `<span>${escHtml(String(payload.term_count))} 成语</span>` : '',
+        payload && payload.built_at ? `<span>更新 ${escHtml(String(payload.built_at).slice(0, 10))}</span>` : '',
+    ].filter(Boolean).join('');
+
+    if (!entries.length) {
+        const intro = description ? `
+            <article class="dict-entry-card dict-moe-intro">
+                <div class="dict-entry-source moe-idiom">${escHtml(String(payload && payload.label || '教育部《成语典》'))}</div>
+                <div class="dict-entry-text dict-moe-intro-text">${escHtml(description)}</div>
+                ${metaChips ? `<div class="dict-page-meta">${metaChips}</div>` : ''}
+            </article>
+        ` : '';
+        const message = payload && payload.source_mode === 'unavailable'
+            ? '教育部成语典本地结果区尚未导入。'
+            : '该查询暂未命中教育部成语典。';
+        el.idiomResults.innerHTML = `${intro}<div class="dict-empty-line">${escHtml(message)}</div>`;
+        return;
+    }
+
+    const intro = `
+        <article class="dict-entry-card dict-moe-intro">
+            <div class="dict-entry-source moe-idiom">${escHtml(String(payload && payload.label || '教育部《成语典》'))}</div>
+            ${description ? `<div class="dict-entry-text dict-moe-intro-text">${escHtml(description)}</div>` : ''}
+            <div class="dict-page-meta">
+                ${metaChips || '<span>只读结果区</span>'}
+                <span>原文授权展示</span>
+            </div>
+        </article>
+    `;
+
+    el.idiomResults.innerHTML = intro + entries.map(item => {
+        const pronunciation = [item.bopomofo, item.pinyin].filter(Boolean).join(' · ');
+        const matchLabel = item.match_mode === 'exact_headword'
+            ? '成语精确命中'
+            : item.match_mode === 'prefix_headword'
+                ? '成语前缀命中'
+                : '相关成语命中';
+        return `
+            <article class="dict-entry-card dict-moe-entry">
+                <div class="dict-entry-source moe-idiom">教育部成语典</div>
+                <div class="dict-entry-top">
+                    <span class="dict-entry-headword">${escHtml(item.headword || state.query)}</span>
+                    ${pronunciation ? `<span class="dict-entry-pinyin">${escHtml(pronunciation)}</span>` : ''}
+                    <span class="dict-verified is-soft">官方授权</span>
+                </div>
+                <div class="dict-page-meta">
+                    <span>${escHtml(matchLabel)}</span>
+                    <span>${escHtml(String(item.license || 'CC BY-ND 3.0 TW'))}</span>
+                </div>
+                <div class="dict-entry-text dict-moe-text">${formatReadOnlyText(item.content_text || '') || '<p>暂无可展示释义。</p>'}</div>
+                <div class="dict-entry-actions">
+                    <a class="dict-action-link" href="${escHtml(item.source_url || '#')}" target="_blank" rel="noopener noreferrer">打开教育部成语典原站</a>
+                </div>
+            </article>
+        `;
+    }).join('');
+}
+
 function renderGaokaoResults(results) {
     el.gkCount.textContent = String(results.length);
     if (!results.length) {
@@ -1238,14 +1316,17 @@ function resetPanelsForSearch() {
     setLoading(el.tbResults);
     setLoading(el.dictEntries);
     setLoading(el.moeResults);
+    setLoading(el.idiomResults);
     setLoading(el.gkResults);
     el.tbCount.textContent = '0';
     el.dictCount.textContent = '0';
     el.moeCount.textContent = '0';
+    el.idiomCount.textContent = '0';
     el.gkCount.textContent = '0';
     state.chatHistory = [];
     state.dictEntries = [];
     state.moeEntries = [];
+    state.idiomEntries = [];
     renderChatMessages();
     setChatPending(true);
 }
@@ -1322,18 +1403,21 @@ async function runSearch(initialQuery) {
             PHASE === '高中'
                 ? fetchJson(`${API}/api/dict/gaokao?q=${encodeURIComponent(query)}&limit=20`)
                 : Promise.resolve({ results: [] }),
+            fetchJson(`${API}/api/dict/moe-idioms?q=${encodeURIComponent(query)}&limit=6`),
         ];
-        const [textbookResult, dictResult, moeResult, gaokaoResult] = await Promise.allSettled(fetches);
+        const [textbookResult, dictResult, moeResult, gaokaoResult, idiomResult] = await Promise.allSettled(fetches);
 
         const textbookFailed = textbookResult.status === 'rejected';
         const dictFailed = dictResult.status === 'rejected';
         const moeFailed = moeResult.status === 'rejected';
         const gaokaoFailed = gaokaoResult.status === 'rejected';
+        const idiomFailed = idiomResult.status === 'rejected';
 
         const textbook = textbookFailed ? { results: [] } : textbookResult.value;
         const dictPayload = dictFailed ? { entries: [], available: false, source_mode: 'unavailable' } : dictResult.value;
         const moePayload = moeFailed ? { entries: [], available: false, source_mode: 'unavailable' } : moeResult.value;
         const gaokao = gaokaoFailed ? { results: [] } : gaokaoResult.value;
+        const idiomPayload = idiomFailed ? { entries: [], available: false, source_mode: 'unavailable' } : idiomResult.value;
 
         if (queryKey !== state.queryKey || query !== state.query) {
             return;
@@ -1367,7 +1451,14 @@ async function runSearch(initialQuery) {
             renderGaokaoResults(gaokao.results || []);
         }
 
-        state.dictContext = [buildDictContext(dictPayload.entries || []), buildMoeRevisedContext(moePayload.entries || [])]
+        if (idiomFailed) {
+            el.idiomCount.textContent = '0';
+            setEmptyLine(el.idiomResults, `成语典检索失败：${idiomResult.reason.message}`);
+        } else {
+            renderMoeIdiomEntries(idiomPayload);
+        }
+
+        state.dictContext = [buildDictContext(dictPayload.entries || []), buildMoeRevisedContext(moePayload.entries || []), buildMoeIdiomContext(idiomPayload.entries || [])]
             .filter(Boolean)
             .join('\n\n');
         state.textbookContext = buildTextbookContext(textbook.results || []);
@@ -1389,6 +1480,7 @@ async function runSearch(initialQuery) {
         setEmptyLine(el.tbResults, `教材检索失败：${error.message}`);
         setEmptyLine(el.dictEntries, `词典检索失败：${error.message}`);
         setEmptyLine(el.moeResults, `教育部修订本检索失败：${error.message}`);
+        setEmptyLine(el.idiomResults, `成语典检索失败：${error.message}`);
         setEmptyLine(el.gkResults, `真题检索失败：${error.message}`);
         setChatPending(true);
     } finally {

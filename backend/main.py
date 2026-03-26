@@ -19,6 +19,19 @@ try:
 except ImportError:
     _cache = {}  # fallback: simple dict (never expires, but resets on restart)
 
+try:
+    import opencc as _opencc_mod
+    _S2T_CONVERTER = _opencc_mod.OpenCC("s2t")
+except ImportError:
+    _S2T_CONVERTER = None
+
+
+def _to_traditional(text: str) -> str:
+    """Convert simplified Chinese to traditional. No-op if already traditional or opencc unavailable."""
+    if _S2T_CONVERTER is None:
+        return text
+    return _S2T_CONVERTER.convert(text)
+
 
 def _make_runtime_cache(maxsize: int, ttl: int):
     if "TTLCache" in globals():
@@ -61,6 +74,7 @@ def _resolve_data_asset(filename: str) -> Path:
 DB_PATH = _resolve_data_asset("textbook_mineru_fts.db")
 DICT_DB_PATH = _resolve_data_asset("dictionary_index.db")
 DICT_MOE_REVISED_DB_PATH = _resolve_data_asset("dict_moe_revised.db")
+DICT_MOE_IDIOMS_DB_PATH = _resolve_data_asset("dict_moe_idioms.db")
 DICT_HEADWORD_INDEX_PATH = _resolve_data_asset("dict_headword_pages.json")
 DICT_QC_PATH = _resolve_data_asset("dict_headword_qc.json")
 TEXTBOOK_CLASSICS_MANIFEST_PATH = DATA_ROOT / "index" / "textbook_classics_manifest.json"
@@ -5725,6 +5739,7 @@ def _search_moe_revised_entries(clean_q: str, limit: int) -> dict:
         }
 
     compact_q = _compact_query_text(clean_q)
+    compact_q_trad = _to_traditional(compact_q)
     seen = set()
     entries = []
 
@@ -5754,11 +5769,11 @@ def _search_moe_revised_entries(clean_q: str, limit: int) -> dict:
             """
             SELECT id, headword, bopomofo, pinyin, content_text
             FROM entries
-            WHERE headword_norm = ?
+            WHERE headword_norm = ? OR headword_norm = ?
             ORDER BY LENGTH(headword) ASC, id ASC
             LIMIT ?
             """,
-            (compact_q, limit),
+            (compact_q_trad, compact_q, limit),
         ).fetchall()
         append_rows(exact_rows, "exact_headword")
 
@@ -5767,14 +5782,14 @@ def _search_moe_revised_entries(clean_q: str, limit: int) -> dict:
                 """
                 SELECT id, headword, bopomofo, pinyin, content_text
                 FROM entries
-                WHERE headword_norm LIKE ?
+                WHERE headword_norm LIKE ? OR headword_norm LIKE ?
                 ORDER BY
-                    CASE WHEN headword_norm = ? THEN 0 ELSE 1 END,
+                    CASE WHEN headword_norm = ? OR headword_norm = ? THEN 0 ELSE 1 END,
                     LENGTH(headword) ASC,
                     id ASC
                 LIMIT ?
                 """,
-                (f"{compact_q}%", compact_q, max(limit * 2, 8)),
+                (f"{compact_q_trad}%", f"{compact_q}%", compact_q_trad, compact_q, max(limit * 2, 8)),
             ).fetchall()
             append_rows(prefix_rows, "prefix_headword")
 
@@ -5783,11 +5798,11 @@ def _search_moe_revised_entries(clean_q: str, limit: int) -> dict:
                 """
                 SELECT id, headword, bopomofo, pinyin, content_text
                 FROM entries
-                WHERE headword_norm LIKE ?
+                WHERE headword_norm LIKE ? OR headword_norm LIKE ?
                 ORDER BY LENGTH(headword) ASC, id ASC
                 LIMIT ?
                 """,
-                (f"%{compact_q}%", max(limit * 2, 8)),
+                (f"%{compact_q_trad}%", f"%{compact_q}%", max(limit * 2, 8)),
             ).fetchall()
             append_rows(like_rows, "fuzzy_headword")
     finally:
@@ -5798,6 +5813,148 @@ def _search_moe_revised_entries(clean_q: str, limit: int) -> dict:
         "available": bool(entries),
         "source_id": "moe_revised",
         "label": metadata.get("label", "教育部《重编国语辞典修订本》"),
+        "description": metadata.get("description"),
+        "license": metadata.get("license", "CC BY-ND 3.0 TW"),
+        "download_page": metadata.get("download_page"),
+        "built_at": metadata.get("built_at"),
+        "term_count": metadata.get("term_count") or 0,
+        "row_count": metadata.get("row_count") or 0,
+        "source_mode": source_mode,
+        "entries": entries[:limit],
+    }
+
+
+def _get_moe_idioms_db() -> Optional[sqlite3.Connection]:
+    if not DICT_MOE_IDIOMS_DB_PATH.exists() or DICT_MOE_IDIOMS_DB_PATH.stat().st_size <= 0:
+        return None
+    con = sqlite3.connect(
+        DICT_MOE_IDIOMS_DB_PATH,
+        check_same_thread=False,
+        timeout=SQLITE_CONNECT_TIMEOUT_SEC,
+    )
+    con.row_factory = sqlite3.Row
+    con.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+    return con
+
+
+def _load_moe_idioms_metadata() -> dict:
+    con = _get_moe_idioms_db()
+    if con is None:
+        return {
+            "available": False,
+            "label": "教育部《成語典》",
+            "description": "教育部授权成语数据包尚未导入站内结果区。",
+            "license": "CC BY-ND 3.0 TW",
+        }
+    try:
+        rows = con.execute("SELECT key, value FROM metadata").fetchall()
+    except sqlite3.DatabaseError:
+        con.close()
+        return {
+            "available": False,
+            "label": "教育部《成語典》",
+            "description": "教育部授权成语数据包读取失败。",
+            "license": "CC BY-ND 3.0 TW",
+        }
+    data = {"available": True}
+    for row in rows:
+        try:
+            data[row["key"]] = json.loads(row["value"])
+        except Exception:
+            data[row["key"]] = row["value"]
+    con.close()
+    return data
+
+
+def _search_moe_idioms_entries(clean_q: str, limit: int) -> dict:
+    metadata = _load_moe_idioms_metadata()
+    con = _get_moe_idioms_db()
+    if con is None:
+        return {
+            "available": False,
+            "source_id": "moe_idioms",
+            "label": metadata.get("label"),
+            "description": metadata.get("description"),
+            "license": metadata.get("license"),
+            "entries": [],
+            "source_mode": "unavailable",
+        }
+
+    compact_q = _compact_query_text(clean_q)
+    compact_q_trad = _to_traditional(compact_q)
+    seen = set()
+    entries = []
+
+    def append_rows(rows: list[sqlite3.Row], match_mode: str):
+        for row in rows:
+            row_id = row["id"]
+            if row_id in seen:
+                continue
+            seen.add(row_id)
+            headword = row["headword"] or clean_q
+            entries.append(
+                {
+                    "id": row_id,
+                    "headword": headword,
+                    "bopomofo": row["bopomofo"] or "",
+                    "pinyin": row["pinyin"] or "",
+                    "content_text": row["content_text"] or "",
+                    "match_mode": match_mode,
+                    "dict_label": metadata.get("label", "教育部《成語典》"),
+                    "license": metadata.get("license", "CC BY-ND 3.0 TW"),
+                    "source_url": _build_moe_search_url("dict.idioms.moe.edu.tw", headword),
+                }
+            )
+
+    try:
+        exact_rows = con.execute(
+            """
+            SELECT id, headword, bopomofo, pinyin, content_text
+            FROM entries
+            WHERE headword_norm = ? OR headword_norm = ?
+            ORDER BY LENGTH(headword) ASC, id ASC
+            LIMIT ?
+            """,
+            (compact_q_trad, compact_q, limit),
+        ).fetchall()
+        append_rows(exact_rows, "exact_headword")
+
+        if len(entries) < limit:
+            prefix_rows = con.execute(
+                """
+                SELECT id, headword, bopomofo, pinyin, content_text
+                FROM entries
+                WHERE headword_norm LIKE ? OR headword_norm LIKE ?
+                ORDER BY
+                    CASE WHEN headword_norm = ? OR headword_norm = ? THEN 0 ELSE 1 END,
+                    LENGTH(headword) ASC,
+                    id ASC
+                LIMIT ?
+                """,
+                (f"{compact_q_trad}%", f"{compact_q}%", compact_q_trad, compact_q, max(limit * 2, 8)),
+            ).fetchall()
+            append_rows(prefix_rows, "prefix_headword")
+
+        if len(entries) < limit:
+            like_rows = con.execute(
+                """
+                SELECT id, headword, bopomofo, pinyin, content_text
+                FROM entries
+                WHERE headword_norm LIKE ? OR headword_norm LIKE ?
+                ORDER BY LENGTH(headword) ASC, id ASC
+                LIMIT ?
+                """,
+                (f"%{compact_q_trad}%", f"%{compact_q}%", max(limit * 2, 8)),
+            ).fetchall()
+            append_rows(like_rows, "fuzzy_headword")
+    finally:
+        con.close()
+
+    source_mode = "sqlite_exact" if entries else "sqlite_miss"
+    return {
+        "available": bool(entries),
+        "source_id": "moe_idioms",
+        "label": metadata.get("label", "教育部《成語典》"),
         "description": metadata.get("description"),
         "license": metadata.get("license", "CC BY-ND 3.0 TW"),
         "download_page": metadata.get("download_page"),
@@ -6315,6 +6472,19 @@ def _build_dict_gaokao_context_block(results: list[dict]) -> str:
     return "\n\n".join(blocks)
 
 
+def _build_moe_context_block(entries: list[dict], label: str) -> str:
+    if not entries:
+        return ""
+    lines = []
+    for item in entries[:4]:
+        headword = item.get("headword", "")
+        pronunciation = " · ".join(filter(None, [item.get("bopomofo"), item.get("pinyin")]))
+        meta = f" · {pronunciation}" if pronunciation else ""
+        text = str(item.get("content_text") or "")[:500]
+        lines.append(f"[{label}{meta}] {headword}\n{text}")
+    return "\n\n".join(lines)
+
+
 def _build_dict_chat_context_for_request(headword: str, *, phase: str | None = None) -> dict:
     dict_payload = dict_search(headword, limit=8)
     textbook_payload = dict_textbook(headword, limit=8, phase=phase)
@@ -6324,17 +6494,36 @@ def _build_dict_chat_context_for_request(headword: str, *, phase: str | None = N
     if phase != "初中":
         gaokao_payload = dict_gaokao(headword, limit=6)
         gaokao_results = gaokao_payload.get("results") or []
+
+    moe_revised_payload = _search_moe_revised_entries(headword, limit=4)
+    moe_revised_entries = moe_revised_payload.get("entries") or []
+    moe_idiom_payload = _search_moe_idioms_entries(headword, limit=4)
+    moe_idiom_entries = moe_idiom_payload.get("entries") or []
+
+    moe_revised_context = _build_moe_context_block(moe_revised_entries, "教育部修訂本")
+    moe_idiom_context = _build_moe_context_block(moe_idiom_entries, "教育部成語典")
+
+    dict_context_parts = [_build_dict_context_block(dict_entries)]
+    if moe_revised_context:
+        dict_context_parts.append(moe_revised_context)
+    if moe_idiom_context:
+        dict_context_parts.append(moe_idiom_context)
+    combined_dict_context = "\n\n".join(part for part in dict_context_parts if part)
+
+    total_evidence = len(dict_entries) + len(textbook_results) + len(gaokao_results) + len(moe_revised_entries) + len(moe_idiom_entries)
     return {
         "dict_entries": dict_entries,
         "textbook_results": textbook_results,
         "gaokao_results": gaokao_results,
-        "dict_context": _build_dict_context_block(dict_entries),
+        "moe_revised_entries": moe_revised_entries,
+        "moe_idiom_entries": moe_idiom_entries,
+        "dict_context": combined_dict_context,
         "textbook_context": _build_dict_textbook_context_block(textbook_results),
         "gaokao_context": _build_dict_gaokao_context_block(gaokao_results),
         "phase": phase,
         "summary": {
             "subject_count": 1 if textbook_results or gaokao_results else 0,
-            "evidence_count": len(dict_entries) + len(textbook_results) + len(gaokao_results),
+            "evidence_count": total_evidence,
             "gaokao_hit_count": len(gaokao_results),
         },
     }
@@ -6353,6 +6542,7 @@ def _build_moe_variant_url(query: str) -> str:
 
 def _build_external_reference_payload(query: str) -> dict:
     compact_query = _compact_query_text(query)
+    compact_query_trad = _to_traditional(compact_query)
     single_char = _is_single_hanzi_query(compact_query)
     split_chars = _unique_query_characters(compact_query)
 
@@ -6366,7 +6556,7 @@ def _build_external_reference_payload(query: str) -> dict:
             "integration_mode": "deep_link",
             "priority": 1,
             "summary": "官方大型国语辞典，适合核对本义、书证和历史用法。本站查典页已补只读结果区，这里保留官方原站入口。",
-            "url": _build_moe_search_url("dict.revised.moe.edu.tw", compact_query),
+            "url": _build_moe_search_url("dict.revised.moe.edu.tw", compact_query_trad),
             "action_label": "打开重编",
         },
         {
@@ -6378,8 +6568,20 @@ def _build_external_reference_payload(query: str) -> dict:
             "integration_mode": "deep_link",
             "priority": 2,
             "summary": "官方简明释义，适合学生先看常见义，再回到古文语境辨析。",
-            "url": _build_moe_search_url("dict.concised.moe.edu.tw", compact_query),
+            "url": _build_moe_search_url("dict.concised.moe.edu.tw", compact_query_trad),
             "action_label": "打开简编",
+        },
+        {
+            "id": "moe_idioms",
+            "label": "教育部《成語典》",
+            "category": "official",
+            "scope": "成语",
+            "match_mode": "exact_term",
+            "integration_mode": "deep_link",
+            "priority": 3,
+            "summary": "官方成语辞典，收录常用成语释义、典故出处和用法辨析。本站查典页已补只读结果区。",
+            "url": _build_moe_search_url("dict.idioms.moe.edu.tw", compact_query_trad),
+            "action_label": "打开成语典",
         },
     ]
 
@@ -7336,6 +7538,26 @@ def dict_moe_revised(
     if not clean_q:
         raise HTTPException(400, "Invalid query")
     payload = _search_moe_revised_entries(clean_q, limit)
+    payload.update(
+        {
+            "query": q,
+            "query_kind": "single_char" if _is_single_hanzi_query(clean_q) else "term",
+            "display_mode": "read_only_cards",
+            "integration_mode": "local_read_only",
+        }
+    )
+    return payload
+
+
+@app.get("/api/dict/moe-idioms")
+def dict_moe_idioms(
+    q: str = Query(..., min_length=1, max_length=40),
+    limit: int = Query(6, ge=1, le=20),
+):
+    clean_q = _clean_query_text(q)
+    if not clean_q:
+        raise HTTPException(400, "Invalid query")
+    payload = _search_moe_idioms_entries(clean_q, limit)
     payload.update(
         {
             "query": q,
