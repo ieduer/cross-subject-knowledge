@@ -1168,5 +1168,105 @@
     "content_id": "6080e1d6-4353-5cde-9d9c-bc31eb782e6f",
     "subject": "道德与法治",
     "edition": ""
+  },
+  "suppbook:845cc95ea27e8219": {
+    "key": "890c235d20c4",
+    "title": "普通高中教科书·地理图册必修 第一册",
+    "display_title": "普通高中教科书·地理图册必修 第一册（人教版）",
+    "pages": 60,
+    "page_offset": 3,
+    "content_id": "c4a420be-3e22-4b5f-8f79-ef2c7a5c3c69",
+    "subject": "地理",
+    "edition": "人教版"
+  },
+  "suppbook:c087a258a172958a": {
+    "key": "cb525b1d3005",
+    "title": "普通高中教科书·地理图册必修 第二册",
+    "display_title": "普通高中教科书·地理图册必修 第二册（人教版）",
+    "pages": 60,
+    "page_offset": 3,
+    "content_id": "23094e58-73b9-4f6f-b42f-cf9bb0a53eca",
+    "subject": "地理",
+    "edition": "人教版"
+  },
+  "suppbook:fe28f517b1408381": {
+    "key": "d0587da370a4",
+    "title": "普通高中教科书·地理图册选择性必修1 自然地理基础",
+    "display_title": "普通高中教科书·地理图册选择性必修1 自然地理基础（人教版）",
+    "pages": 56,
+    "page_offset": 3,
+    "content_id": "9098cb0a-0cd8-4d27-982b-d189d4e0ec6b",
+    "subject": "地理",
+    "edition": "人教版"
+  },
+  "suppbook:c8c62d3c26de86dc": {
+    "key": "3b704ccc41ff",
+    "title": "普通高中教科书·地理图册选择性必修2 区域发展",
+    "display_title": "普通高中教科书·地理图册选择性必修2 区域发展（人教版）",
+    "pages": 56,
+    "page_offset": 3,
+    "content_id": "da944a29-9de3-4277-b29a-b1316c43270d",
+    "subject": "地理",
+    "edition": "人教版"
+  },
+  "suppbook:97ae6da3c8efb915": {
+    "key": "01a3087898b5",
+    "title": "普通高中教科书·地理图册选择性必修3 资源、环境与国家安全",
+    "display_title": "普通高中教科书·地理图册选择性必修3 资源、环境与国家安全（人教版）",
+    "pages": 56,
+    "page_offset": 3,
+    "content_id": "88d7cf7a-f066-4a7a-b4d2-80bb9d802a56",
+    "subject": "地理",
+    "edition": "人教版"
+  },
+  "suppbook:d9cba6859bc27a78": {
+    "key": "5d7ca2682888",
+    "title": "普通高中教科书·地理必修 第一册",
+    "display_title": "普通高中教科书·地理必修 第一册（人教版）",
+    "pages": 133,
+    "page_offset": 4,
+    "content_id": "e2c5fb9c-9a73-4f1a-8fb5-10b1299c7f5c",
+    "subject": "地理",
+    "edition": "人教版"
+  },
+  "suppbook:448df0af49d911bc": {
+    "key": "f5dbc88963b8",
+    "title": "普通高中教科书·地理必修 第二册",
+    "display_title": "普通高中教科书·地理必修 第二册（人教版）",
+    "pages": 133,
+    "page_offset": 4,
+    "content_id": "8452d2cf-1a23-4656-84b9-26616cbd2eff",
+    "subject": "地理",
+    "edition": "人教版"
+  },
+  "suppbook:7a899b3966393bed": {
+    "key": "e86ad8b2d8fe",
+    "title": "普通高中教科书·地理选择性必修1 自然地理基础",
+    "display_title": "普通高中教科书·地理选择性必修1 自然地理基础（人教版）",
+    "pages": 105,
+    "page_offset": 4,
+    "content_id": "373d48bd-c1b4-4edd-b148-628713692ba3",
+    "subject": "地理",
+    "edition": "人教版"
+  },
+  "suppbook:8b0b079be870b865": {
+    "key": "84646c8b3208",
+    "title": "普通高中教科书·地理选择性必修2 区域发展",
+    "display_title": "普通高中教科书·地理选择性必修2 区域发展（人教版）",
+    "pages": 101,
+    "page_offset": 4,
+    "content_id": "db7e6c9c-44b3-4818-96c6-ce81dabb3cc7",
+    "subject": "地理",
+    "edition": "人教版"
+  },
+  "suppbook:6779080d863f662a": {
+    "key": "c25a2f32c178",
+    "title": "普通高中教科书·地理选择性必修3 资源、环境与国家安全",
+    "display_title": "普通高中教科书·地理选择性必修3 资源、环境与国家安全（人教版）",
+    "pages": 125,
+    "page_offset": 4,
+    "content_id": "f07377f5-2ced-4d59-a59d-fe3b37800ead",
+    "subject": "地理",
+    "edition": "人教版"
   }
 }

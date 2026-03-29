@@ -144,16 +144,28 @@ def _render_pdf(book_key: str, pdf_path: Path, out_root: Path) -> tuple[str, int
     return short_key, total, converted, skipped
 
 
-def _iter_supported_supplemental_books(manifest: dict) -> list[dict]:
+def _iter_supported_supplemental_books(
+    manifest: dict,
+    *,
+    phase_filter: str | None = None,
+    subject_filter: str | None = None,
+) -> list[dict]:
     books = []
+    normalized_phase = str(phase_filter or "").strip()
+    normalized_subject = str(subject_filter or "").strip()
     for item in manifest.get("book_catalog") or []:
         if not isinstance(item, dict):
             continue
         if str(item.get("source") or "").strip() != "supplemental_only":
             continue
+        phase = str(item.get("phase") or "高中").strip()
         subject = str(item.get("subject") or "").strip()
         edition = str(item.get("edition") or "").strip()
-        if not _is_supported_runtime_edition(subject, edition):
+        if normalized_phase and phase != normalized_phase:
+            continue
+        if normalized_subject and subject != normalized_subject:
+            continue
+        if not _is_supported_runtime_edition(subject, edition, phase=phase):
             continue
         content_id = str(item.get("content_id") or "").strip()
         if not content_id:
@@ -168,17 +180,34 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, default=SUPPLEMENTAL_MANIFEST_PATH)
     parser.add_argument("--book-map", type=Path, default=BOOK_MAP_PATH)
     parser.add_argument("--pages-root", type=Path, default=PAGES_ROOT)
+    parser.add_argument("--phase", default="", help="Optional phase filter, e.g. 高中 or 初中")
+    parser.add_argument("--subject", default="", help="Optional subject filter, e.g. 地理")
     args = parser.parse_args()
 
     backup_root = args.backup_root.expanduser().resolve()
     manifest_path = args.manifest.expanduser().resolve()
     book_map_path = args.book_map.expanduser().resolve()
     pages_root = args.pages_root.expanduser().resolve()
+    phase_filter = str(args.phase or "").strip()
+    subject_filter = str(args.subject or "").strip()
 
     manifest = _load_json(manifest_path)
     book_map = _load_json(book_map_path)
-    books = _iter_supported_supplemental_books(manifest)
-    print(f"Supported supplemental-only books: {len(books)}")
+    books = _iter_supported_supplemental_books(
+        manifest,
+        phase_filter=phase_filter or None,
+        subject_filter=subject_filter or None,
+    )
+    filter_label = ", ".join(
+        part for part in (
+            f"phase={phase_filter}" if phase_filter else "",
+            f"subject={subject_filter}" if subject_filter else "",
+        ) if part
+    )
+    if filter_label:
+        print(f"Supported supplemental-only books ({filter_label}): {len(books)}")
+    else:
+        print(f"Supported supplemental-only books: {len(books)}")
 
     generated = 0
     merged_map = dict(book_map)
@@ -212,8 +241,7 @@ def main() -> int:
             f"{total_pages}p ({converted} new, {skipped} cached)"
         )
 
-    ordered = dict(sorted(merged_map.items(), key=lambda pair: (pair[1].get("title") or "", pair[0])))
-    book_map_path.write_text(json.dumps(ordered, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    book_map_path.write_text(json.dumps(merged_map, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"Updated book map: {book_map_path}")
     print(f"Total new pages rendered: {generated}")
     return 0

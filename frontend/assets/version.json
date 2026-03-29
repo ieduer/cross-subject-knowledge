@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.03.26-r33",
-  "updated_at": "2026-03-26",
+  "frontend_refactor_version": "2026.03.29-r34",
+  "updated_at": "2026-03-29",
   "history": [
+    {
+      "version": "2026.03.29-r34",
+      "date": "2026-03-29",
+      "summary": "restored high-school geography 人教版 textbook+atlas page-image mappings for the 10 supplemental books already present on R2/CDN, aligned the release ledger for this mapping-only rollout, and updated deployment notes around clean-checkout deploys and VPS SSH verification"
+    },
     {
       "version": "2026.03.26-r33",
       "date": "2026-03-26",

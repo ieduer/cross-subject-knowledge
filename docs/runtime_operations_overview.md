@@ -37,36 +37,37 @@ Runtime DB rule:
 
 Current page-image boundary:
 
-- `book_map.json` and the CDN page-image product now cover `96` books: the original `69` primary books plus `27` supported supplemental books
+- local `book_map.json` now covers `127` books: all `117` primary books plus `10` high-school geography `人教版` supplemental books (the `5` textbooks and matching `5` atlases)
 - the current public product scope is intentionally narrower than the full identity-audited catalog: only `人教版全部`、`英语·北师大版`、`化学·鲁科版`
+- live public search scope still exposes `110` visible books from `/api/books`: `83` primary books plus `27` supplemental-only books
+- as of `2026-03-29`, the pending geography fix is a page-mapping release only: the representative CDN pages already return `200`, while live `page_url=null` is caused by the deployed image missing the geography `suppbook:*` mappings
 - unsupported parallel editions still retain OCR and `origin/layout/span` PDFs for audit, but they are not part of the current public search/product scope
 
 ## Current runtime profile
 
-As of 2026-03-10, keep production current and local pending rollout separate:
+As of 2026-03-29, keep production current and local pending rollout separate:
 
 ### Production current
 
-- DB chunks: `21925`
-- Textbook chunks: `17896`
+- DB chunks: `24096`
+- Textbook chunks: `20067`
 - Gaokao chunks: `4029`
-- FAISS vectors: `17896`
-- Searchable textbooks: current live API still serves the pre-identity-cleanup catalog
-- Supplemental textbook pages: `22844` from `251` indexed OCR source files
-- Supplemental vectors: `22844`
-- Frontend version marker: `2026.03.10-r23`
+- FAISS vectors: `20067`
+- Visible books from live `/api/books`: `110` (`83` primary + `27` supplemental-only)
+- Supplemental textbook pages: `2843`
+- Supplemental vectors: `2843`
+- Frontend version marker: `2026.03.26-r33`
+- Known live defect: `高中 + 地理` supplemental hits such as query `自然灾害` still return `page_url=null`
 
 ### Local pending rollout
 
-- Verified textbook-version manifest: `69` primary books resolved, `0` unresolved, `0` duplicate primary identities, `0` remaining safe merge candidates
-- Visible searchable textbooks in the current public support scope: `62` (`35` supported primary books + `27` supported supplemental books)
-- Page-image mapped books after supplemental page generation: `96`
+- Verified textbook-version manifest: `117` primary books resolved, `0` unresolved, `0` duplicate primary identities, `0` remaining safe merge candidates
+- Page-image mapped books after the geography restore: `127` (`117` primary + `10` supplemental)
 - Supplemental textbook runtime pages: `2843`
-- Supplemental page source pages before omission/dedupe: `31170`
-- Primary-bound duplicate pages omitted from runtime supplemental search: `10724`
-- Unsupported-version supplemental pages omitted from the current public runtime corpus: `17603`
+- Supplemental searchable books in the public scope: `27`
+- Supplemental rows carrying a concrete `book_map_key`: `714` (the high-school geography `人教版` textbook+atlas set)
 - Supplemental vectors: verified against the `2843`-page source and ready for rollout
-- Frontend version marker prepared for rollout: `2026.03.10-r27`
+- Frontend version marker prepared for rollout: `2026.03.29-r34`
 
 Common runtime facts shared by both states:
 

@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-26T08:23:48.317852+00:00",
-  "git_head": "dd8df77eaac44b9db2f8f134f25daa558bfbc6cd",
-  "frontend_version": "2026.03.26-r33",
+  "generated_at": "2026-03-29T11:02:20.705444+00:00",
+  "git_head": "ccb8c2543f7e03be2033f065755acd1727355a33",
+  "frontend_version": "2026.03.29-r34",
   "source_of_truth": {
     "local_workspace": "authoritative",
     "github": "authoritative_for_code_only_after_push",
@@ -139,14 +139,14 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/version.json",
-      "size": 8700,
-      "sha256": "121d37d3cd0debb1330f20048f4da6d237bf2156fde6f7a83038d37d870d4615"
+      "size": 9070,
+      "sha256": "89a2a1d7666a20b432c36eacbbce7d872cabe7df0c81ae405aecfe69e21a4fca"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/pages/book_map.json",
-      "size": 52402,
-      "sha256": "4422ea7c9f940762d3de2fdb2f88fc0b32172c37bdb6f3a8dcbab5be5765c7b7"
+      "size": 56329,
+      "sha256": "d8ece4b9f10e65e460a0e1d3087cb59ee514f0bd078acbfa28b338dc65d596d9"
     },
     {
       "kind": "source",
@@ -312,7 +312,7 @@
     }
   ],
   "page_mapping": {
-    "book_count": 117,
+    "book_count": 127,
     "required_r2_prefixes": [
       "pages/",
       "pages/dict_xuci/",

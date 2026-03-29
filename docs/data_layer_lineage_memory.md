@@ -1374,6 +1374,22 @@ Before any future update, read this document and explicitly confirm:
 
 If those six items are not written down, the change is not ready.
 
+## 2026-03-29 high-school geography page-image mapping note
+
+- Public CDN/R2 verification: representative high-school geography pages such as `https://img.rdfzer.com/pages/890c235d20c4/p4.webp` and `https://img.rdfzer.com/pages/5d7ca2682888/p103.webp` return `HTTP 200`; the page images already exist remotely
+- Live production symptom remains reproducible under frontend version `2026.03.26-r33`: `curl -sS 'https://sun.bdfz.net/api/search?q=自然灾害&source=textbook&subject=地理&phase=高中&limit=10'` returns high-school geography supplemental rows with `page_url=null`
+- Root cause: the deployed image is missing the `10` `suppbook:*` entries for the high-school geography `人教版` textbook+atlas set, even though the OCR rows and CDN pages already exist
+- Local verified target state after the mapping restore:
+  - `primary_db_books=117`
+  - `book_map_books=127`
+  - `book_map_primary_books=117`
+  - `book_map_supplemental_books=10`
+  - `supplemental_manifest.pages=2843`
+  - `supplemental_jsonl.book_map_key_rows=714`
+- Release class: this is a page-mapping rollout, not a DB rebuild, FAISS rebuild, or R2 upload rollout
+- Production access warning: workstation SSH to `sun.bdfz.net` / `23.19.231.173` is currently not healthy for manual inspection from this environment; the server closes the connection before shell. Do not assume manual VPS login works until SSH access is repaired or revalidated
+- Deploy-path warning: GitHub Actions uses repository secret `VPS_SSH_KEY`; that trust path is separate from the workstation SSH config and separate from any VPS root password change. Verify the active deploy key before relying on an automatic rollout
+
 ## 2026-03-11 deployment incident note
 
 - Incident: a VPS-side manual release was built from the stale runtime repo instead of a clean local release source, and the resulting image lost `frontend/assets/pages/book_map.json`
