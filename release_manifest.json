@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-29T11:02:20.705444+00:00",
-  "git_head": "ccb8c2543f7e03be2033f065755acd1727355a33",
+  "generated_at": "2026-04-05T09:31:37.289553+00:00",
+  "git_head": "0ceda4db7f06e29201fbe7e26cd0bb0225e7c24b",
   "frontend_version": "2026.04.05-r35",
   "source_of_truth": {
     "local_workspace": "authoritative",
@@ -91,26 +91,26 @@
     {
       "kind": "source",
       "logical_path": "frontend/index.html",
-      "size": 13900,
-      "sha256": "3cdb2c795717ecb0cd2bd54ec72d98c6bd6a9b22c767ceb3a5d48a530e72a647"
+      "size": 13967,
+      "sha256": "ad51201ca27e2e3025bb17a01d4057a0883aca2236343cb43398f13af9b51f94"
     },
     {
       "kind": "source",
       "logical_path": "frontend/dict.html",
-      "size": 10344,
-      "sha256": "01370a5f4a0793841bb41219604d6ba7e91b10325bbd30624f1c3319beec7b4f"
+      "size": 10411,
+      "sha256": "56f20b507462746721e8f531f8bba2852c113888ef5f6589a259e3faea548b6d"
     },
     {
       "kind": "source",
       "logical_path": "frontend/chuzhong.html",
-      "size": 10519,
-      "sha256": "b987e80195aaff9d7c645c44de775c9eefe466d7f17b4b7080cb1a69dd7e642d"
+      "size": 10586,
+      "sha256": "2ca7d6ae76073b0ea6d1a3836f6f35eeeddb1b5f69e4cb5b62d00c4144846a13"
     },
     {
       "kind": "source",
       "logical_path": "frontend/chuzhong-dict.html",
-      "size": 10305,
-      "sha256": "c9a2289279b493a10d0e8f724bf5f8ee18e3b0c5ca8f1f64e1dfd2f375ef7bce"
+      "size": 10372,
+      "sha256": "d9060520bbf4fca9bdac0cd6ace9359927498ce96787b1e9b8f884bdad16aad3"
     },
     {
       "kind": "source",
@@ -139,14 +139,14 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/version.json",
-      "size": 9070,
-      "sha256": "89a2a1d7666a20b432c36eacbbce7d872cabe7df0c81ae405aecfe69e21a4fca"
+      "size": 9431,
+      "sha256": "c9a3ec11f9a9f21414a707af98dac414378d655f8b5389e779c1082741fde975"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/pages/book_map.json",
-      "size": 56329,
-      "sha256": "d8ece4b9f10e65e460a0e1d3087cb59ee514f0bd078acbfa28b338dc65d596d9"
+      "size": 62744,
+      "sha256": "4b0ab2d2515eaeed85078b7881ba0e2f0977df13e83ebcbb914a5ee7fb9c732d"
     },
     {
       "kind": "source",
@@ -178,7 +178,7 @@
       "kind": "runtime",
       "logical_path": "data/index/textbook_mineru_fts.db",
       "size": 80961536,
-      "sha256": "9454c4f0cc79d4a6c0cb933d7461590c09fc773ed2169e9d27d7f72ac3e5e7b3",
+      "sha256": "dd33663982fd4654b1f96759498d2af429d9061bde58f419bc6f0292b661984a",
       "source_path": "data/index/textbook_mineru_fts.db",
       "runtime_identity": {
         "type": "sqlite_textbook_runtime_identity_v1",
@@ -312,7 +312,7 @@
     }
   ],
   "page_mapping": {
-    "book_count": 127,
+    "book_count": 144,
     "required_r2_prefixes": [
       "pages/",
       "pages/dict_xuci/",
