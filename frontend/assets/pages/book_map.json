@@ -1268,5 +1268,175 @@
     "content_id": "f07377f5-2ced-4d59-a59d-fe3b37800ead",
     "subject": "地理",
     "edition": "人教版"
+  },
+  "suppbook:802fd91c0bceb90b": {
+    "key": "6105a073a429",
+    "title": "普通高中教科书·化学必修 第一册",
+    "display_title": "普通高中教科书·化学必修 第一册（人教版）",
+    "pages": 138,
+    "page_offset": 0,
+    "content_id": "5cd19072-e40d-4a73-8580-7b7ada5d4005",
+    "subject": "化学",
+    "edition": "人教版"
+  },
+  "suppbook:0a001670ba5fc9da": {
+    "key": "a7f71c058339",
+    "title": "普通高中教科书·化学选择性必修1 化学反应原理",
+    "display_title": "普通高中教科书·化学选择性必修1 化学反应原理（人教版）",
+    "pages": 138,
+    "page_offset": 0,
+    "content_id": "3502fe81-b23e-4f68-aa3d-7921e7932ec9",
+    "subject": "化学",
+    "edition": "人教版"
+  },
+  "suppbook:e30240d65a39807c": {
+    "key": "e99370b495b5",
+    "title": "普通高中教科书·化学选择性必修2 物质结构与性质",
+    "display_title": "普通高中教科书·化学选择性必修2 物质结构与性质（人教版）",
+    "pages": 114,
+    "page_offset": 0,
+    "content_id": "b82cefe7-d631-4bde-baf9-352ca033cba4",
+    "subject": "化学",
+    "edition": "人教版"
+  },
+  "suppbook:8391dfa2cb0e22a3": {
+    "key": "5ccfb493e901",
+    "title": "普通高中教科书·物理必修 第一册",
+    "display_title": "普通高中教科书·物理必修 第一册（人教版）",
+    "pages": 133,
+    "page_offset": 0,
+    "content_id": "708256b6-6f06-4d14-89c7-4df16dfe3b81",
+    "subject": "物理",
+    "edition": "人教版"
+  },
+  "suppbook:128c4f500a15ee33": {
+    "key": "17466181e65c",
+    "title": "普通高中教科书·物理必修 第三册",
+    "display_title": "普通高中教科书·物理必修 第三册（人教版）",
+    "pages": 142,
+    "page_offset": 0,
+    "content_id": "dcd8cc6b-5380-4008-a2d0-a061f24d34dd",
+    "subject": "物理",
+    "edition": "人教版"
+  },
+  "suppbook:f7ea3b52c092389e": {
+    "key": "c3d9023ca786",
+    "title": "普通高中教科书·物理必修 第二册",
+    "display_title": "普通高中教科书·物理必修 第二册（人教版）",
+    "pages": 113,
+    "page_offset": 0,
+    "content_id": "55baa3cc-156f-4358-8e28-bfa21a864450",
+    "subject": "物理",
+    "edition": "人教版"
+  },
+  "suppbook:156205f20a348662": {
+    "key": "400a3469b34b",
+    "title": "普通高中教科书·物理选择性必修 第一册",
+    "display_title": "普通高中教科书·物理选择性必修 第一册（人教版）",
+    "pages": 129,
+    "page_offset": 0,
+    "content_id": "346c3c04-1663-472c-849e-ff876dcf293f",
+    "subject": "物理",
+    "edition": "人教版"
+  },
+  "suppbook:cabf9ae26e37ed0f": {
+    "key": "f0401e2264d4",
+    "title": "普通高中教科书·物理选择性必修 第三册",
+    "display_title": "普通高中教科书·物理选择性必修 第三册（人教版）",
+    "pages": 142,
+    "page_offset": 0,
+    "content_id": "2109c25c-2e52-4da3-8ab3-18cbe632ec11",
+    "subject": "物理",
+    "edition": "人教版"
+  },
+  "suppbook:05133e9de7cfe36b": {
+    "key": "1890dd46c204",
+    "title": "普通高中教科书·物理选择性必修 第二册",
+    "display_title": "普通高中教科书·物理选择性必修 第二册（人教版）",
+    "pages": 121,
+    "page_offset": 0,
+    "content_id": "2ee7d7fa-1920-4d37-a179-91d5fd59b8c1",
+    "subject": "物理",
+    "edition": "人教版"
+  },
+  "suppbook:3728fb494406dae1": {
+    "key": "1b97ef55ea0a",
+    "title": "普通高中教科书·生物学选择性必修3 生物技术与工程",
+    "display_title": "普通高中教科书·生物学选择性必修3 生物技术与工程（人教版）",
+    "pages": 129,
+    "page_offset": 0,
+    "content_id": "d12ff6b6-b6cd-444a-9749-4642aa350482",
+    "subject": "生物学",
+    "edition": "人教版"
+  },
+  "suppbook:8d645e210a976d8f": {
+    "key": "287f8b5a8ae0",
+    "title": "普通高中教科书·英语必修 第一册",
+    "display_title": "普通高中教科书·英语必修 第一册（人教版）",
+    "pages": 137,
+    "page_offset": 0,
+    "content_id": "8e62f140-1990-411e-8831-59a69bb53c1d",
+    "subject": "英语",
+    "edition": "人教版"
+  },
+  "suppbook:8d2cd2d7df7a7db3": {
+    "key": "a1889a306096",
+    "title": "普通高中教科书·英语必修 第三册",
+    "display_title": "普通高中教科书·英语必修 第三册（人教版）",
+    "pages": 129,
+    "page_offset": 0,
+    "content_id": "bf54b36f-4c75-4c91-8b9c-53ce15e4f903",
+    "subject": "英语",
+    "edition": "人教版"
+  },
+  "suppbook:4d8d211e36ce1be9": {
+    "key": "fa6596726bbe",
+    "title": "普通高中教科书·英语必修 第二册",
+    "display_title": "普通高中教科书·英语必修 第二册（人教版）",
+    "pages": 125,
+    "page_offset": 0,
+    "content_id": "144425f4-87a0-4a3a-82b7-ea7be112856c",
+    "subject": "英语",
+    "edition": "人教版"
+  },
+  "suppbook:2d625f0ca03b5d05": {
+    "key": "01604b02cfb3",
+    "title": "普通高中教科书·英语选择性必修 第一册",
+    "display_title": "普通高中教科书·英语选择性必修 第一册（人教版）",
+    "pages": 129,
+    "page_offset": 0,
+    "content_id": "ec1adf40-7bf0-48a4-9902-89162f59277d",
+    "subject": "英语",
+    "edition": "人教版"
+  },
+  "suppbook:8bfca9dd17744cea": {
+    "key": "fe148e701a46",
+    "title": "普通高中教科书·英语选择性必修 第三册",
+    "display_title": "普通高中教科书·英语选择性必修 第三册（人教版）",
+    "pages": 129,
+    "page_offset": 0,
+    "content_id": "671e59b0-608f-49c6-8f23-e076decf27e2",
+    "subject": "英语",
+    "edition": "人教版"
+  },
+  "suppbook:801dd08ff2006aff": {
+    "key": "06f93cbe420b",
+    "title": "普通高中教科书·英语选择性必修 第二册",
+    "display_title": "普通高中教科书·英语选择性必修 第二册（人教版）",
+    "pages": 133,
+    "page_offset": 0,
+    "content_id": "0d537335-d02c-4774-85e2-7554c86fea7e",
+    "subject": "英语",
+    "edition": "人教版"
+  },
+  "suppbook:f5b9c6b96e6b3002": {
+    "key": "3b3414d84268",
+    "title": "普通高中教科书·英语选择性必修 第四册",
+    "display_title": "普通高中教科书·英语选择性必修 第四册（人教版）",
+    "pages": 129,
+    "page_offset": 0,
+    "content_id": "5f0829b2-fc05-479b-a51e-47f871598eba",
+    "subject": "英语",
+    "edition": "人教版"
   }
 }

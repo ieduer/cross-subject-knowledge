@@ -30,6 +30,22 @@
 
 ---
 
+## 🧭 2026-04-05 补充教材页图修复与站点导航接入
+
+### 本轮已完成的关键更新
+
+- 修复 17 本补充教材（物理 6 本、化学 3 本、英语 7 本、生物学 1 本）检索结果显示"暂无页图"的问题：页图文件早已在 R2/CDN 上生成完毕，但 `book_map.json` 缺少对应条目导致后端 `_book_page_url()` 返回空值；现已补全全部 27 本受支持补充教材的页图映射
+- 全站 4 个 HTML 页面（index / chuzhong / dict / chuzhong-dict）统一接入 BDFZ 生态导航浮窗（`bdfz-nav.js`），导航数据从 `nav.bdfz.net/sites.json` 加载，Shadow DOM 隔离样式不影响宿主页
+- 核查 ERR_TUNNEL_CONNECTION_FAILED 用户反馈：该错误为客户端侧 proxy/VPN/DNS 问题，非后端代码缺陷，后端 CORS 与反向代理头配置均正常；若在 VPS 侧复现，优先检查 nginx SSL 证书有效性与 proxy_pass 配置
+- 前端版本更新至 `2026.04.05-r35`，缓存标记同步更新
+
+### 部署注意
+
+- 本轮 17 本补充教材页图目录已存在于本机 `frontend/assets/pages/` 下，但需确认已上传至 R2；部署前执行 `scripts/upload_pages_r2.py` 同步新增的 17 个 `short_key` 目录
+- `bdfz-nav.js` 从 `nav.bdfz.net` CDN 加载，不增加镜像体积，不影响离线本地调试（离线时浮窗不显示）
+
+---
+
 ## 🧭 2026-03-26 教育部成语典接入与简繁转换
 
 ### 本轮已完成的关键更新

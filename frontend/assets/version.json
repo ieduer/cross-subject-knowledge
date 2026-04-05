@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.03.29-r34",
-  "updated_at": "2026-03-29",
+  "frontend_refactor_version": "2026.04.05-r35",
+  "updated_at": "2026-04-05",
   "history": [
+    {
+      "version": "2026.04.05-r35",
+      "date": "2026-04-05",
+      "summary": "fixed '暂无页图' for 17 supplemental books (物理/化学/生物学/英语) by adding missing entries to book_map.json — all 27 supported supplemental books now have page-image mappings, added BDFZ ecosystem navigation widget (bdfz-nav.js) to all 4 HTML pages"
+    },
     {
       "version": "2026.03.29-r34",
       "date": "2026-03-29",
