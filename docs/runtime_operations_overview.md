@@ -2,6 +2,8 @@
 
 This document records the current runtime, data, and deployment boundaries of the textbook project.
 
+For daily maintenance, incident triage, deploy verification, and rollback, read [MAINTENANCE_MANUAL.md](./MAINTENANCE_MANUAL.md) first.
+
 Before any data rebuild, deploy, rollback, or search-debugging pass, read [data_layer_lineage_memory.md](./data_layer_lineage_memory.md) first. That file is the canonical long-term memory for data lineage, count meanings, runtime asset boundaries, and release rules. For textbook-version reconciliation and “same book vs different edition” decisions, also read [textbook_identity_audit.md](./textbook_identity_audit.md).
 
 ## Machine roles

@@ -6842,6 +6842,10 @@ def search(
             book_key=book_key,
         )
         search_plan = _build_search_term_plan(query_analysis)
+        if not search_plan and _is_single_hanzi_query(q):
+            # Single-character queries (for example 文言虚词) still need a primary
+            # textbook search path; otherwise only supplemental fallback runs.
+            search_plan = [{"term": _compact_query_text(q), "basis": "single_char"}]
         textbook_scope_subject = scope_subject or subject
         use_hybrid_search = (
             source != "gaokao"
