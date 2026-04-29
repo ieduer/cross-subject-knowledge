@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-04-05T09:31:37.289553+00:00",
-  "git_head": "0ceda4db7f06e29201fbe7e26cd0bb0225e7c24b",
-  "frontend_version": "2026.04.05-r35",
+  "generated_at": "2026-04-29T01:29:31.420980+00:00",
+  "git_head": "9fdd96f0bce28bfba565c7ea576c28a1e222628e",
+  "frontend_version": "2026.04.29-r36",
   "source_of_truth": {
     "local_workspace": "authoritative",
     "github": "authoritative_for_code_only_after_push",
@@ -31,8 +31,8 @@
     {
       "kind": "source",
       "logical_path": "backend/main.py",
-      "size": 363615,
-      "sha256": "66fad8c7f12d0bdc9c0fb22cbbf97682684f3ced1102efdd4a37b5f790795699"
+      "size": 364144,
+      "sha256": "c83c4d1acd01be744cb25d8a2ee14a2f6ff8fe9f123e1a28a51f38ea55ac6257"
     },
     {
       "kind": "source",
@@ -115,8 +115,8 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/app.js",
-      "size": 124183,
-      "sha256": "0e7a657c41865ee8004b495a02f5f750569cdbf79add6b9a09beeb4dafce602f"
+      "size": 125752,
+      "sha256": "5ac69e0a1e3b2113299ea12bdd348ce6bdb2c0bcee30c484b19606bc21d05993"
     },
     {
       "kind": "source",
@@ -139,8 +139,8 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/version.json",
-      "size": 9431,
-      "sha256": "c9a3ec11f9a9f21414a707af98dac414378d655f8b5389e779c1082741fde975"
+      "size": 9737,
+      "sha256": "6dbc6f0e49901c21b1831bb69a180a8769b2702b7ab08bd3d96c4ba76a1f46b8"
     },
     {
       "kind": "source",

@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.04.05-r35",
-  "updated_at": "2026-04-05",
+  "frontend_refactor_version": "2026.04.29-r36",
+  "updated_at": "2026-04-29",
   "history": [
+    {
+      "version": "2026.04.29-r36",
+      "date": "2026-04-29",
+      "summary": "hardened search-result subject switching by using a single guarded KaTeX render path for OCR formulas, escaping snippets/formula attributes before HTML insertion, and suppressing missing local favicon 404 noise"
+    },
     {
       "version": "2026.04.05-r35",
       "date": "2026-04-05",

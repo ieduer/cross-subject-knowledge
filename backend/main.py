@@ -10,7 +10,7 @@ import httpx
 from fastapi import FastAPI, Query, HTTPException, Body
 from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 try:
@@ -9425,6 +9425,13 @@ def book_pages(phase: Optional[str] = Query(None, description="Filter by phase: 
 # Serve frontend
 if FRONTEND.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND / "assets"), name="assets")
+
+    @app.get("/favicon.ico")
+    @app.get("/favicon-32x32.png")
+    @app.get("/favicon-16x16.png")
+    @app.get("/apple-touch-icon.png")
+    def favicon_placeholder():
+        return Response(status_code=204)
 
     @app.get("/", response_class=HTMLResponse)
     def index():

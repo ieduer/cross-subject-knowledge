@@ -1259,12 +1259,8 @@ function renderResults(data, filterSubject = null, subjectCountsOverride = null)
         </div>
     `).join('');
 
-    // Trigger Math rendering for search results
-    if (typeof renderMath === 'function') {
-        renderMath(resultsEl);
-    }
-    // Trigger KaTeX rendering if available
-    if (typeof katex !== 'undefined') {
+    // Search result text is tokenized by renderText(); render only those tokens here.
+    if (typeof renderKaTeX === 'function') {
         renderKaTeX(resultsEl);
     }
 }
@@ -1396,12 +1392,12 @@ function renderEvidenceTrace(result, subject, subjectBreadth, query) {
 
 function escHtml(s) {
     const d = document.createElement('div');
-    d.textContent = s || '';
+    d.textContent = s == null ? '' : String(s);
     return d.innerHTML;
 }
 
 function escAttr(s) {
-    return (s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 // Sanitize snippet: keep <mark> highlights, strip everything else
@@ -1410,7 +1406,7 @@ function sanitizeSnippet(html) {
     // Preserve <mark>...</mark> by replacing with placeholders
     const marks = [];
     html = html.replace(/<mark>(.*?)<\/mark>/gi, (_, inner) => {
-        marks.push(inner);
+        marks.push(escHtml(String(inner || '').replace(/<[^>]+>/g, ' ')));
         return `%%MARK${marks.length - 1}%%`;
     });
     // Strip all remaining HTML tags
@@ -1419,30 +1415,45 @@ function sanitizeSnippet(html) {
     html = html.replace(/!\[.*?\]\(.*?\)/g, '');
     // Collapse whitespace
     html = html.replace(/\s+/g, ' ').trim();
-    // Restore mark tags
-    html = html.replace(/%%MARK(\d+)%%/g, (_, i) => `<mark>${marks[+i]}</mark>`);
     // Truncate to ~200 chars
     if (html.length > 250) {
         html = html.slice(0, 250) + '…';
     }
+    html = escHtml(html);
+    // Restore mark tags
+    html = html.replace(/%%MARK(\d+)%%/g, (_, i) => `<mark>${marks[+i]}</mark>`);
     return html;
 }
 
 // Render text with images, formulas, and rich formatting for expanded view
 function renderText(text, bookKey) {
     if (!text) return '';
+    const htmlTokens = [];
+    const stashHtml = (html) => {
+        const key = `%%HTML_TOKEN_${htmlTokens.length}%%`;
+        htmlTokens.push(html);
+        return key;
+    };
+    const restoreHtmlTokens = (html) => html.replace(/%%HTML_TOKEN_(\d+)%%/g, (_, i) => htmlTokens[Number(i)] || '');
+    const stashFormula = (formula, displayMode) => {
+        const normalized = String(formula || '').trim();
+        if (!normalized) return '';
+        return stashHtml(`<span class="${displayMode ? 'katex-display' : 'katex-inline'}" data-formula="${escAttr(normalized)}"></span>`);
+    };
+
     // Strip HTML tags except preserve content
-    let s = text.replace(/<[^>]+>/g, ' ');
+    let s = String(text).replace(/<[^>]+>/g, ' ');
     // Convert markdown images to <img> tags — use R2 CDN
     s = s.replace(/!\[([^\]]*)\]\(images\/([^)]+)\)/g, (_, alt, src) => {
-        return `<img class="result-img" src="${IMG_CDN}/orig/${encodeURIComponent(bookKey)}/${src}" alt="${alt || '教材图片'}" loading="lazy">`;
+        return stashHtml(`<img class="result-img" src="${IMG_CDN}/orig/${encodeURIComponent(bookKey)}/${encodeURI(src)}" alt="${escAttr(alt || '教材图片')}" loading="lazy">`);
     });
 
     // Wrap LaTeX formulas for KaTeX rendering
-    // Display math: $$...$$
-    s = s.replace(/\$\$([^$]+?)\$\$/g, '<span class="katex-display" data-formula="$1"></span>');
-    // Inline math: $...$
-    s = s.replace(/\$([^$\n]+?)\$/g, '<span class="katex-inline" data-formula="$1"></span>');
+    s = s.replace(/\$\$([\s\S]+?)\$\$/g, (_, formula) => stashFormula(formula, true));
+    s = s.replace(/\\\[([\s\S]+?)\\\]/g, (_, formula) => stashFormula(formula, true));
+    s = s.replace(/\\\(([\s\S]+?)\\\)/g, (_, formula) => stashFormula(formula, false));
+    s = s.replace(/\$([^$\n]+?)\$/g, (_, formula) => stashFormula(formula, false));
+    s = escHtml(s);
 
     // Render markdown tables as HTML tables
     s = s.replace(/((?:\|.+\|\n?)+)/g, (tableBlock) => {
@@ -1475,19 +1486,33 @@ function renderText(text, bookKey) {
         }).join('');
     }
 
-    return s;
+    return restoreHtmlTokens(s);
 }
 
 // KaTeX rendering helper
+function shouldRenderKaTeXFormula(formula) {
+    // KaTeX logs noisy metric warnings for a few OCR/unit glyphs even with strict: ignore.
+    // Keep those formulas readable as plain text instead of letting a renderer warning break UX.
+    return !/[‰]/.test(String(formula || ''));
+}
+
 function renderKaTeX(container) {
-    if (typeof katex === 'undefined') return;
+    if (!container || typeof katex === 'undefined') return;
     container.querySelectorAll('.katex-display, .katex-inline').forEach(el => {
+        if (el.dataset.rendered === '1') return;
         try {
-            const formula = el.dataset.formula;
+            const formula = el.dataset.formula || '';
+            if (!shouldRenderKaTeXFormula(formula)) {
+                el.textContent = formula;
+                el.dataset.rendered = '1';
+                return;
+            }
             const isDisplay = el.classList.contains('katex-display');
-            katex.render(formula, el, { displayMode: isDisplay, throwOnError: false });
+            katex.render(formula, el, { displayMode: isDisplay, throwOnError: false, strict: 'ignore' });
+            el.dataset.rendered = '1';
         } catch (e) {
             el.textContent = el.dataset.formula; // fallback
+            el.dataset.rendered = '1';
         }
     });
 }
@@ -2461,8 +2486,9 @@ function renderGaokaoText(text) {
 
 // ── Math Rendering ──────────────────────────────────────────
 function renderMath(el) {
-    if (window.renderMathInElement) {
-        renderMathInElement(el, {
+    if (el && window.renderMathInElement && window.katex) {
+        try {
+            renderMathInElement(el, {
             delimiters: [
                 { left: '$$', right: '$$', display: true },
                 { left: '$', right: '$', display: false },
@@ -2472,7 +2498,8 @@ function renderMath(el) {
             throwOnError: false,
             strict: 'ignore',
             errorColor: '#e74c3c'
-        });
+            });
+        } catch (_) { /* Keep UI usable if third-party auto-render trips on malformed OCR math. */ }
     }
 }
 
