@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-04-29T01:29:31.420980+00:00",
-  "git_head": "9fdd96f0bce28bfba565c7ea576c28a1e222628e",
+  "generated_at": "2026-04-29T01:33:43.185328+00:00",
+  "git_head": "62c7da92fd1314642eb5401e47765d17a0d08035",
   "frontend_version": "2026.04.29-r36",
   "source_of_truth": {
     "local_workspace": "authoritative",
@@ -92,7 +92,7 @@
       "kind": "source",
       "logical_path": "frontend/index.html",
       "size": 13967,
-      "sha256": "ad51201ca27e2e3025bb17a01d4057a0883aca2236343cb43398f13af9b51f94"
+      "sha256": "a203d915f0dc73e4077a625d6a98319959458a95341246eac38270c734723172"
     },
     {
       "kind": "source",
@@ -104,7 +104,7 @@
       "kind": "source",
       "logical_path": "frontend/chuzhong.html",
       "size": 10586,
-      "sha256": "2ca7d6ae76073b0ea6d1a3836f6f35eeeddb1b5f69e4cb5b62d00c4144846a13"
+      "sha256": "8679295434833f7c59cad428d2cbd7a76991756c56d0edebe85487a52be52755"
     },
     {
       "kind": "source",
