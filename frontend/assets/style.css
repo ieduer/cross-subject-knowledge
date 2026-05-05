@@ -3027,6 +3027,147 @@ body {
     }
 }
 
+/* ── BDFZ / mx.bdfz.net visual refresh ───────────────────── */
+@font-face {
+    font-family: 'HuWenMingChao';
+    src: url('https://mx.bdfz.net/data/fonts/HuWenMingChaoTi.woff2') format('woff2');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
+:root {
+    --bg: #fbfaf5;
+    --bg-card: rgba(255, 255, 255, 0.68);
+    --bg-hover: rgba(232, 237, 229, 0.72);
+    --bg-input: rgba(255, 255, 255, 0.82);
+    --border: rgba(150, 137, 126, 0.28);
+    --text: #5d5551;
+    --text-dim: #8d837c;
+    --text-muted: #a89d96;
+    --accent: #789594;
+    --accent-light: #91aaaa;
+    --accent-glow: rgba(120, 149, 148, 0.18);
+    --gradient: linear-gradient(135deg, #617d7b, #789594, #b8cca7);
+    --card-bg: var(--bg-card);
+    --radius: 10px;
+    --radius-sm: 8px;
+    --shadow: 0 18px 60px rgba(93, 85, 81, 0.13);
+}
+
+body {
+    font-family: 'HuWenMingChao', 'Noto Sans SC', 'Inter', -apple-system, sans-serif;
+    background:
+        linear-gradient(rgba(251, 250, 245, 0.83), rgba(251, 250, 245, 0.91)),
+        url('background-mx.jpg');
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+}
+
+.header {
+    background: rgba(251, 250, 245, 0.78);
+    border-bottom-color: var(--border);
+}
+
+.logo-text,
+.hero h1,
+.gaokao-hero h2,
+.insights-header h2,
+.graph-header h2 {
+    font-weight: 400;
+    letter-spacing: 0;
+}
+
+.logo-badge,
+.search-submit,
+.ai-btn,
+.ai-send-btn,
+.gk-search-btn {
+    background: var(--accent);
+    color: #fff;
+}
+
+.search-submit:hover,
+.ai-btn:hover,
+.ai-send-btn:hover,
+.gk-search-btn:hover {
+    background: #617d7b;
+}
+
+.gradient-text,
+.gaokao-hero h2 {
+    background: var(--gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+}
+
+.nav-btn.active,
+.quick-tag:hover,
+.subject-tab.active,
+.insight-tab.active {
+    color: var(--accent);
+    background: rgba(120, 149, 148, 0.14);
+}
+
+.search-box,
+.advanced-panel,
+.stats-bar,
+.ai-panel,
+.ai-result,
+.result-card,
+.group-card,
+.graph-container,
+.insight-panel,
+.gaokao-filters,
+.gk-card,
+.query-analysis,
+.related-bar,
+.cross-hint {
+    background: var(--bg-card);
+    border-color: var(--border);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(14px);
+}
+
+.search-box:focus-within,
+.ai-followup-input:focus,
+.filter-group select:focus,
+.filter-group input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.quick-tag,
+.trending-tag,
+.subject-tab,
+.insight-tab,
+.nav-btn,
+.filter-group select,
+.filter-group input,
+.ai-followup-input {
+    background: rgba(255, 255, 255, 0.72);
+    border-color: var(--border);
+    color: var(--text);
+}
+
+mark {
+    color: #7b5330;
+    background: #f8e8a8;
+    border-radius: 4px;
+    padding: 0 2px;
+}
+
+@media (max-width: 768px) {
+    body {
+        background-attachment: scroll;
+    }
+
+    .header {
+        background: rgba(251, 250, 245, 0.9);
+    }
+}
+
 /* ══════════════════════════════════════════════════════════
    RESPONSIVE: SMALL PHONES (≤380px)
    ══════════════════════════════════════════════════════════ */

@@ -62,6 +62,7 @@ SOURCE_ASSETS = (
     "frontend/chuzhong-dict.html",
     "frontend/assets/app.js",
     "frontend/assets/style.css",
+    "frontend/assets/background-mx.jpg",
     "frontend/assets/dict.js",
     "frontend/assets/dict.css",
     "frontend/assets/version.json",
@@ -141,8 +142,25 @@ def sqlite_ordered_table_hash(conn: sqlite3.Connection, table_name: str) -> dict
     return {"row_count": row_count, "sha256": digest.hexdigest()}
 
 
+def connect_textbook_db(path: Path) -> sqlite3.Connection:
+    try:
+        conn = sqlite3.connect(path)
+        conn.execute("PRAGMA query_only = ON")
+        conn.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
+        return conn
+    except sqlite3.OperationalError as exc:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        if "unable to open database file" not in str(exc):
+            raise
+        uri = f"file:{path}?mode=ro&immutable=1"
+        return sqlite3.connect(uri, uri=True)
+
+
 def textbook_db_runtime_identity(path: Path) -> dict[str, object]:
-    conn = sqlite3.connect(path)
+    conn = connect_textbook_db(path)
     try:
         payload: dict[str, object] = {
             "type": "sqlite_textbook_runtime_identity_v1",
@@ -197,7 +215,7 @@ def book_map_summary() -> dict[str, object]:
 def sqlite_row_count(path: Path, query: str) -> int | None:
     if not path.exists():
         return None
-    conn = sqlite3.connect(path)
+    conn = connect_textbook_db(path)
     try:
         value = conn.execute(query).fetchone()
         return int(value[0]) if value and value[0] is not None else None

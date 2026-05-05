@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-04-29T01:33:43.185328+00:00",
-  "git_head": "62c7da92fd1314642eb5401e47765d17a0d08035",
+  "generated_at": "2026-05-05T03:16:46.160123+00:00",
+  "git_head": "85b3f0068812e698278c732199bb0eed7d8db15a",
   "frontend_version": "2026.04.29-r36",
   "source_of_truth": {
     "local_workspace": "authoritative",
@@ -92,7 +92,7 @@
       "kind": "source",
       "logical_path": "frontend/index.html",
       "size": 13967,
-      "sha256": "a203d915f0dc73e4077a625d6a98319959458a95341246eac38270c734723172"
+      "sha256": "8a6ce018f4e48e3db0842348b141f4d2f2db76f01f9cf4012bb6e2cc09673871"
     },
     {
       "kind": "source",
@@ -121,8 +121,14 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/style.css",
-      "size": 72642,
-      "sha256": "9a10f8fa77dec809feeaaaa6300653d2b7f2b9af112e3e045d88dd3cb638dad2"
+      "size": 75581,
+      "sha256": "04c944f27cc32e90669f1504c177fb9001d73d7667eb05b41faed46f786e91dc"
+    },
+    {
+      "kind": "source",
+      "logical_path": "frontend/assets/background-mx.jpg",
+      "size": 173328,
+      "sha256": "71d1918e759d778f676e417a04da5eb3126ea0c5422db79e6d28c939d2ee2b87"
     },
     {
       "kind": "source",
@@ -163,14 +169,14 @@
     {
       "kind": "source",
       "logical_path": "scripts/build_release_manifest.py",
-      "size": 10217,
-      "sha256": "46e42d0150e1f443d977e38bb3cffc198b720c8d79c1e4e3a1db9dcc121207ce"
+      "size": 10811,
+      "sha256": "ed039d2110ed89be9228cc84cec234b84e83ad4e0fb1fd2b69a98ba8f95cde02"
     },
     {
       "kind": "source",
       "logical_path": "scripts/verify_release_manifest.py",
-      "size": 6547,
-      "sha256": "c294a574a27f7c80a260c854cf041f02ed55d1d8bc60044b4f787b7d4cdeecbf"
+      "size": 7096,
+      "sha256": "5ed2cf3c74a0d21c76051bc4cc4bb35ea3991252b56da62e3879d0397bbab62d"
     }
   ],
   "runtime_assets": [
