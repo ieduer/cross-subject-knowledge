@@ -1,9 +1,62 @@
-/* ── Dict Page: Design aligned with main site ──────────── */
+/* ── Dict Page palette ──────────────────────────────────────
+   The page used to be a flat dark gradient. We now drape the
+   parchment background of the rest of the site with four soft
+   color washes (rose / amber / sage / teal) so each region of
+   the dictionary feels distinct without breaking site cohesion.
+   Each panel gets its own accent below. */
+:root {
+    --dict-ink: #2f2a25;
+    --dict-ink-soft: #5d5551;
+    --dict-ink-dim: #8d837c;
+    --dict-ink-muted: #a89d96;
+    --dict-paper: rgba(252, 250, 246, 0.86);
+    --dict-paper-soft: rgba(252, 250, 246, 0.66);
+    --dict-edge: rgba(120, 113, 106, 0.22);
+    --dict-edge-strong: rgba(120, 113, 106, 0.35);
+
+    --dict-amber: #c98a3a;
+    --dict-amber-tint: rgba(201, 138, 58, 0.18);
+    --dict-amber-soft: rgba(201, 138, 58, 0.08);
+    --dict-amber-edge: rgba(201, 138, 58, 0.28);
+
+    --dict-teal: #4a8ea0;
+    --dict-teal-tint: rgba(74, 142, 160, 0.18);
+    --dict-teal-soft: rgba(74, 142, 160, 0.08);
+    --dict-teal-edge: rgba(74, 142, 160, 0.28);
+
+    --dict-rose: #b85a6a;
+    --dict-rose-tint: rgba(184, 90, 106, 0.18);
+    --dict-rose-soft: rgba(184, 90, 106, 0.08);
+    --dict-rose-edge: rgba(184, 90, 106, 0.3);
+
+    --dict-sage: #6e8b6a;
+    --dict-sage-tint: rgba(110, 139, 106, 0.18);
+    --dict-sage-soft: rgba(110, 139, 106, 0.08);
+    --dict-sage-edge: rgba(110, 139, 106, 0.3);
+
+    --dict-violet: #786fb1;
+    --dict-violet-tint: rgba(120, 111, 177, 0.18);
+    --dict-violet-soft: rgba(120, 111, 177, 0.08);
+    --dict-violet-edge: rgba(120, 111, 177, 0.3);
+}
+
 body.dict-page {
     background:
-        radial-gradient(circle at top, rgba(108, 92, 231, 0.12), transparent 32%),
-        linear-gradient(180deg, #0a0a0f 0%, #12121a 42%, #171e2b 100%);
-    color: #e8e6f0;
+        radial-gradient(circle at 12% 8%, rgba(184, 90, 106, 0.12), transparent 38%),
+        radial-gradient(circle at 88% 14%, rgba(74, 142, 160, 0.12), transparent 42%),
+        radial-gradient(circle at 18% 92%, rgba(110, 139, 106, 0.10), transparent 40%),
+        radial-gradient(circle at 84% 88%, rgba(201, 138, 58, 0.10), transparent 40%),
+        linear-gradient(rgba(252, 250, 246, 0.84), rgba(248, 245, 238, 0.92)),
+        url('background-mx.jpg');
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+    color: var(--dict-ink);
+}
+
+body.dict-page .header {
+    background: rgba(252, 250, 246, 0.78);
+    border-bottom-color: var(--dict-edge);
 }
 
 .dict-home-link {
@@ -28,29 +81,30 @@ body.dict-page {
     padding: 80px 0 28px;
 }
 
-/* ── Search box: match main site ───────────────────────── */
+/* ── Search box ────────────────────────────────────────── */
 .dict-search-box {
     display: flex;
     align-items: center;
     max-width: 640px;
     width: 100%;
-    background: rgba(18, 18, 26, 0.7);
-    border: 1px solid rgba(108, 92, 231, 0.25);
+    background: var(--dict-paper);
+    border: 1px solid var(--dict-edge-strong);
     border-radius: 16px;
     padding: 4px;
-    box-shadow: 0 8px 32px rgba(108, 92, 231, 0.08);
+    box-shadow: 0 12px 36px rgba(93, 85, 81, 0.10);
     transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .dict-search-box:focus-within {
-    border-color: rgba(108, 92, 231, 0.55);
-    box-shadow: 0 0 0 4px rgba(108, 92, 231, 0.12), 0 8px 32px rgba(108, 92, 231, 0.12);
+    border-color: var(--dict-teal);
+    box-shadow: 0 0 0 4px var(--dict-teal-tint), 0 12px 36px rgba(93, 85, 81, 0.14);
 }
 
 .dict-search-icon {
     font-size: 18px;
     padding: 0 12px;
-    opacity: 0.5;
+    opacity: 0.7;
+    color: var(--dict-ink-dim);
 }
 
 .dict-search-box input {
@@ -58,7 +112,7 @@ body.dict-page {
     background: none;
     border: none;
     outline: none;
-    color: #e8e6f0;
+    color: var(--dict-ink);
     font-size: 16px;
     padding: 12px 0;
     min-width: 0;
@@ -66,11 +120,11 @@ body.dict-page {
 }
 
 .dict-search-box input::placeholder {
-    color: rgba(232, 230, 240, 0.4);
+    color: var(--dict-ink-muted);
 }
 
 .dict-search-box button {
-    background: linear-gradient(135deg, #6c5ce7, #a29bfe);
+    background: linear-gradient(135deg, var(--dict-teal), #6fa6b6);
     color: #fff;
     border: none;
     padding: 10px 24px;
@@ -84,7 +138,7 @@ body.dict-page {
 
 .dict-search-box button:hover {
     transform: translateY(-1px);
-    box-shadow: 0 6px 24px rgba(108, 92, 231, 0.35);
+    box-shadow: 0 6px 22px var(--dict-teal-tint);
 }
 
 .dict-search-box button:disabled {
@@ -108,9 +162,9 @@ body.dict-page {
 }
 
 .dict-suggestion {
-    border: 1px solid rgba(108, 92, 231, 0.2);
-    background: rgba(108, 92, 231, 0.06);
-    color: #e8e6f0;
+    border: 1px solid var(--dict-violet-edge);
+    background: var(--dict-violet-soft);
+    color: var(--dict-ink);
     border-radius: 999px;
     padding: 9px 16px;
     font-family: 'Noto Serif SC', serif;
@@ -121,8 +175,8 @@ body.dict-page {
 
 .dict-suggestion:hover {
     transform: translateY(-1px);
-    border-color: rgba(108, 92, 231, 0.5);
-    background: rgba(108, 92, 231, 0.12);
+    border-color: var(--dict-violet);
+    background: var(--dict-violet-tint);
 }
 
 /* ── Mode Switch ───────────────────────────────────────── */
@@ -135,27 +189,29 @@ body.dict-page {
 }
 
 .dict-mode-btn {
-    border: 1px solid rgba(108, 92, 231, 0.2);
-    background: rgba(108, 92, 231, 0.05);
-    color: rgba(232, 230, 240, 0.8);
+    border: 1px solid var(--dict-edge-strong);
+    background: var(--dict-paper-soft);
+    color: var(--dict-ink-soft);
     border-radius: 999px;
     padding: 10px 18px;
     cursor: pointer;
     font-size: 14px;
     font-weight: 600;
-    transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+    transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
 }
 
 .dict-mode-btn:hover {
     transform: translateY(-1px);
-    border-color: rgba(108, 92, 231, 0.48);
-    background: rgba(108, 92, 231, 0.12);
+    border-color: var(--dict-teal);
+    background: var(--dict-teal-soft);
+    color: var(--dict-ink);
 }
 
 .dict-mode-btn.active {
     color: #fff;
-    background: linear-gradient(135deg, rgba(108, 92, 231, 0.82), rgba(162, 155, 254, 0.82));
-    border-color: rgba(162, 155, 254, 0.55);
+    background: linear-gradient(135deg, var(--dict-teal), var(--dict-violet));
+    border-color: transparent;
+    box-shadow: 0 6px 18px rgba(74, 142, 160, 0.22);
 }
 
 /* ── Results Layout ────────────────────────────────────── */
@@ -180,12 +236,83 @@ body.dict-page {
 
 .dict-panel,
 .dict-chat {
-    background: rgba(18, 18, 26, 0.65);
-    border: 1px solid rgba(108, 92, 231, 0.12);
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
-    backdrop-filter: blur(18px);
+    background: var(--dict-paper);
+    border: 1px solid var(--dict-edge);
+    box-shadow: 0 18px 48px rgba(93, 85, 81, 0.12);
+    backdrop-filter: blur(14px);
     border-radius: 20px;
     overflow: hidden;
+    position: relative;
+}
+
+/* Per-panel color washes — each side panel feels distinct without
+   leaving the parchment palette. The first row column is keyed by
+   document order; the side stack panels override below. */
+.dict-columns > .dict-panel {
+    border-top: 3px solid var(--dict-violet);
+    background:
+        linear-gradient(180deg, var(--dict-violet-soft), transparent 32%),
+        var(--dict-paper);
+}
+
+.dict-columns > .dict-panel .dict-count {
+    background: var(--dict-violet-tint);
+    color: var(--dict-violet);
+}
+
+.dict-side-stack .dict-panel:nth-child(1) {
+    border-top: 3px solid var(--dict-amber);
+    background:
+        linear-gradient(180deg, var(--dict-amber-soft), transparent 38%),
+        var(--dict-paper);
+}
+
+.dict-side-stack .dict-panel:nth-child(1) .dict-count {
+    background: var(--dict-amber-tint);
+    color: var(--dict-amber);
+}
+
+.dict-side-stack .dict-panel:nth-child(2) {
+    border-top: 3px solid var(--dict-teal);
+    background:
+        linear-gradient(180deg, var(--dict-teal-soft), transparent 38%),
+        var(--dict-paper);
+}
+
+.dict-side-stack .dict-panel:nth-child(2) .dict-count {
+    background: var(--dict-teal-tint);
+    color: var(--dict-teal);
+}
+
+.dict-side-stack .dict-panel:nth-child(3) {
+    border-top: 3px solid var(--dict-rose);
+    background:
+        linear-gradient(180deg, var(--dict-rose-soft), transparent 38%),
+        var(--dict-paper);
+}
+
+.dict-side-stack .dict-panel:nth-child(3) .dict-count {
+    background: var(--dict-rose-tint);
+    color: var(--dict-rose);
+}
+
+.dict-panel.dict-panel-wide {
+    border-top: 3px solid var(--dict-sage);
+    background:
+        linear-gradient(180deg, var(--dict-sage-soft), transparent 32%),
+        var(--dict-paper);
+}
+
+.dict-panel.dict-panel-wide .dict-count {
+    background: var(--dict-sage-tint);
+    color: var(--dict-sage);
+}
+
+.dict-chat {
+    border-top: 3px solid var(--dict-teal);
+    background:
+        linear-gradient(180deg, var(--dict-teal-soft), transparent 38%),
+        var(--dict-paper);
 }
 
 .dict-panel-head,
@@ -195,7 +322,7 @@ body.dict-page {
     justify-content: space-between;
     gap: 18px;
     padding: 18px 24px 14px;
-    border-bottom: 1px solid rgba(108, 92, 231, 0.1);
+    border-bottom: 1px solid var(--dict-edge);
 }
 
 .dict-panel-head h2,
@@ -203,6 +330,7 @@ body.dict-page {
     font-family: 'Noto Serif SC', serif;
     font-size: 20px;
     margin: 0;
+    color: var(--dict-ink);
 }
 
 .dict-count {
@@ -210,33 +338,91 @@ body.dict-page {
     text-align: center;
     padding: 4px 10px;
     border-radius: 999px;
-    background: rgba(108, 92, 231, 0.14);
-    color: #a29bfe;
+    background: var(--dict-violet-tint);
+    color: var(--dict-violet);
     font-weight: 700;
     font-size: 13px;
 }
 
-.dict-panel-body {
+/* ── Scroll affordance ─────────────────────────────────────
+   .has-overflow gets toggled by JS when scrollHeight > clientHeight,
+   .scrolled-bottom is set when the panel is scrolled to the end.
+   We layer a fade gradient and a "向下滑动" pill on the panel so
+   readers know there's more content below the visible cut. */
+.dict-panel-body,
+.dict-panel-body-wide {
     padding: 8px 24px 18px;
     max-height: 640px;
     overflow-y: auto;
+    scroll-behavior: smooth;
+    overscroll-behavior: contain;
 }
 
 .dict-side-stack .dict-panel-body {
     max-height: 360px;
 }
 
-/* Scrollable gaokao results */
-.dict-panel-body-wide {
-    max-height: 640px;
-    overflow-y: auto;
+.dict-panel.has-overflow::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 56px;
+    pointer-events: none;
+    background: linear-gradient(180deg, transparent, var(--dict-paper) 78%);
+    border-radius: 0 0 20px 20px;
+    transition: opacity 0.18s ease;
+    z-index: 1;
+}
+
+.dict-panel.has-overflow.scrolled-bottom::after {
+    opacity: 0;
+}
+
+.dict-panel.has-overflow .dict-scroll-hint {
+    position: absolute;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--dict-paper);
+    border: 1px solid var(--dict-edge-strong);
+    color: var(--dict-ink-soft);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    box-shadow: 0 6px 16px rgba(93, 85, 81, 0.14);
+    animation: dictScrollNudge 1.6s ease-in-out infinite;
+    pointer-events: none;
+}
+
+.dict-panel.has-overflow.scrolled-bottom .dict-scroll-hint {
+    opacity: 0;
+    animation: none;
+}
+
+@keyframes dictScrollNudge {
+    0%, 100% { transform: translate(-50%, 0); }
+    50% { transform: translate(-50%, 4px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .dict-panel.has-overflow .dict-scroll-hint {
+        animation: none;
+    }
 }
 
 /* ── Cards ─────────────────────────────────────────────── */
 .dict-card,
 .dict-entry-card,
 .dict-gk-card {
-    border-bottom: 1px solid rgba(108, 92, 231, 0.08);
+    border-bottom: 1px solid var(--dict-edge);
     padding: 18px 0;
 }
 
@@ -252,12 +438,12 @@ body.dict-page {
     flex-wrap: wrap;
     gap: 8px 12px;
     margin-bottom: 10px;
-    color: rgba(232, 230, 240, 0.58);
+    color: var(--dict-ink-dim);
     font-size: 13px;
 }
 
 .dict-card-title {
-    color: #a29bfe;
+    color: var(--dict-violet);
     font-weight: 600;
 }
 
@@ -271,7 +457,7 @@ body.dict-page {
 
 .dict-card-text,
 .dict-gk-text {
-    color: rgba(232, 230, 240, 0.88);
+    color: var(--dict-ink);
 }
 
 .dict-card-actions,
@@ -285,9 +471,9 @@ body.dict-page {
 .dict-action-link {
     display: inline-flex;
     align-items: center;
-    border: 1px solid rgba(108, 92, 231, 0.2);
-    background: rgba(108, 92, 231, 0.06);
-    color: #a29bfe;
+    border: 1px solid var(--dict-violet-edge);
+    background: var(--dict-violet-soft);
+    color: var(--dict-violet);
     border-radius: 999px;
     padding: 7px 12px;
     cursor: pointer;
@@ -297,8 +483,8 @@ body.dict-page {
 }
 
 .dict-action-link:hover {
-    border-color: rgba(108, 92, 231, 0.5);
-    background: rgba(108, 92, 231, 0.12);
+    border-color: var(--dict-violet);
+    background: var(--dict-violet-tint);
 }
 
 /* ── Dictionary Entry ──────────────────────────────────── */
@@ -318,7 +504,7 @@ body.dict-page {
 
 .dict-entry-trad,
 .dict-entry-pinyin {
-    color: rgba(232, 230, 240, 0.58);
+    color: var(--dict-ink-dim);
 }
 
 .dict-entry-source {
@@ -327,29 +513,35 @@ body.dict-page {
     margin-bottom: 10px;
     padding: 5px 10px;
     border-radius: 999px;
-    background: rgba(108, 92, 231, 0.08);
-    color: rgba(232, 230, 240, 0.72);
+    background: rgba(120, 113, 106, 0.10);
+    color: var(--dict-ink-soft);
     font-size: 12px;
+    font-weight: 600;
 }
 
 .dict-entry-source.changyong {
-    color: #74b9ff;
+    background: var(--dict-teal-tint);
+    color: var(--dict-teal);
 }
 
 .dict-entry-source.xuci {
-    color: #a29bfe;
+    background: var(--dict-violet-tint);
+    color: var(--dict-violet);
 }
 
 .dict-entry-source.ciyuan {
-    color: #ffeaa7;
+    background: var(--dict-amber-tint);
+    color: #8b5e1f;
 }
 
 .dict-entry-source.moe-revised {
-    color: #81ecec;
+    background: var(--dict-sage-tint);
+    color: #4a6248;
 }
 
 .dict-entry-source.moe-idiom {
-    color: #fdcb6e;
+    background: var(--dict-rose-tint);
+    color: var(--dict-rose);
 }
 
 .dict-idiom-entry .dict-entry-headword {
@@ -362,8 +554,8 @@ body.dict-page {
 
 .dict-idiom-body .idiom-section-title {
     font-size: 0.8rem;
-    font-weight: 600;
-    color: #a29bfe;
+    font-weight: 700;
+    color: var(--dict-rose);
     margin: 0 0 0.3rem 0;
     letter-spacing: 0.05em;
 }
@@ -372,12 +564,12 @@ body.dict-page {
     font-family: 'Noto Serif SC', serif;
     font-size: 0.92rem;
     line-height: 1.7;
-    color: #b2bec3;
+    color: var(--dict-ink-soft);
 }
 
 .dict-idiom-body .idiom-notes {
     font-size: 0.85rem;
-    color: #636e72;
+    color: var(--dict-ink-dim);
     line-height: 1.6;
 }
 
@@ -396,7 +588,7 @@ body.dict-page {
 .dict-idiom-body .idiom-examples li::before {
     content: '·';
     margin-right: 0.4rem;
-    color: #636e72;
+    color: var(--dict-ink-dim);
 }
 
 .dict-idiom-body .idiom-citations {
@@ -408,7 +600,7 @@ body.dict-page {
     padding: 0.15rem 0;
     font-size: 0.85rem;
     line-height: 1.5;
-    color: #b2bec3;
+    color: var(--dict-ink-soft);
 }
 
 .dict-idiom-body .idiom-rel-section {
@@ -418,8 +610,8 @@ body.dict-page {
 }
 
 .dict-idiom-body .idiom-rel-section .idiom-rel b {
-    color: #636e72;
-    font-weight: 500;
+    color: var(--dict-rose);
+    font-weight: 600;
 }
 
 .dict-page-entry {
@@ -437,7 +629,7 @@ body.dict-page {
 
 .dict-moe-intro-text,
 .dict-moe-text {
-    color: rgba(232, 230, 240, 0.9);
+    color: var(--dict-ink);
 }
 
 .dict-moe-text p {
@@ -452,7 +644,7 @@ body.dict-page {
     display: flex;
     flex-wrap: wrap;
     gap: 8px 12px;
-    color: rgba(232, 230, 240, 0.58);
+    color: var(--dict-ink-dim);
     font-size: 13px;
 }
 
@@ -461,15 +653,15 @@ body.dict-page {
     align-items: center;
     padding: 4px 10px;
     border-radius: 999px;
-    background: rgba(78, 181, 124, 0.14);
-    color: #b5f4cb;
+    background: var(--dict-sage-tint);
+    color: #4a6248;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 700;
 }
 
 .dict-verified.is-soft {
-    background: rgba(108, 92, 231, 0.12);
-    color: #a29bfe;
+    background: var(--dict-violet-tint);
+    color: var(--dict-violet);
 }
 
 /* ── Thumbnails ────────────────────────────────────────── */
@@ -481,16 +673,17 @@ body.dict-page {
 
 .dict-thumb {
     padding: 0;
-    border: 1px solid rgba(108, 92, 231, 0.12);
+    border: 1px solid var(--dict-edge-strong);
     border-radius: 14px;
     overflow: hidden;
-    background: rgba(18, 18, 26, 0.4);
+    background: var(--dict-paper-soft);
     cursor: pointer;
-    transition: border-color 0.18s ease;
+    transition: border-color 0.18s ease, transform 0.18s ease;
 }
 
 .dict-thumb:hover {
-    border-color: rgba(108, 92, 231, 0.4);
+    transform: translateY(-1px);
+    border-color: var(--dict-amber);
 }
 
 .dict-thumb img {
@@ -522,21 +715,25 @@ body.dict-page {
 
 .dict-chat-role {
     font-size: 12px;
-    color: rgba(232, 230, 240, 0.54);
+    color: var(--dict-ink-dim);
+    font-weight: 600;
 }
 
 .dict-chat-bubble {
     max-width: min(860px, 100%);
     border-radius: 16px;
     padding: 12px 16px;
-    background: rgba(108, 92, 231, 0.06);
-    color: #e8e6f0;
+    background: var(--dict-paper-soft);
+    border: 1px solid var(--dict-edge);
+    color: var(--dict-ink);
     white-space: pre-wrap;
     line-height: 1.8;
 }
 
 .dict-chat-message.user .dict-chat-bubble {
-    background: rgba(108, 92, 231, 0.16);
+    background: var(--dict-teal-tint);
+    border-color: var(--dict-teal-edge);
+    color: var(--dict-ink);
 }
 
 .dict-chat-compose {
@@ -549,9 +746,9 @@ body.dict-page {
 .dict-chat-compose textarea {
     flex: 1;
     width: 100%;
-    border: 1px solid rgba(108, 92, 231, 0.18);
-    background: rgba(18, 18, 26, 0.62);
-    color: #e8e6f0;
+    border: 1px solid var(--dict-edge-strong);
+    background: var(--dict-paper);
+    color: var(--dict-ink);
     border-radius: 14px;
     padding: 10px 14px;
     outline: none;
@@ -565,8 +762,8 @@ body.dict-page {
 }
 
 .dict-chat-compose textarea:focus {
-    border-color: rgba(108, 92, 231, 0.55);
-    box-shadow: 0 0 0 3px rgba(108, 92, 231, 0.1);
+    border-color: var(--dict-teal);
+    box-shadow: 0 0 0 3px var(--dict-teal-tint);
 }
 
 .dict-chat-compose button {
@@ -575,7 +772,7 @@ body.dict-page {
     height: 42px;
     border: none;
     border-radius: 12px;
-    background: linear-gradient(135deg, #6c5ce7, #a29bfe);
+    background: linear-gradient(135deg, var(--dict-teal), var(--dict-violet));
     color: #fff;
     font-size: 18px;
     cursor: pointer;
@@ -587,7 +784,7 @@ body.dict-page {
 
 .dict-chat-compose button:hover {
     transform: translateY(-1px);
-    box-shadow: 0 6px 20px rgba(108, 92, 231, 0.3);
+    box-shadow: 0 6px 20px var(--dict-teal-tint);
 }
 
 .dict-chat-compose button:disabled {
@@ -600,18 +797,18 @@ body.dict-page {
 .dict-chat-copy {
     height: 36px;
     padding: 0 14px;
-    background: rgba(108, 92, 231, 0.08);
-    color: #a29bfe;
-    border: 1px solid rgba(108, 92, 231, 0.18);
+    background: var(--dict-violet-soft);
+    color: var(--dict-violet);
+    border: 1px solid var(--dict-violet-edge);
     border-radius: 10px;
     cursor: pointer;
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 700;
     transition: background 0.18s ease;
 }
 
 .dict-chat-copy:hover {
-    background: rgba(108, 92, 231, 0.16);
+    background: var(--dict-violet-tint);
 }
 
 .dict-count[hidden],
@@ -640,22 +837,23 @@ body.dict-page {
     gap: 6px;
     padding: 7px 12px;
     border-radius: 999px;
-    background: rgba(108, 92, 231, 0.08);
-    border: 1px solid rgba(108, 92, 231, 0.14);
-    color: rgba(232, 230, 240, 0.76);
+    background: var(--dict-violet-soft);
+    border: 1px solid var(--dict-violet-edge);
+    color: var(--dict-ink);
     font-size: 12px;
+    font-weight: 600;
 }
 
 .dict-exam-chip.scope-beijing {
-    color: #f8cb6a;
-    border-color: rgba(248, 203, 106, 0.28);
-    background: rgba(248, 203, 106, 0.08);
+    color: #8b5e1f;
+    border-color: var(--dict-amber-edge);
+    background: var(--dict-amber-soft);
 }
 
 .dict-exam-chip.scope-national {
-    color: #81d3ff;
-    border-color: rgba(129, 211, 255, 0.24);
-    background: rgba(129, 211, 255, 0.08);
+    color: var(--dict-teal);
+    border-color: var(--dict-teal-edge);
+    background: var(--dict-teal-soft);
 }
 
 .dict-exam-shell {
@@ -682,8 +880,8 @@ body.dict-page {
 .dict-exam-item {
     width: 100%;
     text-align: left;
-    border: 1px solid rgba(108, 92, 231, 0.14);
-    background: rgba(18, 18, 26, 0.42);
+    border: 1px solid var(--dict-edge);
+    background: var(--dict-paper-soft);
     border-radius: 16px;
     padding: 14px 16px;
     cursor: pointer;
@@ -692,13 +890,13 @@ body.dict-page {
 
 .dict-exam-item:hover {
     transform: translateY(-1px);
-    border-color: rgba(108, 92, 231, 0.42);
-    background: rgba(108, 92, 231, 0.09);
+    border-color: var(--dict-violet);
+    background: var(--dict-violet-soft);
 }
 
 .dict-exam-item.active {
-    border-color: rgba(162, 155, 254, 0.55);
-    background: rgba(108, 92, 231, 0.14);
+    border-color: var(--dict-violet);
+    background: var(--dict-violet-tint);
 }
 
 .dict-exam-item-top {
@@ -713,11 +911,11 @@ body.dict-page {
     font-family: 'Noto Serif SC', serif;
     font-size: 26px;
     font-weight: 700;
-    color: #fff;
+    color: var(--dict-ink);
 }
 
 .dict-exam-total {
-    color: #a29bfe;
+    color: var(--dict-violet);
     font-size: 13px;
     font-weight: 700;
 }
@@ -725,7 +923,7 @@ body.dict-page {
 .dict-exam-bar {
     height: 8px;
     border-radius: 999px;
-    background: rgba(108, 92, 231, 0.12);
+    background: rgba(120, 113, 106, 0.12);
     overflow: hidden;
     margin-bottom: 10px;
 }
@@ -733,28 +931,29 @@ body.dict-page {
 .dict-exam-bar-fill {
     height: 100%;
     border-radius: inherit;
-    background: linear-gradient(90deg, #6c5ce7, #74b9ff);
+    background: linear-gradient(90deg, var(--dict-violet), var(--dict-teal));
 }
 
 .dict-exam-item-meta {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    color: rgba(232, 230, 240, 0.62);
+    color: var(--dict-ink-dim);
     font-size: 12px;
+    font-weight: 500;
 }
 
 .dict-exam-item-glosses {
     margin-top: 10px;
-    color: rgba(232, 230, 240, 0.82);
+    color: var(--dict-ink-soft);
     font-size: 13px;
     line-height: 1.7;
 }
 
 .dict-exam-detail {
-    border: 1px solid rgba(108, 92, 231, 0.12);
+    border: 1px solid var(--dict-edge);
     border-radius: 18px;
-    background: rgba(18, 18, 26, 0.42);
+    background: var(--dict-paper);
     padding: 18px 20px;
     min-height: 280px;
     scroll-margin-top: 88px;
@@ -780,12 +979,13 @@ body.dict-page {
     font-family: 'Noto Serif SC', serif;
     font-size: 40px;
     font-weight: 700;
-    color: #fff;
+    color: var(--dict-ink);
 }
 
 .dict-exam-detail-subtitle {
-    color: rgba(232, 230, 240, 0.58);
+    color: var(--dict-ink-dim);
     font-size: 13px;
+    font-weight: 500;
 }
 
 .dict-exam-detail-section + .dict-exam-detail-section {
@@ -802,15 +1002,15 @@ body.dict-page {
     white-space: pre-wrap;
     font-family: 'Noto Serif SC', serif;
     line-height: 1.85;
-    color: rgba(232, 230, 240, 0.9);
+    color: var(--dict-ink);
     font-size: 14px;
 }
 
 .dict-exam-detail-disclosure {
     margin-top: 12px;
-    border: 1px solid rgba(108, 92, 231, 0.12);
+    border: 1px solid var(--dict-edge);
     border-radius: 14px;
-    background: rgba(108, 92, 231, 0.04);
+    background: var(--dict-paper-soft);
     overflow: hidden;
 }
 
@@ -819,7 +1019,8 @@ body.dict-page {
     list-style: none;
     padding: 12px 14px;
     font-size: 13px;
-    color: rgba(232, 230, 240, 0.82);
+    color: var(--dict-ink-soft);
+    font-weight: 600;
 }
 
 .dict-exam-detail-disclosure summary::-webkit-details-marker {
@@ -827,7 +1028,7 @@ body.dict-page {
 }
 
 .dict-exam-detail-disclosure[open] summary {
-    border-bottom: 1px solid rgba(108, 92, 231, 0.1);
+    border-bottom: 1px solid var(--dict-edge);
 }
 
 .dict-exam-detail-disclosure .dict-exam-detail-text {
@@ -844,22 +1045,22 @@ body.dict-page {
 .dict-exam-year-item {
     width: 100%;
     text-align: left;
-    border: 1px solid rgba(108, 92, 231, 0.1);
+    border: 1px solid var(--dict-edge);
     border-radius: 14px;
     padding: 10px 12px;
-    background: rgba(108, 92, 231, 0.05);
+    background: var(--dict-paper-soft);
     cursor: pointer;
     transition: border-color 0.18s ease, transform 0.18s ease, background 0.18s ease;
 }
 
 .dict-exam-year-item:hover {
     transform: translateY(-1px);
-    border-color: rgba(108, 92, 231, 0.32);
+    border-color: var(--dict-amber);
 }
 
 .dict-exam-year-item.active {
-    border-color: rgba(162, 155, 254, 0.55);
-    background: rgba(108, 92, 231, 0.16);
+    border-color: var(--dict-amber);
+    background: var(--dict-amber-soft);
 }
 
 .dict-exam-year-meta {
@@ -869,20 +1070,21 @@ body.dict-page {
     gap: 8px;
     margin-bottom: 8px;
     font-size: 12px;
-    color: rgba(232, 230, 240, 0.68);
+    color: var(--dict-ink-soft);
+    font-weight: 600;
 }
 
 .dict-exam-year-bar {
     height: 8px;
     border-radius: 999px;
     overflow: hidden;
-    background: rgba(108, 92, 231, 0.12);
+    background: rgba(120, 113, 106, 0.12);
 }
 
 .dict-exam-year-fill {
     height: 100%;
     border-radius: inherit;
-    background: linear-gradient(90deg, #00b894, #74b9ff);
+    background: linear-gradient(90deg, var(--dict-sage), var(--dict-teal));
 }
 
 .dict-exam-usage-grid {
@@ -892,10 +1094,10 @@ body.dict-page {
 }
 
 .dict-exam-usage-card {
-    border: 1px solid rgba(108, 92, 231, 0.1);
+    border: 1px solid var(--dict-edge);
     border-radius: 16px;
     padding: 14px;
-    background: linear-gradient(180deg, rgba(108, 92, 231, 0.08), rgba(108, 92, 231, 0.04));
+    background: linear-gradient(180deg, var(--dict-violet-soft), var(--dict-paper-soft));
 }
 
 .dict-exam-usage-head {
@@ -905,13 +1107,13 @@ body.dict-page {
 .dict-exam-usage-title {
     font-family: 'Noto Serif SC', serif;
     font-size: 18px;
-    font-weight: 600;
-    color: #fff;
+    font-weight: 700;
+    color: var(--dict-ink);
 }
 
 .dict-exam-usage-summary {
     margin-top: 6px;
-    color: rgba(232, 230, 240, 0.72);
+    color: var(--dict-ink-soft);
     line-height: 1.7;
     font-size: 13px;
 }
@@ -923,19 +1125,20 @@ body.dict-page {
 }
 
 .dict-exam-sense {
-    border-left: 2px solid rgba(116, 185, 255, 0.5);
-    padding-left: 10px;
+    border-left: 3px solid var(--dict-teal);
+    padding-left: 12px;
 }
 
 .dict-exam-sense-label {
     font-family: 'Noto Serif SC', serif;
-    color: rgba(255, 255, 255, 0.94);
+    color: var(--dict-ink);
     line-height: 1.6;
+    font-weight: 600;
 }
 
 .dict-exam-sense-summary {
     margin-top: 4px;
-    color: rgba(232, 230, 240, 0.68);
+    color: var(--dict-ink-soft);
     line-height: 1.7;
     font-size: 13px;
 }
@@ -950,11 +1153,12 @@ body.dict-page {
     align-self: flex-start;
     padding: 8px 16px;
     border-radius: 999px;
-    background: linear-gradient(135deg, rgba(0, 184, 148, 0.22), rgba(116, 185, 255, 0.2));
+    background: linear-gradient(135deg, var(--dict-sage), var(--dict-teal));
     color: #fff;
     font-family: 'Noto Serif SC', serif;
     font-size: 22px;
     font-weight: 700;
+    box-shadow: 0 6px 18px rgba(74, 142, 160, 0.22);
 }
 
 .dict-exam-mindmap-branches {
@@ -964,10 +1168,10 @@ body.dict-page {
 }
 
 .dict-exam-mindmap-branch {
-    border: 1px solid rgba(108, 92, 231, 0.12);
+    border: 1px solid var(--dict-edge);
     border-radius: 16px;
     padding: 14px;
-    background: rgba(18, 18, 26, 0.36);
+    background: var(--dict-paper-soft);
 }
 
 .dict-exam-mindmap-node {
@@ -977,22 +1181,24 @@ body.dict-page {
 }
 
 .dict-exam-mindmap-node.level-1 {
-    background: rgba(108, 92, 231, 0.18);
-    color: #fff;
+    background: var(--dict-violet-tint);
+    color: var(--dict-ink);
     font-family: 'Noto Serif SC', serif;
     font-size: 17px;
-    font-weight: 600;
+    font-weight: 700;
+    border: 1px solid var(--dict-violet-edge);
 }
 
 .dict-exam-mindmap-node.level-2 {
-    background: rgba(116, 185, 255, 0.1);
-    color: rgba(232, 230, 240, 0.88);
+    background: var(--dict-teal-soft);
+    color: var(--dict-ink);
     font-size: 13px;
+    border: 1px solid var(--dict-teal-edge);
 }
 
 .dict-exam-mindmap-summary {
     margin-top: 6px;
-    color: rgba(232, 230, 240, 0.62);
+    color: var(--dict-ink-dim);
     font-size: 12px;
     line-height: 1.65;
 }
@@ -1011,24 +1217,24 @@ body.dict-page {
 }
 
 .dict-exam-evidence {
-    border: 1px solid rgba(108, 92, 231, 0.1);
+    border: 1px solid var(--dict-edge);
     border-radius: 14px;
     padding: 12px 14px;
-    background: rgba(108, 92, 231, 0.05);
+    background: var(--dict-paper-soft);
 }
 
 .dict-exam-question-card {
-    border: 1px solid rgba(108, 92, 231, 0.14);
+    border: 1px solid var(--dict-violet-edge);
     border-radius: 16px;
     padding: 14px;
-    background: rgba(108, 92, 231, 0.06);
+    background: var(--dict-violet-soft);
 }
 
 .dict-exam-question-text {
     white-space: pre-wrap;
     font-family: 'Noto Serif SC', serif;
     line-height: 1.8;
-    color: rgba(232, 230, 240, 0.9);
+    color: var(--dict-ink);
 }
 
 .dict-exam-resource-grid {
@@ -1049,17 +1255,17 @@ body.dict-page {
 
 .dict-exam-media {
     padding: 0;
-    border: 1px solid rgba(108, 92, 231, 0.12);
+    border: 1px solid var(--dict-edge);
     border-radius: 14px;
     overflow: hidden;
-    background: rgba(18, 18, 26, 0.4);
+    background: var(--dict-paper-soft);
     cursor: pointer;
     transition: border-color 0.18s ease, transform 0.18s ease;
 }
 
 .dict-exam-media:hover {
     transform: translateY(-1px);
-    border-color: rgba(108, 92, 231, 0.4);
+    border-color: var(--dict-amber);
 }
 
 .dict-exam-media img {
@@ -1074,14 +1280,15 @@ body.dict-page {
     flex-wrap: wrap;
     gap: 8px;
     margin-bottom: 8px;
-    color: rgba(232, 230, 240, 0.58);
+    color: var(--dict-ink-dim);
     font-size: 12px;
+    font-weight: 500;
 }
 
 .dict-exam-evidence-text {
     font-family: 'Noto Serif SC', serif;
     line-height: 1.8;
-    color: rgba(232, 230, 240, 0.88);
+    color: var(--dict-ink);
 }
 
 /* ── Page Modal ────────────────────────────────────────── */
@@ -1114,7 +1321,7 @@ body.dict-page {
     max-height: 82vh;
     object-fit: contain;
     border-radius: 16px;
-    background: rgba(18, 18, 26, 0.4);
+    background: rgba(252, 250, 246, 0.92);
 }
 
 .page-modal-toolbar {
@@ -1134,7 +1341,7 @@ body.dict-page {
     padding: 10px 18px;
     border: none;
     border-radius: 12px;
-    background: linear-gradient(135deg, #6c5ce7, #a29bfe);
+    background: linear-gradient(135deg, var(--dict-teal), var(--dict-violet));
     color: #fff;
     font-weight: 600;
     cursor: pointer;
@@ -1169,31 +1376,51 @@ body.dict-page {
 /* ── Utility ───────────────────────────────────────────── */
 .dict-loading,
 .dict-empty-line {
-    color: rgba(232, 230, 240, 0.62);
+    color: var(--dict-ink-dim);
     padding: 18px 0;
+    font-weight: 500;
 }
 
-mark {
-    background: rgba(108, 92, 231, 0.22);
-    color: #c9c3ff;
-    padding: 0 2px;
+body.dict-page mark {
+    background: var(--dict-amber-tint);
+    color: #6b4517;
+    padding: 0 3px;
     border-radius: 4px;
+    font-weight: 600;
 }
 
-/* ── Scrollbar ─────────────────────────────────────────── */
+/* ── Scrollbar ─────────────────────────────────────────────
+   Wider, more visible scrollbar so users notice it without
+   needing the fade/badge affordance below. */
 .dict-panel-body::-webkit-scrollbar,
-.dict-chat-messages::-webkit-scrollbar {
-    width: 4px;
+.dict-panel-body-wide::-webkit-scrollbar,
+.dict-chat-messages::-webkit-scrollbar,
+.dict-exam-list::-webkit-scrollbar {
+    width: 8px;
 }
 
 .dict-panel-body::-webkit-scrollbar-thumb,
-.dict-chat-messages::-webkit-scrollbar-thumb {
-    background: rgba(108, 92, 231, 0.25);
-    border-radius: 2px;
+.dict-panel-body-wide::-webkit-scrollbar-thumb,
+.dict-chat-messages::-webkit-scrollbar-thumb,
+.dict-exam-list::-webkit-scrollbar-thumb {
+    background: var(--dict-edge-strong);
+    border-radius: 4px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+
+.dict-panel-body::-webkit-scrollbar-thumb:hover,
+.dict-panel-body-wide::-webkit-scrollbar-thumb:hover,
+.dict-chat-messages::-webkit-scrollbar-thumb:hover,
+.dict-exam-list::-webkit-scrollbar-thumb:hover {
+    background: var(--dict-ink-dim);
+    background-clip: padding-box;
 }
 
 .dict-panel-body::-webkit-scrollbar-track,
-.dict-chat-messages::-webkit-scrollbar-track {
+.dict-panel-body-wide::-webkit-scrollbar-track,
+.dict-chat-messages::-webkit-scrollbar-track,
+.dict-exam-list::-webkit-scrollbar-track {
     background: transparent;
 }
 

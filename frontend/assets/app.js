@@ -1902,13 +1902,14 @@ function renderGraphNew(data, container, mode) {
         .attr('stroke-width', d => d.type === 'subject' ? 2.5 : 1)
         .style('transition', 'filter 0.2s, fill-opacity 0.2s');
 
-    // Labels
+    // Labels — fill comes from the .graph-label CSS rule (theme-aware),
+    // stroke halo keeps them legible on both dark and light backgrounds.
     node.append('text')
         .attr('class', 'graph-label')
         .attr('dy', d => d.r + 14)
         .attr('text-anchor', 'middle')
         .attr('font-size', d => d.type === 'subject' ? 13 : 10)
-        .attr('font-weight', d => d.type === 'subject' ? 700 : 400)
+        .attr('font-weight', d => d.type === 'subject' ? 700 : 500)
         .text(d => d.id);
 
     // Weight badges for concepts
@@ -2533,6 +2534,16 @@ function getSubjColors() {
     return colors;
 }
 
+// Theme-aware chart colors. Reads CSS variables so charts stay readable
+// whether the page is on the dark base palette or the BDFZ light parchment refresh.
+function getChartColors() {
+    const cs = getComputedStyle(document.documentElement);
+    const text = (cs.getPropertyValue('--text') || '').trim() || '#3a3530';
+    const dim = (cs.getPropertyValue('--text-dim') || '').trim() || '#7a716a';
+    const muted = (cs.getPropertyValue('--text-muted') || '').trim() || '#a89d96';
+    return { text, dim, muted };
+}
+
 async function loadInsights() {
     if (insightsLoaded) return;
     insightsLoaded = true;
@@ -2604,14 +2615,17 @@ function renderFreqBars(container, data) {
         .transition().duration(600).delay((d, i) => i * 20)
         .attr('width', d => x(d.count));
 
+    const chartColors = getChartColors();
+
     // Labels
     g.selectAll('.bar-label').data(data).join('text')
         .attr('class', 'bar-label')
         .attr('x', d => x(d.count) + 5)
         .attr('y', d => y(d.term) + y.bandwidth() / 2)
         .attr('dy', '0.35em')
-        .attr('fill', '#a0a0c0')
+        .attr('fill', chartColors.dim)
         .attr('font-size', '11px')
+        .attr('font-weight', '600')
         .text(d => d.count.toLocaleString());
 
     // Y axis labels
@@ -2621,8 +2635,9 @@ function renderFreqBars(container, data) {
         .attr('y', d => y(d.term) + y.bandwidth() / 2)
         .attr('dy', '0.35em')
         .attr('text-anchor', 'end')
-        .attr('fill', '#e0e0f0')
+        .attr('fill', chartColors.text)
         .attr('font-size', '12px')
+        .attr('font-weight', '600')
         .attr('cursor', 'pointer')
         .text(d => d.term)
         .on('click', (e, d) => {
@@ -2648,13 +2663,13 @@ async function loadHeatmap() {
 function getHeatmapTextStyle(fillColor) {
     const color = d3.color(fillColor);
     if (!color) {
-        return { fill: '#f8fbff', stroke: 'rgba(0,0,0,0.35)' };
+        return { fill: '#3a3530', stroke: 'rgba(255,255,255,0.85)' };
     }
     const luminance = (0.299 * color.r + 0.587 * color.g + 0.114 * color.b) / 255;
-    if (luminance >= 0.66) {
-        return { fill: '#17202a', stroke: 'rgba(255,255,255,0.55)' };
+    if (luminance >= 0.55) {
+        return { fill: '#1f2933', stroke: 'rgba(255,255,255,0.85)' };
     }
-    return { fill: '#f8fbff', stroke: 'rgba(0,0,0,0.35)' };
+    return { fill: '#fbfaf5', stroke: 'rgba(0,0,0,0.45)' };
 }
 
 function renderHeatmap(container, data) {
@@ -2708,24 +2723,33 @@ function renderHeatmap(container, data) {
         }
     }
 
-    // Axis labels
+    // Axis labels — subject-tinted text with stroke halo so it stays
+    // legible against any background luminance.
+    const axisFallback = getChartColors().text;
     subjects.forEach((s, i) => {
+        const tint = getSubjColors()[s] || axisFallback;
         svg.append('text')
             .attr('x', margin.left + i * cellSize + cellSize / 2 - 1)
             .attr('y', margin.top - 8)
             .attr('text-anchor', 'middle')
-            .attr('fill', getSubjColors()[s] || '#ccc')
+            .attr('fill', tint)
+            .attr('stroke', 'rgba(255, 255, 255, 0.7)')
+            .attr('stroke-width', 3)
+            .attr('paint-order', 'stroke')
             .attr('font-size', '12px')
-            .attr('font-weight', '500')
+            .attr('font-weight', '700')
             .text(s);
         svg.append('text')
             .attr('x', margin.left - 8)
             .attr('y', margin.top + i * cellSize + cellSize / 2)
             .attr('dy', '0.35em')
             .attr('text-anchor', 'end')
-            .attr('fill', getSubjColors()[s] || '#ccc')
+            .attr('fill', tint)
+            .attr('stroke', 'rgba(255, 255, 255, 0.7)')
+            .attr('stroke-width', 3)
+            .attr('paint-order', 'stroke')
             .attr('font-size', '12px')
-            .attr('font-weight', '500')
+            .attr('font-weight', '700')
             .text(s);
     });
 
@@ -2733,8 +2757,9 @@ function renderHeatmap(container, data) {
     svg.append('text')
         .attr('x', W / 2).attr('y', H + 5)
         .attr('text-anchor', 'middle')
-        .attr('fill', '#888')
+        .attr('fill', getChartColors().dim)
         .attr('font-size', '11px')
+        .attr('font-weight', '600')
         .text(`共 ${data.total_concepts} 个跨学科学术术语`);
 }
 
@@ -2814,13 +2839,16 @@ function renderBreadth(container, concepts) {
         .transition().duration(500).delay((d, i) => i * 15)
         .attr('width', d => x(d.subjects));
 
+    const breadthColors = getChartColors();
+
     g.selectAll('.breadth-val').data(concepts).join('text')
         .attr('class', 'breadth-val')
         .attr('x', d => x(d.subjects) + 5)
         .attr('y', d => y(d.term) + y.bandwidth() / 2)
         .attr('dy', '0.35em')
-        .attr('fill', '#a0a0c0')
+        .attr('fill', breadthColors.dim)
         .attr('font-size', '11px')
+        .attr('font-weight', '600')
         .text(d => `${d.subjects} 科`);
 
     svg.selectAll('.breadth-label').data(concepts).join('text')
@@ -2829,8 +2857,9 @@ function renderBreadth(container, concepts) {
         .attr('y', d => y(d.term) + y.bandwidth() / 2)
         .attr('dy', '0.35em')
         .attr('text-anchor', 'end')
-        .attr('fill', '#e0e0f0')
+        .attr('fill', breadthColors.text)
         .attr('font-size', '12px')
+        .attr('font-weight', '600')
         .attr('cursor', 'pointer')
         .text(d => d.term)
         .on('click', (e, d) => {
@@ -2905,12 +2934,16 @@ function renderSearchSubgraph(container, data) {
         .attr('stroke', d => d.type === 'center' ? '#a29bfe' : 'none')
         .attr('stroke-width', 2);
 
+    const subgraphColors = getChartColors();
     node.append('text')
         .attr('dy', d => d.type === 'center' ? 28 : 22)
         .attr('text-anchor', 'middle')
-        .attr('fill', '#e0e0f0')
+        .attr('fill', subgraphColors.text)
+        .attr('stroke', 'rgba(255, 255, 255, 0.9)')
+        .attr('stroke-width', 2.4)
+        .attr('paint-order', 'stroke')
         .attr('font-size', d => d.type === 'center' ? '13px' : d.type === 'subject' ? '12px' : '10px')
-        .attr('font-weight', d => d.type === 'center' ? '700' : '400')
+        .attr('font-weight', d => d.type === 'center' ? '700' : '500')
         .text(d => d.id);
 
     sim.on('tick', () => {

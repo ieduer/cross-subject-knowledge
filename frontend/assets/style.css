@@ -3158,6 +3158,93 @@ mark {
     padding: 0 2px;
 }
 
+/* Knowledge-graph + insight-chart legibility on the BDFZ light parchment.
+   The base palette assumes a dark background, so we re-skin labels, halos,
+   and panel surfaces here. */
+.graph-label {
+    fill: #2f2a25;
+    paint-order: stroke;
+    stroke: rgba(251, 250, 245, 0.92);
+    stroke-width: 3.2px;
+    stroke-linejoin: round;
+    text-shadow: none;
+    font-weight: 600;
+}
+
+.graph-tooltip-meta {
+    color: var(--accent);
+}
+
+.graph-mode {
+    background: rgba(255, 255, 255, 0.62);
+    color: var(--text);
+}
+
+.graph-mode.active,
+.graph-mode:hover {
+    background: linear-gradient(135deg, var(--accent), var(--accent-light));
+    color: #fff;
+    border-color: transparent;
+}
+
+.graph-container,
+.insight-panel {
+    background: rgba(255, 255, 255, 0.72);
+}
+
+.coverage-section h3 {
+    color: var(--text);
+}
+
+.coverage-item {
+    background: rgba(255, 255, 255, 0.6);
+    border-color: var(--border);
+}
+
+.coverage-item:hover {
+    background: rgba(120, 149, 148, 0.12);
+    border-color: var(--accent);
+}
+
+.coverage-term {
+    color: var(--text);
+}
+
+.cov-textbook {
+    background: rgba(64, 122, 156, 0.18);
+    color: #2f5d7a;
+}
+
+.cov-gaokao {
+    background: rgba(192, 86, 80, 0.18);
+    color: #993f3a;
+}
+
+.ratio-hot {
+    color: #b04a40;
+}
+
+.ratio-cool {
+    color: #2f5d7a;
+}
+
+.insight-tab {
+    background: rgba(255, 255, 255, 0.62);
+    color: var(--text-dim);
+}
+
+.insight-tab:hover {
+    color: var(--text);
+    border-color: var(--accent);
+}
+
+.insight-tab.active {
+    background: linear-gradient(135deg, rgba(120, 149, 148, 0.22), rgba(184, 204, 167, 0.18));
+    color: var(--text);
+    border-color: var(--accent);
+    font-weight: 700;
+}
+
 @media (max-width: 768px) {
     body {
         background-attachment: scroll;

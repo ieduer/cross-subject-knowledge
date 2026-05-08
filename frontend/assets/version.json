@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.04.29-r36",
-  "updated_at": "2026-04-29",
+  "frontend_refactor_version": "2026.05.07-r37",
+  "updated_at": "2026-05-07",
   "history": [
+    {
+      "version": "2026.05.07-r37",
+      "date": "2026-05-07",
+      "summary": "fixed 数据 / 知识图谱 chart text legibility on the BDFZ light parchment palette by reading text colors from CSS variables and adding stroke halos to subject and node labels; rebuilt 实虚词典 page with a multi-color light theme — rose / amber / sage / teal panel washes replace the all-black gradient, with widened panel scrollbars plus a fade-out gradient and animated 向下滑动 pill so readers see when 馆藏辞典原页 / 教育部修订本 / 教育部成语典 lists are scrollable; removed BETA badges from 高中 / 初中 search and 词典 pages"
+    },
     {
       "version": "2026.04.29-r36",
       "date": "2026-04-29",

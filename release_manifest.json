@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-05-05T03:16:46.160123+00:00",
-  "git_head": "85b3f0068812e698278c732199bb0eed7d8db15a",
-  "frontend_version": "2026.04.29-r36",
+  "generated_at": "2026-05-08T04:32:06.934948+00:00",
+  "git_head": "938b015baac153778ab8abcf7e5d59a08c5eef1a",
+  "frontend_version": "2026.05.07-r37",
   "source_of_truth": {
     "local_workspace": "authoritative",
     "github": "authoritative_for_code_only_after_push",
@@ -91,38 +91,38 @@
     {
       "kind": "source",
       "logical_path": "frontend/index.html",
-      "size": 13967,
-      "sha256": "8a6ce018f4e48e3db0842348b141f4d2f2db76f01f9cf4012bb6e2cc09673871"
+      "size": 13910,
+      "sha256": "35e139264f7630518ee88228be183dbc64c660ccaac80ae179194498ad16375d"
     },
     {
       "kind": "source",
       "logical_path": "frontend/dict.html",
-      "size": 10411,
-      "sha256": "56f20b507462746721e8f531f8bba2852c113888ef5f6589a259e3faea548b6d"
+      "size": 10350,
+      "sha256": "5c936e4dd7e7924df18c041285509d176afe391631bac62d655f1ac305c21fa9"
     },
     {
       "kind": "source",
       "logical_path": "frontend/chuzhong.html",
-      "size": 10586,
-      "sha256": "8679295434833f7c59cad428d2cbd7a76991756c56d0edebe85487a52be52755"
+      "size": 10529,
+      "sha256": "5de57a6fa26864064198599320c9f51aed831f9df38d0e1d56f69b73582130c2"
     },
     {
       "kind": "source",
       "logical_path": "frontend/chuzhong-dict.html",
-      "size": 10372,
-      "sha256": "d9060520bbf4fca9bdac0cd6ace9359927498ce96787b1e9b8f884bdad16aad3"
+      "size": 10311,
+      "sha256": "8195732ef1eb932349d6ceecb22ccc3163d43a759d57573e56553d6d7b50ae27"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/app.js",
-      "size": 125752,
-      "sha256": "5ac69e0a1e3b2113299ea12bdd348ce6bdb2c0bcee30c484b19606bc21d05993"
+      "size": 127336,
+      "sha256": "bfc58391f2a695b354f35364c7239d2b4a4cbd51afbd5ab6c8271ac4cf921aa9"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/style.css",
-      "size": 75581,
-      "sha256": "04c944f27cc32e90669f1504c177fb9001d73d7667eb05b41faed46f786e91dc"
+      "size": 77238,
+      "sha256": "64cfe1f543bfc9908899a789f9882072d0b3677b31324a60bf8e627aace782e3"
     },
     {
       "kind": "source",
@@ -133,20 +133,20 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/dict.js",
-      "size": 74748,
-      "sha256": "db8dcda5a590608d18ac5b2ebef518d1e3d26c9bd432f7d491a4c54f5391af7e"
+      "size": 77226,
+      "sha256": "7d0e52d7a7b32ad1720ce10cce9b5c2b348d8719805c31d0baeda75bc1651350"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/dict.css",
-      "size": 28257,
-      "sha256": "187184c5b90fc8f72d728d899bd3a2dd6ec7e5dfb771a399a32f8295ebbaf9e0"
+      "size": 35602,
+      "sha256": "026738674b4dea12c39ee35fe72e719c573776e4db362d7d724e07bec6bc8ceb"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/version.json",
-      "size": 9737,
-      "sha256": "6dbc6f0e49901c21b1831bb69a180a8769b2702b7ab08bd3d96c4ba76a1f46b8"
+      "size": 10399,
+      "sha256": "5a3b31cebcf953b39f18aca1ce2b8fc89850df93ef483279ae1be49f7cb5ca52"
     },
     {
       "kind": "source",

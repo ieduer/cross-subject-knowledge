@@ -1664,7 +1664,64 @@ window.addEventListener('hashchange', () => {
     }
 });
 
+// ── Scroll affordance ─────────────────────────────────────
+// Long entry lists in 教材古文/古诗词, 馆藏辞典原页, 教育部修订本/成语典
+// and 真题中的古文 are scrollable but the cut is not obvious to readers.
+// We attach a fade gradient + animated "向下滑动" pill (driven by CSS)
+// to the panel as soon as scrollHeight exceeds clientHeight, and clear
+// it once the user scrolls to the bottom.
+const SCROLL_BODY_SELECTOR = '.dict-panel-body, .dict-panel-body-wide';
+const SCROLL_BOTTOM_SLACK = 6;
+
+function ensureScrollHintEl(panel) {
+    let hint = panel.querySelector(':scope > .dict-scroll-hint');
+    if (!hint) {
+        hint = document.createElement('div');
+        hint.className = 'dict-scroll-hint';
+        hint.setAttribute('aria-hidden', 'true');
+        hint.textContent = '向下滑动查看更多 ↓';
+        panel.appendChild(hint);
+    }
+    return hint;
+}
+
+function refreshPanelOverflowState(body) {
+    const panel = body.closest('.dict-panel');
+    if (!panel) return;
+    const overflowing = body.scrollHeight - body.clientHeight > SCROLL_BOTTOM_SLACK;
+    panel.classList.toggle('has-overflow', overflowing);
+    if (!overflowing) {
+        panel.classList.remove('scrolled-bottom');
+        const existing = panel.querySelector(':scope > .dict-scroll-hint');
+        if (existing) existing.remove();
+        return;
+    }
+    ensureScrollHintEl(panel);
+    const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight <= SCROLL_BOTTOM_SLACK;
+    panel.classList.toggle('scrolled-bottom', atBottom);
+}
+
+function setupScrollAffordances(root = document) {
+    const bodies = root.querySelectorAll(SCROLL_BODY_SELECTOR);
+    bodies.forEach(body => {
+        if (body.dataset.scrollAffordance === '1') {
+            refreshPanelOverflowState(body);
+            return;
+        }
+        body.dataset.scrollAffordance = '1';
+        body.addEventListener('scroll', () => refreshPanelOverflowState(body), { passive: true });
+        const observer = new MutationObserver(() => refreshPanelOverflowState(body));
+        observer.observe(body, { childList: true, subtree: true, characterData: true });
+        refreshPanelOverflowState(body);
+    });
+}
+
+window.addEventListener('resize', () => {
+    document.querySelectorAll(SCROLL_BODY_SELECTOR).forEach(refreshPanelOverflowState);
+}, { passive: true });
+
 async function initializeDictPage() {
+    setupScrollAffordances();
     loadStatus();
     const hashApplied = await applyExamHashSelection();
     if (hashApplied) return;
