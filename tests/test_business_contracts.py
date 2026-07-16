@@ -91,6 +91,13 @@ class DictionaryContractTests(unittest.TestCase):
         self.assertNotIn("/api/dict/search?q=画蛇添足", manual)
 
 
+class DependencyContractTests(unittest.TestCase):
+    def test_transformers_pin_stays_at_the_verified_security_floor(self):
+        requirements = (REPO_ROOT / "requirements.runtime.txt").read_text(encoding="utf-8").splitlines()
+        self.assertIn("transformers==5.5.0", requirements)
+        self.assertNotIn("transformers==5.2.0", requirements)
+
+
 @unittest.skipUnless(
     os.environ.get("SUN_TEST_TEXTBOOK_DB") and os.environ.get("SUN_TEST_IDIOM_DB"),
     "authoritative read-only runtime assets were not supplied",
