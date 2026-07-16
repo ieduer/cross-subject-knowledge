@@ -47,6 +47,7 @@ RELEASE_FILES = (
     "frontend/assets/version.json",
     "frontend/assets/pages/book_map.json",
     "scripts/build_release_manifest.py",
+    "scripts/build_primary_vector_index.py",
     "scripts/deploy_vps.sh",
     "scripts/verify_release_manifest.py",
     "scripts/stage_clean_release.py",
@@ -157,13 +158,13 @@ def write_archive(source_dir: Path, archive_path: Path, overwrite: bool) -> None
 
 
 def verify_textbook_config_sync() -> None:
-    """Fail-fast if scripts/textbook_config.py and platform/backend/textbook_config.py diverge."""
+    """Fail-fast on legacy workspace drift while allowing a standalone checkout."""
     import filecmp
     workspace_root = REPO_ROOT.parent
     canonical = workspace_root / "scripts" / "textbook_config.py"
     synced = REPO_ROOT / "backend" / "textbook_config.py"
     if not canonical.exists():
-        raise FileNotFoundError(f"Missing canonical textbook_config.py: {canonical}")
+        return
     if not synced.exists():
         raise FileNotFoundError(
             f"Missing synced textbook_config.py: {synced}\n"

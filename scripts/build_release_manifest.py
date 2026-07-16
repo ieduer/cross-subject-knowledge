@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sqlite3
 import subprocess
 from datetime import datetime, timezone
@@ -14,7 +15,18 @@ from pathlib import Path
 
 PLATFORM_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = PLATFORM_ROOT.parent
-DATA_INDEX = WORKSPACE_ROOT / "data" / "index"
+
+
+def _default_data_root() -> Path:
+    repository_data = PLATFORM_ROOT / "data"
+    legacy_workspace_data = WORKSPACE_ROOT / "data"
+    if not (repository_data / "index").exists() and (legacy_workspace_data / "index").exists():
+        return legacy_workspace_data
+    return repository_data
+
+
+DATA_ROOT = Path(os.getenv("DATA_ROOT", _default_data_root())).expanduser().resolve()
+DATA_INDEX = DATA_ROOT / "index"
 OUTPUT_PATH = PLATFORM_ROOT / "release_manifest.json"
 TEXTBOOK_DB_MUTABLE_TABLES = frozenset({
     "search_logs",
@@ -70,6 +82,7 @@ SOURCE_ASSETS = (
     "scripts/deploy_vps.sh",
     "scripts/stage_clean_release.py",
     "scripts/build_release_manifest.py",
+    "scripts/build_primary_vector_index.py",
     "scripts/verify_release_manifest.py",
 )
 
@@ -93,6 +106,7 @@ RUNTIME_ASSETS = (
     ("dict_exam_xuci.json", DATA_INDEX / "dict_exam_xuci.json"),
     ("dict_exam_shici.json", DATA_INDEX / "dict_exam_shici.json"),
     ("dict_exam_xuci_details.json", DATA_INDEX / "dict_exam_xuci_details.json"),
+    ("dict_moe_idioms.db", DATA_INDEX / "dict_moe_idioms.db"),
     ("dict_moe_revised.db", DATA_INDEX / "dict_moe_revised.db"),
 )
 
@@ -124,6 +138,14 @@ def file_entry(kind: str, logical_path: str, actual_path: Path, source_path: str
     if source_path:
         payload["source_path"] = source_path
     return payload
+
+
+def runtime_source_path(actual_path: Path) -> str:
+    """Use a workspace-relative source when possible, otherwise retain the absolute path."""
+    try:
+        return str(actual_path.relative_to(WORKSPACE_ROOT))
+    except ValueError:
+        return str(actual_path)
 
 
 def sqlite_ordered_table_hash(conn: sqlite3.Connection, table_name: str) -> dict[str, object]:
@@ -224,12 +246,12 @@ def sqlite_row_count(path: Path, query: str) -> int | None:
 
 
 def verify_textbook_config_sync() -> None:
-    """Fail-fast if scripts/textbook_config.py and platform/backend/textbook_config.py diverge."""
+    """Fail-fast on legacy workspace drift while allowing a standalone checkout."""
     import filecmp
     canonical = WORKSPACE_ROOT / "scripts" / "textbook_config.py"
     synced = PLATFORM_ROOT / "backend" / "textbook_config.py"
     if not canonical.exists():
-        raise FileNotFoundError(f"Missing canonical textbook_config.py: {canonical}")
+        return
     if not synced.exists():
         raise FileNotFoundError(
             f"Missing synced textbook_config.py: {synced}\n"
@@ -253,7 +275,7 @@ def build_manifest() -> dict[str, object]:
             "runtime",
             f"data/index/{logical_name}",
             actual_path,
-            source_path=str(actual_path.relative_to(WORKSPACE_ROOT)),
+            source_path=runtime_source_path(actual_path),
         )
         if logical_name == "textbook_mineru_fts.db":
             entry["runtime_identity"] = textbook_db_runtime_identity(actual_path)
@@ -279,6 +301,10 @@ def build_manifest() -> dict[str, object]:
             ),
             "dict_moe_revised_rows": sqlite_row_count(
                 DATA_INDEX / "dict_moe_revised.db",
+                "select count(*) from entries",
+            ),
+            "dict_moe_idioms_rows": sqlite_row_count(
+                DATA_INDEX / "dict_moe_idioms.db",
                 "select count(*) from entries",
             ),
             "dict_moe_revised_headwords": sqlite_row_count(

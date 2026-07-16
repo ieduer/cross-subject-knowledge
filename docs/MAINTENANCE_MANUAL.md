@@ -10,15 +10,15 @@ This manual covers:
 
 - runtime health checks
 - local and production-safe inspection
+- full primary FAISS rebuild and verification on an offline build machine
 - deploy and rollback flow
 - log and SQLite behavior analysis
 - known failure modes that are easy to misread
 
 This manual does not cover:
 
-- OCR / MinerU rebuild details
+- OCR / MinerU or supplemental-index rebuild details
 - full textbook identity reconciliation
-- large offline re-index operations
 
 Use the deeper docs for those.
 
@@ -31,6 +31,7 @@ Current runtime entrypoints are:
 - deploy script: `scripts/deploy_vps.sh`
 - release manifest tools:
   - `scripts/build_release_manifest.py`
+  - `scripts/build_primary_vector_index.py`
   - `scripts/verify_release_manifest.py`
   - `scripts/stage_clean_release.py`
 - GitHub deploy workflow: `.github/workflows/deploy.yml`
@@ -64,6 +65,7 @@ Runtime assets that must exist and stay aligned:
 - `data/index/supplemental_textbook_pages.manifest.json`
 - `data/index/supplemental_textbook_pages.index`
 - `data/index/supplemental_textbook_pages.vector.manifest.json`
+- `data/index/dict_moe_idioms.db`
 
 ## 4. Daily Check
 
@@ -153,10 +155,81 @@ Normal release:
 
 Manual release:
 
-1. Run `scripts/build_release_manifest.py`.
+1. Set `DATA_ROOT=<RUNTIME_ASSET_ROOT>` when `data/index/` is outside the
+   standalone Git checkout, then run `scripts/build_release_manifest.py`.
 2. Run `scripts/verify_release_manifest.py`.
 3. If needed, create a clean bundle with `scripts/stage_clean_release.py`.
 4. Deploy from the clean release directory, never from a dirty runtime checkout.
+
+### Full primary FAISS rebuild after DB/index fingerprint drift
+
+Run this only on an offline build machine against a consistent DB snapshot. Do
+not rebuild on the production VPS, do not overwrite the previous pair in place,
+and do not use the `manifest` subcommand to disguise a stale index.
+
+1. Capture the source identity and create a new output directory:
+
+```bash
+sqlite3 -readonly <CONSISTENT_DB_SNAPSHOT> "PRAGMA integrity_check;"
+sqlite3 -readonly <CONSISTENT_DB_SNAPSHOT> "SELECT COUNT(*) FROM chunks WHERE source != 'gaokao' AND text IS NOT NULL AND text != '';"
+sha256sum <CONSISTENT_DB_SNAPSHOT>
+mkdir -p <NEW_INDEX_OUTPUT_DIR>
+```
+
+2. Build the complete index from row zero. The environment must contain the
+   exact runtime pins from `requirements.runtime.txt` and a local
+   `BAAI/bge-m3` snapshot when network access is disabled:
+
+```bash
+python3 scripts/build_primary_vector_index.py build \
+  --db <CONSISTENT_DB_SNAPSHOT> \
+  --index <NEW_INDEX_OUTPUT_DIR>/textbook_chunks.index \
+  --manifest <NEW_INDEX_OUTPUT_DIR>/textbook_chunks.manifest.json \
+  --model BAAI/bge-m3 \
+  --text-limit 512 \
+  --batch-size 128
+```
+
+3. Verify the new pair against the same DB snapshot. Verification checks the
+   exact DB and index file SHA/size, row count, ordered chunk IDs, vector
+   dimension, model, source SQL, and the full vector-source fingerprint:
+
+```bash
+python3 scripts/build_primary_vector_index.py verify \
+  --db <CONSISTENT_DB_SNAPSHOT> \
+  --index <NEW_INDEX_OUTPUT_DIR>/textbook_chunks.index \
+  --manifest <NEW_INDEX_OUTPUT_DIR>/textbook_chunks.manifest.json \
+  --model BAAI/bge-m3 \
+  --text-limit 512
+sha256sum <NEW_INDEX_OUTPUT_DIR>/textbook_chunks.index
+sha256sum <NEW_INDEX_OUTPUT_DIR>/textbook_chunks.manifest.json
+jq '{schema_version, built_at, index, model, vector_source, db}' \
+  <NEW_INDEX_OUTPUT_DIR>/textbook_chunks.manifest.json
+```
+
+4. Mount the DB and the new index/manifest pair into a fresh candidate
+   container. Require `status=ok`, `faiss.ok=true`, the expected vector count,
+   and all fixed smoke queries in section 5 before promotion.
+
+5. Regenerate `release_manifest.json` from the matched runtime asset set, then
+   run both source and runtime verification. Promote the DB, index, and primary
+   manifest as one transaction; retain the previous verified trio as rollback.
+
+The `manifest` subcommand is only for re-emitting metadata when an existing
+manifest still proves the same model, rows, dimensions, source SQL, and
+vector-source fingerprint, ordered IDs, FAISS type/metric, and exact index
+SHA/size. It fails closed on vector-source or index drift and is not a recovery
+method for a fingerprint mismatch; recovery requires the full `build` command
+above.
+
+Legacy builder output that predates index SHA/size metadata is rejected by
+default. `--allow-legacy-index-metadata-upgrade` is a one-time recovery flag:
+use it only when the complete build ran from row zero under retained
+container/process provenance, exited zero, and the legacy manifest still
+matches the immutable DB SHA, size, source SQL, row count, model, source
+fingerprint, dimensions, index type/metric, and ordered IDs. The upgraded
+manifest records index SHA/size, so later same-shape vector replacement is
+rejected even if the legacy flag is supplied again.
 
 Docs-only update:
 
