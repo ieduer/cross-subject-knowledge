@@ -14,6 +14,21 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 try:
+    from .primary_vector_contract import (
+        INDEX_VECTOR_DIGEST_ALGORITHM,
+        faiss_index_vector_digest,
+        sha256_file as _sha256_runtime_file,
+        vector_source_schema_sha256,
+    )
+except ImportError:
+    from primary_vector_contract import (
+        INDEX_VECTOR_DIGEST_ALGORITHM,
+        faiss_index_vector_digest,
+        sha256_file as _sha256_runtime_file,
+        vector_source_schema_sha256,
+    )
+
+try:
     from cachetools import TTLCache
     _cache = TTLCache(maxsize=64, ttl=300)  # 5 min TTL
 except ImportError:
@@ -437,12 +452,37 @@ def _validate_faiss_manifest(index_obj, expected_rows: Optional[int], manifest: 
     if expected_rows is not None and index_obj.ntotal != expected_rows:
         issues.append(f"index_rows={index_obj.ntotal} expected_rows={expected_rows}")
 
+    index_payload = manifest.get("index") or {}
+    manifest_index_sha256 = index_payload.get("sha256")
+    manifest_index_size = index_payload.get("size_bytes")
+    if manifest_index_sha256 != _sha256_runtime_file(FAISS_INDEX_PATH):
+        issues.append("index_sha256_mismatch")
+    if int(manifest_index_size or -1) != FAISS_INDEX_PATH.stat().st_size:
+        issues.append("index_size_mismatch")
+    if index_payload.get("vector_digest_algorithm") != INDEX_VECTOR_DIGEST_ALGORITHM:
+        issues.append("index_vector_digest_algorithm_mismatch")
+    else:
+        try:
+            current_vector_digest = faiss_index_vector_digest(index_obj)
+        except Exception as exc:
+            issues.append(f"index_vector_digest_unavailable:{type(exc).__name__}")
+        else:
+            if index_payload.get("vector_digest_sha256") != current_vector_digest:
+                issues.append("index_vector_digest_mismatch")
+
     vector_source = manifest.get("vector_source") or {}
     manifest_source_rows = vector_source.get("row_count")
     if expected_rows is not None and manifest_source_rows != expected_rows:
         issues.append(f"manifest_source_rows={manifest_source_rows} expected_rows={expected_rows}")
 
     manifest_text_limit = int((manifest.get("model") or {}).get("text_limit_chars") or 512)
+    try:
+        current_schema_sha256 = vector_source_schema_sha256(DB_PATH)
+    except Exception:
+        issues.append("vector_source_schema_unavailable")
+    else:
+        if vector_source.get("schema_sha256") != current_schema_sha256:
+            issues.append("vector_source_schema_mismatch")
     current_rows, current_fingerprint = _compute_vector_source_fingerprint(manifest_text_limit)
     if current_rows is None or current_fingerprint is None:
         issues.append("vector_source_fingerprint_unavailable")

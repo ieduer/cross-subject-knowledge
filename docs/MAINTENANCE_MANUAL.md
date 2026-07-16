@@ -190,9 +190,10 @@ python3 scripts/build_primary_vector_index.py build \
   --batch-size 128
 ```
 
-3. Verify the new pair against the same DB snapshot. Verification checks the
-   exact DB and index file SHA/size, row count, ordered chunk IDs, vector
-   dimension, model, source SQL, and the full vector-source fingerprint:
+3. Verify the new pair against the same DB snapshot. The formal 26-check gate
+   verifies the immutable `chunks` schema, row count, ordered chunk IDs,
+   vector-source fingerprint, vector dimension, model, source SQL, exact index
+   file SHA/size, and a digest of the ordered IDs plus exact float32 vectors:
 
 ```bash
 python3 scripts/build_primary_vector_index.py verify \
@@ -207,13 +208,21 @@ jq '{schema_version, built_at, index, model, vector_source, db}' \
   <NEW_INDEX_OUTPUT_DIR>/textbook_chunks.manifest.json
 ```
 
+The manifest still records the complete SQLite file SHA/size, but marks that
+identity `backup_audit_only`. Normal writes to `search_logs`, `ai_chat_logs`,
+and the other declared mutable runtime tables change the SQLite file bytes and
+must not invalidate a restart or deployment. A content/schema/count change in
+the vector source, or any same-shape index/vector replacement, still fails
+closed.
+
 4. Mount the DB and the new index/manifest pair into a fresh candidate
    container. Require `status=ok`, `faiss.ok=true`, the expected vector count,
    and all fixed smoke queries in section 5 before promotion.
 
 5. Regenerate `release_manifest.json` from the matched runtime asset set, then
-   run both source and runtime verification. Promote the DB, index, and primary
-   manifest as one transaction; retain the previous verified trio as rollback.
+   run both source and runtime verification. The deploy preflight also runs the
+   formal primary-pair verifier. Promote the DB, index, and primary manifest as
+   one transaction; retain the previous verified trio as rollback.
 
 The `manifest` subcommand is only for re-emitting metadata when an existing
 manifest still proves the same model, rows, dimensions, source SQL, and
@@ -223,13 +232,13 @@ method for a fingerprint mismatch; recovery requires the full `build` command
 above.
 
 Legacy builder output that predates index SHA/size metadata is rejected by
-default. `--allow-legacy-index-metadata-upgrade` is a one-time recovery flag:
-use it only when the complete build ran from row zero under retained
-container/process provenance, exited zero, and the legacy manifest still
-matches the immutable DB SHA, size, source SQL, row count, model, source
-fingerprint, dimensions, index type/metric, and ordered IDs. The upgraded
-manifest records index SHA/size, so later same-shape vector replacement is
-rejected even if the legacy flag is supplied again.
+default. `--allow-legacy-index-metadata-upgrade` cannot re-sign the bytes it
+finds by itself. It additionally requires independently retained
+`--expected-index-sha256` and `--expected-vector-digest-sha256` anchors from
+the original completed build. Missing or mismatched anchors fail closed; run a
+full rebuild when those anchors are unavailable. The upgraded manifest records
+index SHA/size and the ordered-vector digest, so later same-shape replacement
+is rejected even if the legacy flag is supplied again.
 
 Docs-only update:
 

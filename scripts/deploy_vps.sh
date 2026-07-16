@@ -144,6 +144,12 @@ verify_release_manifest_alignment() {
     --runtime-root "${RUNTIME_ROOT}" \
     --check source \
     --check runtime
+  python3 "${SOURCE_ROOT}/scripts/build_primary_vector_index.py" verify \
+    --db "${RUNTIME_ROOT}/data/index/textbook_mineru_fts.db" \
+    --index "${RUNTIME_ROOT}/data/index/textbook_chunks.index" \
+    --manifest "${RUNTIME_ROOT}/data/index/textbook_chunks.manifest.json" \
+    --model "${EMBEDDER_NAME}" \
+    --text-limit 512
 }
 
 host_cache_has_model() {

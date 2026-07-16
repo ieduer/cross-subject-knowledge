@@ -132,6 +132,11 @@ def verify_entries(entries: list[dict], root: Path, expected_kind: str, *, use_s
             continue
         runtime_identity = entry.get("runtime_identity")
         if expected_kind == "runtime" and isinstance(runtime_identity, dict):
+            if entry.get("file_identity_role") != "backup_audit_only":
+                errors.append(
+                    f"runtime file identity role mismatch for {relative_path}"
+                )
+                continue
             actual_identity = textbook_db_runtime_identity(actual)
             if actual_identity != runtime_identity:
                 errors.append(

@@ -59,6 +59,7 @@ SOURCE_ASSETS = (
     ".dockerignore",
     "requirements.runtime.txt",
     "backend/main.py",
+    "backend/primary_vector_contract.py",
     "backend/entrypoint.sh",
     "backend/preflight.py",
     "backend/sync_db.py",
@@ -279,6 +280,7 @@ def build_manifest() -> dict[str, object]:
         )
         if logical_name == "textbook_mineru_fts.db":
             entry["runtime_identity"] = textbook_db_runtime_identity(actual_path)
+            entry["file_identity_role"] = "backup_audit_only"
         runtime_assets.append(entry)
     return {
         "schema_version": 1,

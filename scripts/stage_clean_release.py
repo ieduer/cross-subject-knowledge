@@ -28,6 +28,7 @@ RELEASE_FILES = (
     "requirements.runtime.txt",
     "backend/entrypoint.sh",
     "backend/main.py",
+    "backend/primary_vector_contract.py",
     "backend/preflight.py",
     "backend/supplemental_textbook_pages.jsonl.gz",
     "backend/supplemental_textbook_pages.manifest.json",

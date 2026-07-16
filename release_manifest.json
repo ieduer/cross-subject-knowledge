@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-16T11:17:10.526825+00:00",
-  "git_head": "7c03afa42f54910576db30937cbcc891254ffd0f",
+  "generated_at": "2026-07-16T13:01:37.031115+00:00",
+  "git_head": "f512a5b068fcbffd9425798416ac5bbeff71d198",
   "frontend_version": "2026.05.07-r37",
   "source_of_truth": {
     "local_workspace": "authoritative",
@@ -31,8 +31,14 @@
     {
       "kind": "source",
       "logical_path": "backend/main.py",
-      "size": 364548,
-      "sha256": "850d6899142f9f5b16e1abd2e4655bb6238a8f8a824600318b6819030b8bad89"
+      "size": 366204,
+      "sha256": "643f02b2b0f2efc0a927b0c181f7b990a8727dbc0305bd54a787e0c451cc5f76"
+    },
+    {
+      "kind": "source",
+      "logical_path": "backend/primary_vector_contract.py",
+      "size": 3597,
+      "sha256": "50adc44fac036bd0ac74b8cb91927451905b26ba3585731e1784a8dffbb4898f"
     },
     {
       "kind": "source",
@@ -157,32 +163,32 @@
     {
       "kind": "source",
       "logical_path": "scripts/deploy_vps.sh",
-      "size": 16725,
-      "sha256": "0eeba4ffc1f66b8d49e2866f5969e78b5165e3a43deeeff2a0871a18257dba99"
+      "size": 17057,
+      "sha256": "4eb4e4f1df80fca06bb07f3086b73c6d7b52c3c90d6dd239999907a5da1d3468"
     },
     {
       "kind": "source",
       "logical_path": "scripts/stage_clean_release.py",
-      "size": 6579,
-      "sha256": "18666a095b5cfc4362b2a567a45c4ad376778e993f56b5e41f3476ffb2550bba"
+      "size": 6621,
+      "sha256": "c7f57e2d7dc7c7e00232f25913a4a15ec32876702a8fad260f658d1f47601674"
     },
     {
       "kind": "source",
       "logical_path": "scripts/build_release_manifest.py",
-      "size": 11636,
-      "sha256": "4cf949ab4527a917978f16efc188deee8d589a3415337e124cbf5c5b7af44e7f"
+      "size": 11740,
+      "sha256": "072e2ce8a2951194cc834500361e24716c073d9833f70c28e630bd9eb121ac2f"
     },
     {
       "kind": "source",
       "logical_path": "scripts/build_primary_vector_index.py",
-      "size": 21974,
-      "sha256": "3221157d48011730bf6d1fb98fba07f5beca70d485f34c5b41714c289fa2e3a8"
+      "size": 25785,
+      "sha256": "4f8e0eed0a933b76aa70a613638ffce464cb30e5c201d8bca7fe5b0730c5aa9c"
     },
     {
       "kind": "source",
       "logical_path": "scripts/verify_release_manifest.py",
-      "size": 7096,
-      "sha256": "5ed2cf3c74a0d21c76051bc4cc4bb35ea3991252b56da62e3879d0397bbab62d"
+      "size": 7320,
+      "sha256": "bd0337da321122fcdad745f9f8dd0d14376054385f3ed6748fc7c9f1fb652886"
     }
   ],
   "runtime_assets": [
@@ -190,8 +196,8 @@
       "kind": "runtime",
       "logical_path": "data/index/textbook_mineru_fts.db",
       "size": 81891328,
-      "sha256": "b6dbb34e7b3361d0c94fe81d565537cb5048b5ae920ef11fd03e9701ac317641",
-      "source_path": "backups/vps-projects/2026-07-16/sun-source-authority-recovery/verified-faiss-rebuild-20260716T105949Z/runtime-assets/index/textbook_mineru_fts.db",
+      "sha256": "fa501409357ee7e390804dcb41469d4b0270e13c321828ecb486bb0b2eb88aec",
+      "source_path": "backups/vps-projects/2026-07-16/sun-promotion-contract-hardening-20260716T123658Z/release-runtime/data/index/textbook_mineru_fts.db",
       "runtime_identity": {
         "type": "sqlite_textbook_runtime_identity_v1",
         "mutable_tables": [
@@ -250,21 +256,22 @@
           "chunks_fts_docsize": 24096
         },
         "integrity_check": "ok"
-      }
+      },
+      "file_identity_role": "backup_audit_only"
     },
     {
       "kind": "runtime",
       "logical_path": "data/index/textbook_chunks.index",
       "size": 82355058,
       "sha256": "b7674d94fcca08f401c3710c4121e4ba1d2ef462e6892dc7afcc043e9d5e72fa",
-      "source_path": "backups/vps-projects/2026-07-16/sun-source-authority-recovery/verified-faiss-rebuild-20260716T105949Z/runtime-assets/index/textbook_chunks.index"
+      "source_path": "backups/vps-projects/2026-07-16/sun-promotion-contract-hardening-20260716T123658Z/release-runtime/data/index/textbook_chunks.index"
     },
     {
       "kind": "runtime",
       "logical_path": "data/index/textbook_chunks.manifest.json",
-      "size": 954,
-      "sha256": "d4978dba28019b4873144253b759fafe3e6d18c80664f61babf556ba08dff4ca",
-      "source_path": "backups/vps-projects/2026-07-16/sun-source-authority-recovery/verified-faiss-rebuild-20260716T105949Z/runtime-assets/index/textbook_chunks.manifest.json"
+      "size": 1246,
+      "sha256": "5ca09a4ae4b1be7b4380762752e282079065052ba1bbf2e8fe04777c9b01b98e",
+      "source_path": "backups/vps-projects/2026-07-16/sun-promotion-contract-hardening-20260716T123658Z/release-runtime/data/index/textbook_chunks.manifest.json"
     },
     {
       "kind": "runtime",
@@ -285,49 +292,49 @@
       "logical_path": "data/index/supplemental_textbook_pages.index",
       "size": 11644973,
       "sha256": "879a02d544e999bfc31813eab76bbd5bf1b8b91a7ec70fb3f4cd65e2d2c5f4ca",
-      "source_path": "backups/vps-projects/2026-07-16/sun-source-authority-recovery/verified-faiss-rebuild-20260716T105949Z/runtime-assets/index/supplemental_textbook_pages.index"
+      "source_path": "backups/vps-projects/2026-07-16/sun-promotion-contract-hardening-20260716T123658Z/release-runtime/data/index/supplemental_textbook_pages.index"
     },
     {
       "kind": "runtime",
       "logical_path": "data/index/supplemental_textbook_pages.vector.manifest.json",
       "size": 717,
       "sha256": "f2fbbbb91988d58f891d90ab8677c7a05732de3308bfde7a1222c53e8bc9425f",
-      "source_path": "backups/vps-projects/2026-07-16/sun-source-authority-recovery/verified-faiss-rebuild-20260716T105949Z/runtime-assets/index/supplemental_textbook_pages.vector.manifest.json"
+      "source_path": "backups/vps-projects/2026-07-16/sun-promotion-contract-hardening-20260716T123658Z/release-runtime/data/index/supplemental_textbook_pages.vector.manifest.json"
     },
     {
       "kind": "runtime",
       "logical_path": "data/index/dict_exam_xuci.json",
       "size": 360816,
       "sha256": "2ab17c99c511a3c2024ccaed7191360671e095f6b371c7e0f9efd2f830eee7b1",
-      "source_path": "backups/vps-projects/2026-07-16/sun-source-authority-recovery/verified-faiss-rebuild-20260716T105949Z/runtime-assets/index/dict_exam_xuci.json"
+      "source_path": "backups/vps-projects/2026-07-16/sun-promotion-contract-hardening-20260716T123658Z/release-runtime/data/index/dict_exam_xuci.json"
     },
     {
       "kind": "runtime",
       "logical_path": "data/index/dict_exam_shici.json",
       "size": 526484,
       "sha256": "65ab0a1675e0d3307a6132f429508bcb770492dc70c189edab3cd30a6b89a7ee",
-      "source_path": "backups/vps-projects/2026-07-16/sun-source-authority-recovery/verified-faiss-rebuild-20260716T105949Z/runtime-assets/index/dict_exam_shici.json"
+      "source_path": "backups/vps-projects/2026-07-16/sun-promotion-contract-hardening-20260716T123658Z/release-runtime/data/index/dict_exam_shici.json"
     },
     {
       "kind": "runtime",
       "logical_path": "data/index/dict_exam_xuci_details.json",
       "size": 457957,
       "sha256": "920622ad0f9006b125bd9217db8a16cbfd8ff418b937ab6eac6b366c5849f213",
-      "source_path": "backups/vps-projects/2026-07-16/sun-source-authority-recovery/verified-faiss-rebuild-20260716T105949Z/runtime-assets/index/dict_exam_xuci_details.json"
+      "source_path": "backups/vps-projects/2026-07-16/sun-promotion-contract-hardening-20260716T123658Z/release-runtime/data/index/dict_exam_xuci_details.json"
     },
     {
       "kind": "runtime",
       "logical_path": "data/index/dict_moe_idioms.db",
       "size": 29884416,
       "sha256": "c412be2f38aded0aabf67e81bc992c3d996355f8c97da942880f1bc7fd2d717c",
-      "source_path": "backups/vps-projects/2026-07-16/sun-source-authority-recovery/verified-faiss-rebuild-20260716T105949Z/runtime-assets/index/dict_moe_idioms.db"
+      "source_path": "backups/vps-projects/2026-07-16/sun-promotion-contract-hardening-20260716T123658Z/release-runtime/data/index/dict_moe_idioms.db"
     },
     {
       "kind": "runtime",
       "logical_path": "data/index/dict_moe_revised.db",
       "size": 145301504,
       "sha256": "eea862edfc521d0f4bccaccc04ccafbce5fa17c77dd086f96ab82327ff8e7b26",
-      "source_path": "backups/vps-projects/2026-07-16/sun-source-authority-recovery/verified-faiss-rebuild-20260716T105949Z/runtime-assets/index/dict_moe_revised.db"
+      "source_path": "backups/vps-projects/2026-07-16/sun-promotion-contract-hardening-20260716T123658Z/release-runtime/data/index/dict_moe_revised.db"
     }
   ],
   "page_mapping": {

@@ -30,6 +30,16 @@ np = None
 SentenceTransformer = None
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from backend.primary_vector_contract import (  # noqa: E402
+    INDEX_VECTOR_DIGEST_ALGORITHM,
+    faiss_index_ids,
+    faiss_index_inner_type,
+    faiss_index_vector_digest,
+    vector_source_schema_sha256,
+)
 
 
 def _default_data_root() -> Path:
@@ -175,8 +185,10 @@ def build_manifest(
     text_limit: int,
     batch_size: int,
     vector_source_fingerprint: str,
+    vector_source_schema_sha256: str,
     index_sha256: str,
     index_size_bytes: int,
+    index_vector_digest_sha256: str,
 ) -> dict[str, object]:
     return {
         "schema_version": 2,
@@ -189,6 +201,8 @@ def build_manifest(
             "vector_rows": vector_rows,
             "sha256": index_sha256,
             "size_bytes": index_size_bytes,
+            "vector_digest_algorithm": INDEX_VECTOR_DIGEST_ALGORITHM,
+            "vector_digest_sha256": index_vector_digest_sha256,
         },
         "model": {
             "name": model_name,
@@ -199,11 +213,13 @@ def build_manifest(
             "source_sql": SOURCE_SQL,
             "row_count": vector_rows,
             "fingerprint_sha256": vector_source_fingerprint,
+            "schema_sha256": vector_source_schema_sha256,
         },
         "db": {
             "path": db_path.name,
             "sha256": sha256_file(db_path),
             "size_bytes": db_path.stat().st_size,
+            "file_identity_role": "backup_audit_only",
             "source_sql": SOURCE_SQL,
             "row_count": vector_rows,
         },
@@ -211,17 +227,11 @@ def build_manifest(
 
 
 def index_ids(index: object) -> list[int] | None:
-    if not hasattr(index, "id_map"):
-        return None
-    ensure_faiss()
-    return [int(item) for item in faiss.vector_to_array(index.id_map)]
+    return faiss_index_ids(index)
 
 
 def index_inner_type(index: object) -> str | None:
-    if not hasattr(index, "index"):
-        return None
-    ensure_faiss()
-    return type(faiss.downcast_index(index.index)).__name__
+    return faiss_index_inner_type(index)
 
 
 def resolve_paths(args: argparse.Namespace) -> tuple[Path, Path, Path]:
@@ -289,6 +299,7 @@ def run_build(args: argparse.Namespace) -> int:
     fingerprint = compute_vector_source_fingerprint(chunk_ids, texts)
     write_index_atomic(index_path, index)
     index_sha256 = sha256_file(index_path)
+    index_vector_digest_sha256 = faiss_index_vector_digest(index)
     manifest = build_manifest(
         db_path=db_path,
         index_path=index_path,
@@ -298,8 +309,10 @@ def run_build(args: argparse.Namespace) -> int:
         text_limit=args.text_limit,
         batch_size=args.batch_size,
         vector_source_fingerprint=fingerprint,
+        vector_source_schema_sha256=vector_source_schema_sha256(db_path),
         index_sha256=index_sha256,
         index_size_bytes=index_path.stat().st_size,
+        index_vector_digest_sha256=index_vector_digest_sha256,
     )
     write_json_atomic(manifest_path, manifest)
     print(
@@ -313,6 +326,7 @@ def run_build(args: argparse.Namespace) -> int:
                 "vector_rows": int(index.ntotal),
                 "vector_source_fingerprint": fingerprint,
                 "index_sha256": index_sha256,
+                "index_vector_digest_sha256": index_vector_digest_sha256,
                 "elapsed_sec": round(elapsed, 2),
             },
             ensure_ascii=False,
@@ -372,6 +386,8 @@ def run_verify(args: argparse.Namespace) -> int:
     current_index_sha256 = sha256_file(index_path)
     current_index_size = index_path.stat().st_size
     index = faiss.read_index(str(index_path))
+    current_index_vector_digest = faiss_index_vector_digest(index)
+    current_source_schema_sha256 = vector_source_schema_sha256(db_path)
     stored_ids = index_ids(index)
     inner_type = index_inner_type(index)
 
@@ -407,17 +423,26 @@ def run_verify(args: argparse.Namespace) -> int:
         db_payload.get("source_sql") == SOURCE_SQL,
         db_payload.get("source_sql"),
     )
+    audit_sha256 = str(db_payload.get("sha256") or "")
+    audit_size = int(db_payload.get("size_bytes", -1))
     _append_check(
         checks,
-        "manifest_db_sha256",
-        db_payload.get("sha256") == current_db_sha256,
-        db_payload.get("sha256"),
+        "manifest_db_audit_identity",
+        db_payload.get("file_identity_role") == "backup_audit_only"
+        and len(audit_sha256) == 64
+        and all(char in "0123456789abcdef" for char in audit_sha256)
+        and audit_size > 0,
+        {
+            "role": db_payload.get("file_identity_role"),
+            "sha256": audit_sha256,
+            "size_bytes": audit_size,
+        },
     )
     _append_check(
         checks,
-        "manifest_db_size",
-        int(db_payload.get("size_bytes", -1)) == current_db_size,
-        db_payload.get("size_bytes"),
+        "vector_source_schema",
+        source_payload.get("schema_sha256") == current_source_schema_sha256,
+        source_payload.get("schema_sha256"),
     )
     _append_check(checks, "db_rows", bool(chunk_ids), len(chunk_ids))
     _append_check(
@@ -428,15 +453,25 @@ def run_verify(args: argparse.Namespace) -> int:
     )
     _append_check(
         checks,
-        "manifest_index_sha256",
-        index_payload.get("sha256") == current_index_sha256,
-        index_payload.get("sha256"),
+        "manifest_index_bytes",
+        index_payload.get("sha256") == current_index_sha256
+        and int(index_payload.get("size_bytes", -1)) == current_index_size,
+        {
+            "sha256": index_payload.get("sha256"),
+            "size_bytes": index_payload.get("size_bytes"),
+        },
     )
     _append_check(
         checks,
-        "manifest_index_size",
-        int(index_payload.get("size_bytes", -1)) == current_index_size,
-        index_payload.get("size_bytes"),
+        "manifest_index_vector_digest",
+        index_payload.get("vector_digest_algorithm")
+        == INDEX_VECTOR_DIGEST_ALGORITHM
+        and index_payload.get("vector_digest_sha256")
+        == current_index_vector_digest,
+        {
+            "algorithm": index_payload.get("vector_digest_algorithm"),
+            "sha256": index_payload.get("vector_digest_sha256"),
+        },
     )
     _append_check(checks, "index_outer_type", type(index).__name__ == "IndexIDMap", type(index).__name__)
     _append_check(checks, "index_inner_type", inner_type == "IndexFlatIP", inner_type)
@@ -479,7 +514,11 @@ def run_verify(args: argparse.Namespace) -> int:
         {
             "ok": all(bool(item["ok"]) for item in checks),
             "db_file_sha256": current_db_sha256,
+            "db_file_size_bytes": current_db_size,
+            "db_file_identity_role": "backup_audit_only",
             "index_file_sha256": current_index_sha256,
+            "index_vector_digest_sha256": current_index_vector_digest,
+            "vector_source_schema_sha256": current_source_schema_sha256,
             "vector_source_fingerprint": expected_fingerprint,
             "index_type": type(index).__name__,
             "dimension": int(index.d),
@@ -517,10 +556,10 @@ def run_manifest(args: argparse.Namespace) -> int:
     existing_source = existing_manifest.get("vector_source") or {}
     existing_db = existing_manifest.get("db") or {}
     current_fingerprint = compute_vector_source_fingerprint(chunk_ids, texts)
-    current_db_sha256 = sha256_file(db_path)
-    current_db_size = db_path.stat().st_size
     current_index_sha256 = sha256_file(index_path)
     current_index_size = index_path.stat().st_size
+    current_index_vector_digest = faiss_index_vector_digest(index)
+    current_source_schema_sha256 = vector_source_schema_sha256(db_path)
     inner_type = index_inner_type(index)
     exact_index_metadata = (
         existing_index.get("sha256") == current_index_sha256
@@ -528,18 +567,48 @@ def run_manifest(args: argparse.Namespace) -> int:
     )
     legacy_index_metadata_missing = (
         "sha256" not in existing_index
-        and "size_bytes" not in existing_index
+        or "size_bytes" not in existing_index
     )
-    exact_legacy_db_identity = (
-        existing_db.get("sha256") == current_db_sha256
-        and int(existing_db.get("size_bytes", -1)) == current_db_size
-        and existing_db.get("source_sql") == SOURCE_SQL
-        and int(existing_db.get("row_count", -1)) == len(chunk_ids)
-    )
-    index_metadata_ok = exact_index_metadata or (
-        args.allow_legacy_index_metadata_upgrade
-        and legacy_index_metadata_missing
-        and exact_legacy_db_identity
+    if legacy_index_metadata_missing:
+        if not args.allow_legacy_index_metadata_upgrade:
+            print(
+                "ERROR: legacy index metadata cannot be re-signed; "
+                "run a full build or provide independently retained expected digests",
+                file=sys.stderr,
+            )
+            return 1
+        expected_index_sha256 = str(args.expected_index_sha256 or "")
+        expected_vector_digest_sha256 = str(
+            args.expected_vector_digest_sha256 or ""
+        )
+        if (
+            expected_index_sha256 != current_index_sha256
+            or expected_vector_digest_sha256 != current_index_vector_digest
+        ):
+            print(
+                "ERROR: legacy index metadata anchors are missing or do not match; "
+                "refusing to re-sign current index bytes",
+                file=sys.stderr,
+            )
+            return 1
+    index_metadata_ok = exact_index_metadata or legacy_index_metadata_missing
+    existing_vector_digest = existing_index.get("vector_digest_sha256")
+    vector_digest_ok = (
+        existing_vector_digest == current_index_vector_digest
+        and existing_index.get("vector_digest_algorithm")
+        == INDEX_VECTOR_DIGEST_ALGORITHM
+    ) or (
+        existing_vector_digest is None
+        and exact_index_metadata
+    ) or legacy_index_metadata_missing
+    existing_schema_sha256 = existing_source.get("schema_sha256")
+    schema_ok = (
+        existing_schema_sha256 == current_source_schema_sha256
+        or (
+            existing_schema_sha256 is None
+            and existing_source.get("fingerprint_sha256")
+            == current_fingerprint
+        )
     )
     existing_identity_ok = (
         existing_manifest.get("schema_version") == 2
@@ -548,9 +617,13 @@ def run_manifest(args: argparse.Namespace) -> int:
         and existing_index.get("type") == "IndexIDMap(IndexFlatIP)"
         and existing_index.get("metric") == "inner_product_on_normalized_embeddings"
         and index_metadata_ok
+        and vector_digest_ok
         and existing_source.get("source_sql") == SOURCE_SQL
         and int(existing_source.get("row_count", -1)) == len(chunk_ids)
         and existing_source.get("fingerprint_sha256") == current_fingerprint
+        and schema_ok
+        and existing_db.get("source_sql") == SOURCE_SQL
+        and int(existing_db.get("row_count", -1)) == len(chunk_ids)
         and int(existing_index.get("vector_rows", -1)) == int(index.ntotal)
         and int(existing_index.get("dimension", -1)) == int(index.d)
         and type(index).__name__ == "IndexIDMap"
@@ -574,8 +647,10 @@ def run_manifest(args: argparse.Namespace) -> int:
         text_limit=args.text_limit,
         batch_size=args.batch_size,
         vector_source_fingerprint=current_fingerprint,
+        vector_source_schema_sha256=current_source_schema_sha256,
         index_sha256=current_index_sha256,
         index_size_bytes=current_index_size,
+        index_vector_digest_sha256=current_index_vector_digest,
     )
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     write_json_atomic(manifest_path, manifest)
@@ -601,8 +676,16 @@ def build_parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help=(
                     "Allow a one-time upgrade only when index hash/size are absent "
-                    "and the legacy manifest exactly matches the immutable DB identity."
+                    "and independently retained index/vector digest anchors are supplied."
                 ),
+            )
+            subparser.add_argument(
+                "--expected-index-sha256",
+                help="Independent retained SHA-256 anchor required for legacy metadata.",
+            )
+            subparser.add_argument(
+                "--expected-vector-digest-sha256",
+                help="Independent retained vector digest anchor required for legacy metadata.",
             )
     return parser
 
