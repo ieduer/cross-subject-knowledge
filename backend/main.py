@@ -2045,6 +2045,7 @@ def _analyze_search_query(
             "used_supplemental_fallback": False,
         }
 
+    single_hanzi_query = _is_single_hanzi_query(clean_q)
     concept_matches = []
     catalog = _get_concept_catalog(_db_cache_token())
     normalized_query, query_phrase_set = _build_text_match_context(clean_q)
@@ -2054,6 +2055,8 @@ def _analyze_search_query(
         if concept == clean_q:
             score = 300 + len(concept)
             match_type = "exact"
+        elif single_hanzi_query:
+            continue
         elif concept in clean_q:
             score = 220 + len(concept)
             match_type = "contained"
@@ -2075,18 +2078,21 @@ def _analyze_search_query(
             }
         )
 
-    try:
-        synonym_rows = con.execute(
-            """
-            SELECT term, synonyms
-            FROM ai_synonyms
-            WHERE term = ? OR term LIKE ? OR synonyms LIKE ?
-            LIMIT 24
-            """,
-            (clean_q, f"%{clean_q}%", f"%{clean_q}%"),
-        ).fetchall()
-    except Exception:
+    if single_hanzi_query:
         synonym_rows = []
+    else:
+        try:
+            synonym_rows = con.execute(
+                """
+                SELECT term, synonyms
+                FROM ai_synonyms
+                WHERE term = ? OR term LIKE ? OR synonyms LIKE ?
+                LIMIT 24
+                """,
+                (clean_q, f"%{clean_q}%", f"%{clean_q}%"),
+            ).fetchall()
+        except Exception:
+            synonym_rows = []
 
     alias_matches = []
     for row in synonym_rows:
@@ -2233,6 +2239,10 @@ def _analyze_search_query(
 
 
 def _build_search_term_plan(query_analysis: dict) -> list[dict]:
+    direct_query = _compact_query_text(query_analysis.get("query", ""))
+    if _is_single_hanzi_query(direct_query):
+        return [{"term": direct_query, "basis": "single_char"}]
+
     plan = []
     seen = set()
 

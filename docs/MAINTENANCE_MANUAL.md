@@ -94,7 +94,7 @@ Use a small fixed smoke set after deploy or when search relevance looks wrong:
 curl -fsS "http://127.0.0.1:8080/api/search?q=蛋白质&limit=3" | jq '.total'
 curl -fsS "http://127.0.0.1:8080/api/search?q=自然灾害&phase=高中&limit=3" | jq '.total'
 curl -fsS "http://127.0.0.1:8080/api/search?q=以&subject=语文&source=textbook&limit=3" | jq '.total'
-curl -fsS "http://127.0.0.1:8080/api/dict/search?q=画蛇添足&limit=3" | jq '.entries | length'
+curl -fsS "http://127.0.0.1:8080/api/dict/moe-idioms?q=画蛇添足&limit=3" | jq '.entries | length'
 curl -fsS "http://127.0.0.1:8080/api/health" | jq
 ```
 
@@ -103,7 +103,7 @@ What these cover:
 - `蛋白质`: common hybrid textbook search
 - `自然灾害`: supplemental textbook page path
 - `以`: single-character textbook retrieval path
-- `画蛇添足`: dictionary / idiom path
+- `画蛇添足`: dedicated Ministry of Education idiom path (`/api/dict/moe-idioms`); `/api/dict/search` remains the separate page-image dictionary contract
 - `/api/health`: runtime asset and model readiness
 
 ## 6. Logs And Runtime Evidence
@@ -210,7 +210,7 @@ Usually not a query bug. Check:
 
 ### C. Single-character textbook queries unexpectedly return `0`
 
-This was a real bug path in `/api/search`: single-character queries could end up with an empty primary search plan and skip main textbook retrieval. The current code now forces a primary fallback for single-character textbook searches.
+This was a real bug path in `/api/search`: single-character queries could be expanded to an unrelated long alias containing that character, while the direct one-character term was filtered out of the primary plan. The current code bypasses fuzzy concept / alias expansion for single Hanzi and pins the primary plan to that character.
 
 Keep this smoke test in the checklist:
 
