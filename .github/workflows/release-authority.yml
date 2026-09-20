@@ -1,0 +1,23 @@
+name: Verify release authority
+on:
+  push:
+    branches: [main]
+    paths: [".github/**", ".release/**"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release-authority-cross-subject-knowledge
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify canonical release routing
+        run: |
+          node -e 'const p=require("./.release/authority.json"); if(p.repository!=="https://github.com/ieduer/cross-subject-knowledge"||!p.reason||p.mode==="automatic") process.exit(1); console.log(p.reason)'

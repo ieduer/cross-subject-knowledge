@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "repository": "https://github.com/ieduer/cross-subject-knowledge",
+  "mode": "source_validation_with_project_promotion_gate",
+  "production_executor": "project exact-image promotion contract",
+  "reason": "sun.bdfz.net production promotion retains the existing isolated-x86 shadow acceptance gate at source 50e09238504a67d8a5a7bc6b3084c5161bce1f91. A moving main clone is not deployable authority. Use the project exact-image/source/data promotion transaction after its shadow checks; no SSH release from this workflow."
+}
