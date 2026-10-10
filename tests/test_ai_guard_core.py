@@ -127,6 +127,12 @@ class SessionTokenTests(unittest.TestCase):
             self.assertFalse(ai_guard.verify_session_token(key, junk, "192.0.2.1", now=1001))
         self.assertFalse(ai_guard.verify_session_token(b"", token, "192.0.2.1", now=1001))
 
+    def test_non_ascii_digits_in_expiry_are_rejected_not_raised(self):
+        key = KEY.encode()
+        # "²".isdigit() is True but int("²") raises: must be a clean False (review m1a).
+        for token in ("v1.².x.y", "v1.１２３４.x.y", "v1.٣.x.y", "v1." + "9" * 400 + ".x.y"):
+            self.assertFalse(ai_guard.verify_session_token(key, token, "192.0.2.1", now=1001), token[:12])
+
 
 class RateLimiterTests(unittest.TestCase):
     def test_burst_then_refill(self):
@@ -188,6 +194,28 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(ai_guard.validate_gaokao_chat({"question_id": 12, "phase": "高中"}, self.cfg), {"question_id": 12, "phase": "高中"})
         for bad in ("12", True, -1, 0, 1.5, None):
             self.assertEqual(self.code(ai_guard.validate_gaokao_chat, {"question_id": bad}), (400, "bad_request"))
+
+    def test_lone_surrogates_are_rejected_as_bad_request(self):
+        # JSON "\ud800" decodes to a lone surrogate that cannot be encoded or hashed (review m1c).
+        bad = "\ud800"
+        cases = (
+            (ai_guard.validate_chat, {"query": bad, "user_message": "m"}),
+            (ai_guard.validate_chat, {"query": "q", "user_message": "x" + bad}),
+            (ai_guard.validate_chat, {"query": "q", "user_message": "m", "scope_subject": bad}),
+            (ai_guard.validate_chat, {"query": "q", "user_message": "m", "book_key": bad}),
+            (ai_guard.validate_chat, {"query": "q", "user_message": "m", "history": [{"role": "user", "content": bad}]}),
+            (ai_guard.validate_dict_chat, {"headword": bad, "user_message": "m"}),
+        )
+        for fn, payload in cases:
+            self.assertEqual(self.code(fn, payload), (400, "bad_request"))
+        # Defence in depth: the hashing helpers themselves no longer raise on such text.
+        ai_guard.dedup_key("chat", {"query": bad})
+
+    def test_dedup_ignores_invisible_format_characters(self):
+        base = {"query": "晶体的定义", "user_message": "解释"}
+        for variant in ("晶体\u200b的定义", "\ufeff晶体的定义", "晶体的\u200d定义\u200e"):
+            self.assertEqual(ai_guard.dedup_key("chat", base), ai_guard.dedup_key("chat", dict(base, query=variant)))
+        self.assertNotEqual(ai_guard.dedup_key("chat", base), ai_guard.dedup_key("chat", dict(base, query="晶体的定义。")))
 
     def test_dedup_key_normalisation(self):
         base = {"query": "牛顿 第二定律", "user_message": "解释", "history": [], "phase": "高中"}
@@ -381,6 +409,11 @@ class UpstreamTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(AIGuardError) as ctx:
             await self.call(lambda r: httpx.Response(429, headers={"Retry-After": "7"}))
         self.assertEqual((ctx.exception.status, ctx.exception.retry_after), (429, 7))
+        # Retry-After "²": isdigit() is True, float() raises — must stay a clean 429 (review m1d).
+        for odd in ("²", "１０", "soon", ""):
+            with self.assertRaises(AIGuardError) as ctx:
+                await self.call(lambda r, v=odd: httpx.Response(429, headers=[(b"Retry-After", v.encode("utf-8"))]))
+            self.assertEqual((ctx.exception.status, ctx.exception.code, ctx.exception.retry_after), (429, "ai_upstream", 30))
 
     def test_answer_char_cap(self):
         self.assertEqual(ai_guard.cap_answer("短", 10), "短")
@@ -562,6 +595,45 @@ class GuardFlowTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(AIGuardError) as ctx:
             await guard.handle("chat", self.FIELDS, "s", builder())
         self.assertEqual(ctx.exception.code, "AI_BUDGET_EXHAUSTED")
+
+    async def test_exhausted_budget_is_refused_before_retrieval(self):
+        upstream = FakeUpstream()
+        guard = self.guard(upstream, AI_DAILY_REQUEST_BUDGET=1, AI_CACHE_TTL_SEC=0)
+        builds = []
+        await guard.handle("chat", self.FIELDS, "s", builder(calls=builds))
+        for index in range(3):
+            with self.assertRaises(AIGuardError) as ctx:
+                await guard.handle("chat", dict(self.FIELDS, query=f"n{index}"), "s", builder(calls=builds))
+            self.assertEqual(ctx.exception.code, "AI_BUDGET_EXHAUSTED")
+        self.assertEqual((len(builds), upstream.calls), (1, 1), "no retrieval once the budget is gone (review m6)")
+        self.assertEqual(guard.counters["budget_refused"], 3)
+
+    async def test_unavailable_budget_store_is_refused_before_retrieval(self):
+        blocker = Path(self.tmp.name) / "plainfile"
+        blocker.write_text("x")
+        cfg = make_config(self.tmp.name)
+        upstream = FakeUpstream()
+        guard = Guard(cfg, upstream=upstream, budget=BudgetStore(blocker / "x" / "b.sqlite3"))
+        builds = []
+        with self.assertRaises(AIGuardError) as ctx:
+            await guard.handle("chat", self.FIELDS, "s", builder(calls=builds))
+        self.assertEqual((ctx.exception.status, ctx.exception.code), (503, "AI_BUDGET_UNAVAILABLE"))
+        self.assertEqual((len(builds), upstream.calls), (0, 0))
+
+    async def test_status_reads_the_budget_store_at_most_once_per_window(self):
+        now = [0.0]
+        guard = self.guard(FakeUpstream(), clock=lambda: now[0])
+        reads = []
+        real = guard.budget.snapshot
+        guard.budget.snapshot = lambda limit: (reads.append(1), real(limit))[1]
+        for _ in range(50):
+            guard.status()
+        self.assertEqual(len(reads), 1, "polling the public status endpoint does not hit SQLite each time (review m10)")
+        now[0] += ai_guard.STATUS_CACHE_SEC + 0.1
+        guard.status()
+        self.assertEqual(len(reads), 2)
+        await guard.handle("chat", self.FIELDS, "s", builder())   # a reservation invalidates the cached view
+        self.assertEqual(guard.status()["budget"]["count"], 1)
 
     async def test_prompt_cap_rejects_before_budget_and_upstream(self):
         upstream = FakeUpstream()
@@ -765,6 +837,11 @@ class CitationTests(unittest.TestCase):
         self.assertIn("[物理·必修第一册·p999]", check["unverified"])
         self.assertEqual(ai_guard.check_citations("没有出处", [])["found"], 0)
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ai_test_timeout  # noqa: E402
+
+ai_test_timeout.protect(globals())
 
 if __name__ == "__main__":
     unittest.main()

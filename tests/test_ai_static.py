@@ -4,6 +4,7 @@ main.py cannot be imported in the test venv (torch / FAISS / the runtime DB are
 not installed), so its integration with ai_guard is asserted on the source text.
 """
 import re
+import sys
 import unittest
 from pathlib import Path
 
@@ -14,8 +15,21 @@ HTML_FILES = sorted((ROOT / "frontend").glob("*.html"))
 MAIN = (ROOT / "backend" / "main.py").read_text(encoding="utf-8")
 
 
+MAX_SOURCE_LINE_CHARS = 20000
+
+
 def read(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
+    """Served sources are scanned as readable, line-oriented text. A minified one-line
+    bundle is refused up front instead of being fed to the pattern checks below."""
+    text = path.read_text(encoding="utf-8")
+    longest = max((len(line) for line in text.splitlines()), default=0)
+    if longest > MAX_SOURCE_LINE_CHARS:
+        raise AssertionError(f"{path.name}: a {longest}-character line; these checks expect unminified source")
+    return text
+
+
+def lines_containing(source: str, token: str) -> list:
+    return [line for line in source.splitlines() if token in line]
 
 
 def strip_js_comments(source: str) -> str:
@@ -65,7 +79,9 @@ class FrontendStaticTests(unittest.TestCase):
     def test_ai_endpoints_are_reached_only_through_the_guarded_client(self):
         app = strip_js_comments(read(ASSETS / "app.js"))
         dict_js = strip_js_comments(read(ASSETS / "dict.js"))
-        self.assertEqual(re.findall(r"[^\n]*/api/chat\b[^\n]*", app), ["    const request = window.SunAI.ask(`${API}/api/chat`, buildAIServerPayload(cleanMessage, history));"])
+        # Line-based scan (linear): every line that mentions the main chat endpoint itself.
+        chat_lines = [line for line in lines_containing(app, "/api/chat") if re.search(r"/api/chat(?![\w/])", line)]
+        self.assertEqual(chat_lines, ["    const request = window.SunAI.ask(`${API}/api/chat`, buildAIServerPayload(cleanMessage, history));"])
         self.assertEqual(len(re.findall(r"/api/gaokao/chat", app)), 1)
         self.assertIn("window.SunAI.ask(`${API}/api/gaokao/chat`", app)
         self.assertEqual(len(re.findall(r"/api/dict/chat", dict_js)), 1)
@@ -73,13 +89,24 @@ class FrontendStaticTests(unittest.TestCase):
         self.assertEqual(app.count("SunAI.ask("), 2)
         self.assertEqual(dict_js.count("SunAI.ask("), 1)
         for source in (app, dict_js):
-            self.assertNotRegex(source, r"fetch(Json)?\([^)]*api/(dict/|gaokao/)?chat")
+            for line in lines_containing(source, "chat"):
+                if "fetch(" in line or "fetchJson(" in line:
+                    self.assertNotRegex(line, r"api/(dict/|gaokao/)?chat", "AI endpoints are not fetched directly")
             self.assertNotIn("/api/ai/session", source)
+            self.assertNotIn("X-Sun-AI-Client", source, "only ai-client.js sends the client marker")
 
     def test_client_module_is_single_shot_and_cancellable(self):
         client = strip_js_comments(read(ASSETS / "ai-client.js"))
         self.assertEqual(client.count("fetch("), 2, "one admission call + one AI call")
         self.assertIn("fetch(SESSION_PATH", client)
+        # Both requests carry the marker that tells the server this is the guarded client.
+        guard_source = (ROOT / "backend" / "ai_guard.py").read_text(encoding="utf-8")
+        header = re.search(r'^CLIENT_MARKER_HEADER = "([a-z-]+)"$', guard_source, re.M).group(1)
+        value = re.search(r'^CLIENT_MARKER_VALUE = "(\w+)"$', guard_source, re.M).group(1)
+        marker_lines = [line.strip() for line in client.splitlines() if "X-Sun-AI-Client" in line]
+        self.assertEqual(marker_lines, [f"const CLIENT_HEADERS = {{ 'Content-Type': 'application/json', 'X-Sun-AI-Client': '{value}' }};"])
+        self.assertEqual(header, "x-sun-ai-client")
+        self.assertEqual(client.count("headers: CLIENT_HEADERS,"), 2)
         self.assertIn("AbortController", client)
         self.assertIn("signal: controller.signal", client)
         self.assertIn("credentials: 'same-origin'", client)
@@ -247,6 +274,20 @@ class MainSourceTests(unittest.TestCase):
         self.assertNotIn('fields["prompt"]', MAIN)
         self.assertNotRegex(MAIN, r'fields(\.get)?\(?\[?"(dict_context|textbook_context|gaokao_context)"')
 
+    def test_legacy_client_handling_is_wired(self):
+        self.assertEqual(MAIN.count("ai_guard.install_legacy_gaokao_shim(app, AI_GUARD)"), 1)
+        self.assertLess(MAIN.index("app.include_router("), MAIN.index("ai_guard.install_legacy_gaokao_shim("))
+        # Startup must not depend on being able to ALTER the log table (review m7).
+        block = MAIN[MAIN.index("def init_ai_chat_logs():"):MAIN.index("init_ai_chat_logs()\n\n")]
+        self.assertRegex(block, r"try:\n\s+ai_guard\.ensure_chat_log_columns\(con\)\n\s+except Exception")
+        # The live link panel must keep asking for a limit other than the one the old AI button used.
+        app = read(ASSETS / "app.js")
+        self.assertEqual([line.strip() for line in lines_containing(app, "/api/gaokao/link")],
+                         ["const res = await fetch(`${API}/api/gaokao/link?question_id=${questionId}&limit=10`);"])
+        guard_source = (ROOT / "backend" / "ai_guard.py").read_text(encoding="utf-8")
+        self.assertIn('LEGACY_GAOKAO_LIMIT = "5"', guard_source)
+        self.assertNotIn("limit=5", app)
+
     def test_guard_module_keeps_fastapi_annotations_resolvable(self):
         guard_source = (ROOT / "backend" / "ai_guard.py").read_text(encoding="utf-8")
         self.assertNotRegex(guard_source, r"(?m)^from __future__ import annotations")
@@ -256,6 +297,11 @@ class MainSourceTests(unittest.TestCase):
         deploy = (ROOT / "scripts" / "deploy_vps.sh").read_text(encoding="utf-8")
         self.assertNotRegex(deploy, r"(?m)^[^#\n]*/api/chat")
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ai_test_timeout  # noqa: E402
+
+ai_test_timeout.protect(globals())
 
 if __name__ == "__main__":
     unittest.main()

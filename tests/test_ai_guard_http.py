@@ -16,7 +16,10 @@ from ai_guard import AIGuardError, Built, Guard, GuardConfig  # noqa: E402
 
 KEY = "s3ss10n-key-" + "z" * 40
 ORIGIN = "https://sun.bdfz.net"
-JSON_HEADERS = {"Origin": ORIGIN, "Content-Type": "application/json", "Sec-Fetch-Site": "same-origin"}
+MARKER = {"X-Sun-AI-Client": "2"}
+JSON_HEADERS = {"Origin": ORIGIN, "Content-Type": "application/json", "Sec-Fetch-Site": "same-origin", **MARKER}
+OLD_CLIENT_HEADERS = {"Origin": ORIGIN, "Content-Type": "application/json", "Sec-Fetch-Site": "same-origin"}  # what the 035d2d4 script sends
+LEGACY = json.loads((Path(__file__).resolve().parent / "fixtures" / "ai_legacy_replies.json").read_text(encoding="utf-8"))
 CHAT = {"query": "牛顿第二定律", "user_message": "请解释", "history": [], "phase": "高中"}
 EVIDENCE = [{"id": 7, "subject": "物理", "title": "必修第一册", "book_key": "bk", "section": 87, "logical_page": 92,
              "citation": "[物理·必修第一册·p92]", "snippet": "F=ma", "text": "RAW CHUNK TEXT"}]
@@ -82,7 +85,7 @@ class HttpGuardTests(unittest.IsolatedAsyncioTestCase):
     async def test_disabled_by_default(self):
         h = self.harness(enabled=False)
         for path in ("/api/ai/session", "/api/chat", "/api/dict/chat", "/api/gaokao/chat"):
-            for headers in (JSON_HEADERS, {"Content-Type": "application/json"}):
+            for headers in (JSON_HEADERS, {"Content-Type": "application/json", **MARKER}):
                 response = await h.client.post(path, headers=headers, content=json.dumps(CHAT).encode())
                 self.assertEqual(response.status_code, 503, path)
                 self.assertEqual(response.json()["code"], "AI_DISABLED")
@@ -147,7 +150,7 @@ class HttpGuardTests(unittest.IsolatedAsyncioTestCase):
         for headers in cases:
             response = await h.post("/api/chat", CHAT, **headers)
             self.assertEqual((response.status_code, response.json()["code"]), (403, "forbidden_origin"), headers)
-        no_origin = await h.client.post("/api/chat", headers={"Content-Type": "application/json"}, content=json.dumps(CHAT).encode())
+        no_origin = await h.client.post("/api/chat", headers={"Content-Type": "application/json", **MARKER}, content=json.dumps(CHAT).encode())
         self.assertEqual(no_origin.status_code, 403)
         self.assertEqual((await h.session(Origin="https://evil.example")).status_code, 403)
         self.assertEqual((h.upstream_calls, h.build_calls), (0, []))
@@ -275,9 +278,10 @@ class HttpGuardTests(unittest.IsolatedAsyncioTestCase):
         h = self.harness()
         await h.session()
         payload = {"query": "伪造", "user_message": "伪造的日志文本", "provider": "x", "success": True, "error": "注入"}
-        for path in ("/api/chat/log", "/api/chat/context"):
-            response = await h.post(path, payload)
-            self.assertEqual((response.status_code, response.json()["code"]), (410, "retired"))
+        response = await h.post("/api/chat/log", payload)
+        self.assertEqual((response.status_code, response.json()["code"]), (410, "retired"))
+        context = await h.post("/api/chat/context", payload)
+        self.assertEqual((context.status_code, context.json()), (200, LEGACY["context"]["body"]))
         await h.guard.drain_logs()
         self.assertEqual((h.logs, h.build_calls, h.upstream_calls), ([], [], 0))
 
@@ -294,6 +298,143 @@ class HttpGuardTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn(forbidden, blob)
         self.assertEqual(h.logs[0]["kind"], "chat")
 
+    # ── pages still running the pre-guard script ─────────────────────────────
+
+    async def test_old_client_gets_a_fixed_200_reply_not_401(self):
+        for enabled in (True, False):   # also while AI is switched off: a 503 would trigger the old browser fallback too
+            h = self.harness(enabled=enabled, AI_RATE_BURST=1, AI_RATE_PER_MINUTE=1)
+            for _ in range(30):         # never 429 either: any refusal re-opens the fallback
+                chat = await h.client.post("/api/chat", headers=OLD_CLIENT_HEADERS, content=json.dumps(CHAT).encode())
+                self.assertEqual((chat.status_code, chat.json()), (LEGACY["chat"]["status"], LEGACY["chat"]["body"]))
+            dict_chat = await h.client.post("/api/dict/chat", headers=OLD_CLIENT_HEADERS, content=json.dumps({"headword": "之", "user_message": "m"}).encode())
+            self.assertEqual((dict_chat.status_code, dict_chat.json()), (LEGACY["dict"]["status"], LEGACY["dict"]["body"]))
+            context = await h.client.post("/api/chat/context", headers=OLD_CLIENT_HEADERS, content=json.dumps(CHAT).encode())
+            self.assertEqual((context.status_code, context.json()), (LEGACY["context"]["status"], LEGACY["context"]["body"]))
+            log = await h.client.post("/api/chat/log", headers=OLD_CLIENT_HEADERS, content=json.dumps(CHAT).encode())
+            self.assertEqual((log.status_code, log.json()), (LEGACY["log"]["status"], LEGACY["log"]["body"]))
+            self.assertEqual(chat.headers["cache-control"], "no-store")
+            await h.guard.drain_logs()
+            self.assertEqual((h.upstream_calls, h.build_calls, h.logs), (0, [], []), "no model call, no retrieval, no log row")
+            self.assertEqual(h.guard.counters["legacy_client"], 32)
+            self.assertFalse((Path(self.tmp.name) / "ai_guard" / "ai_budget.sqlite3").exists(), "the budget store is not even opened")
+
+    async def test_old_client_reply_does_not_read_the_body(self):
+        h = self.harness()
+
+        async def endless():
+            while True:
+                yield b"x" * 65536
+
+        reply = await asyncio.wait_for(h.client.post("/api/chat", headers=OLD_CLIENT_HEADERS, content=endless()), timeout=5)
+        self.assertEqual(reply.json(), LEGACY["chat"]["body"])
+
+    async def test_marker_must_match_exactly_and_new_client_keeps_the_real_flow(self):
+        h = self.harness()
+        for value in ("1", "", "true", "22"):
+            reply = await h.client.post("/api/chat", headers={**OLD_CLIENT_HEADERS, "X-Sun-AI-Client": value}, content=json.dumps(CHAT).encode())
+            self.assertEqual(reply.json(), LEGACY["chat"]["body"], value)
+        guarded = await h.post("/api/chat", CHAT)        # marker present, no session
+        self.assertEqual((guarded.status_code, guarded.json()["code"]), (401, "AI_SESSION_REQUIRED"))
+        self.assertEqual((await h.client.post("/api/gaokao/chat", headers=OLD_CLIENT_HEADERS, content=b'{"question_id": 3}')).status_code, 401,
+                         "the gaokao endpoint is new: no old client calls it, so there is no legacy reply")
+
+    async def test_legacy_gaokao_shim(self):
+        from fastapi import FastAPI
+
+        h = self.harness()
+        app = FastAPI()
+
+        @app.get("/api/gaokao/link")
+        def link(question_id: int, limit: int = 10):
+            return {"question_id": question_id, "limit": limit}
+
+        self.assertTrue(ai_guard.install_legacy_gaokao_shim(app, h.guard, env={}))
+        client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=ORIGIN)
+        try:
+            old_button = (
+                {"Sec-Fetch-Site": "same-origin"},
+                {"Referer": ORIGIN + "/"},
+                {"Referer": ORIGIN + "/chuzhong.html?q=x"},
+            )
+            for headers in old_button:
+                blocked = await client.get("/api/gaokao/link?question_id=7&limit=5", headers=headers)
+                self.assertEqual((blocked.status_code, blocked.json()), (LEGACY["gaokao_link"]["status"], LEGACY["gaokao_link"]["body"]), headers)
+            untouched = (
+                ("/api/gaokao/link?question_id=7&limit=10", {"Sec-Fetch-Site": "same-origin"}),   # the link panel
+                ("/api/gaokao/link?question_id=7", {"Sec-Fetch-Site": "same-origin"}),
+                ("/api/gaokao/link?question_id=7&limit=5", {}),                                    # API consumer, curl
+                ("/api/gaokao/link?question_id=7&limit=5", {"Sec-Fetch-Site": "none"}),            # typed into the address bar
+                ("/api/gaokao/link?question_id=7&limit=5", {"Sec-Fetch-Site": "cross-site", "Referer": "https://evil.example/"}),
+                ("/api/gaokao/link?question_id=7&limit=5", {"Referer": ORIGIN + ".evil.example/"}),
+                ("/api/gaokao/link?question_id=7&limit=50", {"Sec-Fetch-Site": "same-origin"}),
+            )
+            for url, headers in untouched:
+                passed = await client.get(url, headers=headers)
+                self.assertEqual(passed.status_code, 200 if "limit=50" not in url else 200, (url, headers))
+                self.assertEqual(passed.json()["question_id"], 7)
+            self.assertEqual(h.guard.counters["legacy_gaokao_blocked"], 3)
+        finally:
+            await client.aclose()
+        off = FastAPI()
+        off.add_api_route("/api/gaokao/link", link, methods=["GET"])
+        self.assertFalse(ai_guard.install_legacy_gaokao_shim(off, h.guard, env={"AI_LEGACY_GAOKAO_SHIM": "0"}))
+        client = httpx.AsyncClient(transport=httpx.ASGITransport(app=off), base_url=ORIGIN)
+        try:
+            self.assertEqual((await client.get("/api/gaokao/link?question_id=7&limit=5", headers={"Sec-Fetch-Site": "same-origin"})).status_code, 200)
+        finally:
+            await client.aclose()
+
+    # ── inputs that used to end as an unhandled 500 (review m1) ──────────────
+
+    async def test_hostile_inputs_get_clean_4xx(self):
+        h = self.harness(AI_RATE_BURST=50)
+        await h.session()
+        # (a) session cookie whose expiry is a non-ASCII digit
+        probe = httpx.AsyncClient(transport=httpx.ASGITransport(app=h.client._transport.app), base_url=ORIGIN)
+        try:
+            bad_cookie = await probe.post("/api/chat", headers={**JSON_HEADERS, "Cookie": "sun_ai_session=v1.%C2%B2.x.y"}, content=json.dumps(CHAT).encode())
+            raw = await probe.post("/api/chat", headers=[(k.encode(), v.encode()) for k, v in JSON_HEADERS.items()] + [(b"Cookie", "sun_ai_session=v1.².x.y".encode("utf-8"))],
+                                   content=json.dumps(CHAT).encode())
+        finally:
+            await probe.aclose()
+        self.assertEqual((bad_cookie.status_code, bad_cookie.json()["code"]), (401, "AI_SESSION_REQUIRED"))
+        self.assertEqual((raw.status_code, raw.json()["code"]), (401, "AI_SESSION_REQUIRED"))
+        # (b) deeply nested JSON inside the byte cap
+        nested = await h.client.post("/api/chat", headers=JSON_HEADERS, content=b"[" * 40000)
+        self.assertEqual((nested.status_code, nested.json()["code"]), (400, "bad_json"))
+        # (c) lone surrogate
+        body = json.dumps({"query": "\ud800", "user_message": "m"}).encode("ascii")   # the escape sequence, six ASCII bytes
+        self.assertIn(b"\\ud800", body)
+        surrogate = await h.client.post("/api/chat", headers=JSON_HEADERS, content=body)
+        self.assertEqual((surrogate.status_code, surrogate.json()["code"]), (400, "bad_request"))
+        # non-ASCII digits in Content-Length cannot be sent by a real HTTP stack; the parser still refuses them
+        class OddLength:
+            headers = {"content-type": "application/json", "content-length": "²"}
+
+            async def stream(self):
+                yield b"{}"
+
+        with self.assertRaises(AIGuardError) as ctx:
+            await ai_guard.read_capped_json(OddLength(), 4096)
+        self.assertEqual(ctx.exception.status, 411)
+        self.assertEqual((h.upstream_calls, h.build_calls), (0, []))
+
+    async def test_unforeseen_exception_is_a_clean_500_body(self):
+        h = self.harness()
+        await h.session()
+
+        def boom(subject):
+            raise RuntimeError("secret internal detail /state/path")
+
+        h.guard.rate_limit = boom
+        response = await h.post("/api/dict/chat", {"headword": "之", "user_message": "m"})
+        self.assertEqual((response.status_code, response.json()["code"]), (500, "internal_error"))
+        self.assertNotIn("secret", response.text)
+        self.assertEqual(h.guard.counters["internal_error"], 1)
+        h.guard.session_limiter.take = boom
+        session = await h.session()
+        self.assertEqual((session.status_code, session.json()["code"]), (500, "internal_error"))
+
     async def test_disconnect_watcher_sets_gone(self):
         class FakeRequest:
             def __init__(self):
@@ -307,6 +448,11 @@ class HttpGuardTests(unittest.IsolatedAsyncioTestCase):
         await ai_guard._watch_disconnect(FakeRequest(), gone)
         self.assertTrue(gone.is_set())
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ai_test_timeout  # noqa: E402
+
+ai_test_timeout.protect(globals())
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,8 @@
+{
+  "_comment": "Exact server replies to pages still running the pre-guard script (035d2d4). tests/test_ai_guard_http.py asserts the router produces these; tests/ai_legacy_client.test.mjs feeds them to the real old script.",
+  "chat": {"status": 200, "body": {"answer": "页面已更新，请刷新后再使用 AI 解答。", "provider": "本站提示", "context": {"summary": null, "evidence": [], "alias_hints": [], "relation_hints": [], "suggested_questions": []}, "legacy_client": true}},
+  "dict": {"status": 200, "body": {"answer": "页面已更新，请刷新后再使用 AI 解答。", "provider": "本站提示", "legacy_client": true}},
+  "context": {"status": 200, "body": {"legacy_client": true, "history_text": 1, "detail": "页面已更新，请刷新后再使用 AI 解答。"}},
+  "log": {"status": 410, "body": {"detail": "该接口已停用。", "code": "retired"}},
+  "gaokao_link": {"status": 410, "body": {"detail": "页面已更新，请刷新后再使用 AI 解答。", "code": "client_outdated"}}
+}

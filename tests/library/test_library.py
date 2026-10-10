@@ -310,8 +310,10 @@ class EditionTests(Base):
     def test_badges_are_taken_from_the_catalog(self):
         cards = {e["edition_id"]: e for e in self.get("/api/library/editions").json()["editions"]}
         e1, e2, e3 = cards[self.eid("e1")], cards[self.eid("e2")], cards[self.eid("e3")]
-        self.assertEqual(e1["badges"], {"searchable": True, "corpus_relation": "aligned", "printed_verified": True, "has_text_layer": True})
-        self.assertEqual(e2["badges"], {"searchable": False, "corpus_relation": "none", "printed_verified": False, "has_text_layer": False})
+        self.assertEqual(e1["badges"], {"searchable": True, "corpus_relation": "aligned", "printed_verified": True,
+                                        "has_text_layer": True, "text_identity": "page-aligned-other-printing"})
+        self.assertEqual(e2["badges"], {"searchable": False, "corpus_relation": "none", "printed_verified": False,
+                                        "has_text_layer": False, "text_identity": None})
         self.assertFalse(e3["badges"]["printed_verified"])
         self.assertEqual(e1["pages"], 12)
 
@@ -423,7 +425,8 @@ class ResolveTests(Base):
         other = hashlib.md5(synthetic.SECOND_SUN_KEY.encode()).hexdigest()[:12]
         body = self.get("/api/library/resolve", params={"items": f"{key}.0,{key}.99,{other}.2,ffffffffffff.3"}).json()
         self.assertEqual(body["results"], [
-            {"item": f"{key}.0", "available": True, "edition_id": self.eid("e1"), "pdf_page": 1},
+            {"item": f"{key}.0", "available": True, "edition_id": self.eid("e1"), "pdf_page": 1,
+             "text_identity": "page-aligned-other-printing"},
             {"item": f"{key}.99", "available": False, "reason": "page-not-mapped"},
             {"item": f"{other}.2", "available": False, "reason": "ambiguous"},
             {"item": "ffffffffffff.3", "available": False, "reason": "unknown-book"}])
@@ -696,6 +699,93 @@ class PdfDirectTests(Base):
         finally:
             path.write_bytes(backup)
 
+    def test_long_cache_header_only_on_successful_bodies(self):
+        size = len(self.pdf_bytes("e1"))
+        etag = f'"{self.info["e1"]["pdf"]["sha256"]}"'
+        immutable = "public, max-age=31536000, immutable"
+        self.assertEqual(self.get(self.pdf_url("e1")).headers["cache-control"], immutable)
+        self.assertEqual(self.get(self.pdf_url("e1"), headers={"Range": "bytes=0-9"}).headers["cache-control"], immutable)
+        bad_range = self.get(self.pdf_url("e1"), headers={"Range": f"bytes={size}-"})
+        self.assertEqual((bad_range.status_code, bad_range.headers["cache-control"]), (416, "no-store"))
+        not_modified = self.get(self.pdf_url("e1"), headers={"If-None-Match": etag})
+        self.assertEqual(not_modified.status_code, 304)
+        self.assertNotIn("immutable", not_modified.headers.get("cache-control", ""))
+        e1 = self.info["e1"]
+        for url in (f"/files/pdf/{e1['edition_id']}/000000000000/a.pdf", "/files/pdf/cn-nope-000000000000/000000000000/a.pdf"):
+            response = self.get(url)
+            self.assertEqual(response.status_code, 404)
+            self.assertNotIn("immutable", response.headers.get("cache-control", ""))
+
+    def test_if_none_match_list_and_star(self):
+        etag = f'"{self.info["e1"]["pdf"]["sha256"]}"'
+        for header in (f'"x", {etag}', f"W/{etag}", "*"):
+            self.assertEqual(self.get(self.pdf_url("e1"), headers={"If-None-Match": header}).status_code, 304, header)
+        self.assertEqual(self.get(self.pdf_url("e1"), headers={"If-None-Match": '"x", "y"'}).status_code, 200)
+
+    def test_non_ascii_digits_are_rejected_not_crashed(self):
+        size = len(self.pdf_bytes("e1"))
+        for header in ("bytes=\u0663-\u0665", "bytes=\u00b2-"):
+            response = self.get(self.pdf_url("e1"), headers=[(b"range", header.encode("utf-8"))])
+            self.assertEqual(response.status_code, 416, header)
+        for url, params in (("/api/library/editions", {"limit": "\u0663"}), ("/api/library/editions", {"offset": "\u00b2"}),
+                            (f"/api/library/editions/{self.eid('e1')}/pages", {"from": "\u0661"}),
+                            ("/api/library/resolve", {"book_key": "a", "section": "\u0663"}),
+                            ("/api/library/resolve", {"items": "aaaaaaaaaaaa.\u0663"}),
+                            ("/api/library/resolve", {"edition_id": self.eid("e1"), "sections": "\u0663"}),
+                            ("/api/library/downloads", {"row": "\u0663"}), ("/api/library/downloads", {"row": "../x"})):
+            self.assertEqual(self.get(url, params=params).status_code, 400, (url, params))
+        body = self.get("/api/library/legacy", params={"kind": "jc", "ref": synthetic.REAL_SUN_KEY, "page": "\u0668"}).json()
+        self.assertEqual((body["exact"], body["reason"]), (False, "bad-page"))
+        self.assertEqual(size, len(self.get(self.pdf_url("e1")).content))
+
+    def test_descriptor_is_closed_when_the_client_goes_away(self):
+        import asyncio
+
+        opened = []
+        real_open = library._open_pdf
+
+        def tracking_open(path):
+            handle = real_open(path)
+            opened.append(handle)
+            return handle
+
+        e2 = self.info["e2"]
+        path = f"/files/pdf/{e2['edition_id']}/{e2['pdf']['sha256'][:12]}/x.pdf"
+        scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "GET", "scheme": "http",
+                 "path": path, "raw_path": path.encode(), "query_string": b"", "root_path": "",
+                 "headers": [(b"host", b"t")], "client": ("198.51.100.77", 1234), "server": ("t", 80)}
+
+        async def run():
+            sent = []
+
+            async def receive():
+                await asyncio.sleep(3600)
+
+            async def send(message):
+                sent.append(message["type"])
+                if message["type"] == "http.response.body":
+                    raise OSError("client went away")     # the first body chunk cannot be delivered
+
+            try:
+                await self.app(scope, receive, send)
+            except BaseException:
+                pass
+            for _ in range(5):
+                await asyncio.sleep(0)
+            return sent
+
+        library._open_pdf = tracking_open
+        old_chunk = library.STREAM_CHUNK
+        library.STREAM_CHUNK = 256            # several chunks even for a tiny file
+        try:
+            sent = asyncio.run(run())
+        finally:
+            library._open_pdf = real_open
+            library.STREAM_CHUNK = old_chunk
+        self.assertIn("http.response.start", sent)
+        self.assertEqual(len(opened), 1)
+        self.assertTrue(opened[0].closed)
+
     def test_only_get_and_head(self):
         self.assertEqual(self.client.post(self.pdf_url("e1")).status_code, 405)
         self.assertEqual(self.client.delete(self.pdf_url("e1")).status_code, 405)
@@ -780,7 +870,15 @@ class RateLimitTests(Base):
         self.assertEqual(key(req("127.0.0.1", "::ffff:192.0.2.1")), "ip4:192.0.2.1")
         self.assertEqual(key(req("127.0.0.1", "not-an-ip")), "ip4:127.0.0.1")
         self.assertEqual(key(req("172.17.0.1", "192.0.2.1")), "ip4:172.17.0.1")
-        self.assertEqual(key(req("172.17.0.1", "192.0.2.1"), ("172.17.0.1",)), "ip4:192.0.2.1")
+        nets = library.parse_networks
+        self.assertEqual(key(req("172.17.0.1", "192.0.2.1"), nets("172.17.0.1")), "ip4:192.0.2.1")
+        self.assertEqual(key(req("172.17.0.9", "192.0.2.1"), nets("172.17.0.0/16")), "ip4:192.0.2.1")
+        self.assertEqual(key(req("172.18.0.1", "192.0.2.1"), nets("172.17.0.0/16")), "ip4:172.18.0.1")
+        self.assertEqual(key(req("::ffff:172.17.0.1", "192.0.2.1"), nets("172.17.0.1/32")), "ip4:192.0.2.1")
+        self.assertEqual(key(req("fd00::2", "192.0.2.1"), nets("fd00::/64")), "ip4:192.0.2.1")
+        # a typo must never trust the world, and junk is ignored
+        self.assertEqual(nets("0.0.0.0/0, ::/0, 10.0.0.0/7, nonsense, 300.1.1.1, , 10.0.0.0/8"), nets("10.0.0.0/8"))
+        self.assertEqual(key(req("203.0.113.5", "192.0.2.1"), nets("0.0.0.0/0")), "ip4:203.0.113.5")
         self.assertEqual(key(req("testclient")), "peer:testclient")
         self.assertEqual(key(SimpleNamespace(client=None, headers={})), "peer:unknown")
 
@@ -790,7 +888,18 @@ class RateLimitTests(Base):
         for index in range(500):
             limiter.take(f"k{index}")
             clock.advance(0.1)
-        self.assertLessEqual(len(limiter._buckets), 51)
+        self.assertLessEqual(len(limiter._buckets), 50)
+
+    def test_fresh_keys_cannot_refill_an_exhausted_bucket_in_use(self):
+        clock = FakeClock()
+        limiter = library.RateLimiter(2, 0.001, clock, max_keys=100)
+        self.assertEqual([limiter.take("victim")[0] for _ in range(3)], [True, True, False])
+        for index in range(5000):          # flood of new keys while the victim keeps trying
+            limiter.take(f"flood-{index}")
+            if index % 50 == 0:
+                self.assertFalse(limiter.take("victim")[0], index)
+        self.assertLessEqual(len(limiter._buckets), 100)
+        self.assertFalse(limiter.take("victim")[0])
 
 
 # ── Release written in the shape of scripts/catalog/build_catalog.py ─────────
@@ -909,7 +1018,11 @@ class GeneratorShapeTests(Base):
         self.assertIsNone(rows[self.SID_B]["edition_id"])
         self.assertEqual(rows[self.SID_B]["title"], "未命名教材")
         self.assertEqual(rows[self.SID_B]["other_editions"], [{"edition_id": self.id_b, "edition_label": "统编版",
-                                                                "status": "superseded", "previewable": True}])
+                                                                "status": "superseded", "previewable": True,
+                                                                "platform_current": False,
+                                                                "retrieved_at": "2026-10-10T10:15:00Z"}])
+        self.assertIs(rows[self.id_b]["platform_current"], False)
+        self.assertIs(rows[self.id_a]["platform_current"], True)
 
     def test_foreign_contract_is_rejected(self):
         root = self.tmp / "gen2" / "catalog"
@@ -923,6 +1036,149 @@ class GeneratorShapeTests(Base):
         _, lib = self.client_for(LIBRARY_CATALOG_ROOT=str(root))
         self.assertIsNone(lib.state.get())
         self.assertEqual(lib.state.error, "unsupported catalog schema")
+
+
+# ── Release revision 2: platform_current / newer edition / text identity ─────
+
+class RevisionTwoTests(Base):
+    """New optional fields.  The same loader must also keep loading the old shape
+    (GeneratorShapeTests and the synthetic release above carry none of them)."""
+
+    SID = "dddddddd-1111-4222-8333-444444444444"
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        old_pdf, cur_pdf = cls.info["e3"]["pdf"], cls.info["e1"]["pdf"]
+        cls.old_id = f"cn-{cls.SID}-{old_pdf['sha256'][:12]}"
+        cls.new_id = f"cn-{cls.SID}-pending"
+        cls.cur_id = f"cn-eeeeeeee-1111-4222-8333-444444444444-{cur_pdf['sha256'][:12]}"
+
+        def edition(eid, sid, pdf, status, **over):
+            record = {
+                "edition_id": eid, "work_id": "cn/初中/物理/8s", "region": "CN", "stage": "初中", "subject": "物理",
+                "title": "义务教育教科书·物理 八年级 上册", "volume": "八年级上册", "publisher": "人民教育出版社",
+                "edition_label": "人教版", "metadata_basis": "smartedu-details",
+                "source": {"provider": "smartedu", "source_id": sid, "id_basis": "bytes:sha256=learn-books",
+                           "retrieved_at": "2026-03-15T08:09:07Z", "update_time": None, "online_time": None},
+                "pdf": pdf, "storage": {"vps": {"path": f"pdf/{pdf['sha256']}.pdf"} if pdf else None, "drive": None,
+                                        "upstream": {"available": True}},
+                "legacy": {"sun_book_key": None, "jc_short_key": None, "jks_slug": None},
+                "corpus": {"relation": "none", "basis": "x", "coverage": None, "text_identity": None},
+                "processing": {}, "status": status,
+            }
+            record.update(over)
+            return record
+
+        old = edition(cls.old_id, cls.SID, dict(old_pdf), "active", platform_current=False, newer_edition_id=cls.new_id,
+                      corpus={"relation": "same-bytes", "basis": "bytes", "coverage": 1.0, "text_identity": "same-file"},
+                      legacy={"sun_book_key": synthetic.SECOND_SUN_KEY, "jc_short_key": None, "jks_slug": None})
+        new = edition(cls.new_id, cls.SID, None, "pending-verification", platform_current=True,
+                      supersedes_edition_id=cls.old_id)
+        new["source"]["update_time"] = "2026-08-18T00:00:00Z"
+        cur = edition(cls.cur_id, "eeeeeeee-1111-4222-8333-444444444444", dict(cur_pdf), "active", platform_current=True,
+                      stage="高中", subject="语文", title="普通高中教科书·语文 必修 上册", work_id="cn/高中/语文/bx-s",
+                      newer_edition_id="cn-does-not-exist-000000000000",
+                      corpus={"relation": "aligned", "basis": "anchors", "coverage": 0.9,
+                              "text_identity": "page-aligned-other-printing"},
+                      legacy={"sun_book_key": synthetic.REAL_SUN_KEY, "jc_short_key": None, "jks_slug": None})
+        maps = {
+            cls.old_id: {"edition_id": cls.old_id, "pdf_sha256": old_pdf["sha256"], "pages": [
+                {"pdf_page": n, "printed_label": None, "printed_verified": False, "legacy_image_index": n - 1, "ocr_page": None}
+                for n in range(1, old_pdf["pages"] + 1)]},
+            cls.cur_id: {"edition_id": cls.cur_id, "pdf_sha256": cur_pdf["sha256"], "pages": [
+                {"pdf_page": n, "printed_label": None, "printed_verified": False, "legacy_image_index": n + 1, "ocr_page": None}
+                for n in range(1, cur_pdf["pages"] + 1)]},
+        }
+        rows = [
+            {"source_id": cls.SID, "stage": "初中", "subject": "物理", "title": "义务教育教科书·物理 八年级 上册",
+             "edition_label": "人教版", "publisher": "人民教育出版社", "cover": f"https://jks-ai.bdfz.net/cover/{cls.SID}",
+             "size_bytes": None, "sources": [{"kind": "upstream", "url": f"https://jks-ai.bdfz.net/pdf/{cls.SID}"}],
+             "edition_id": None, "held_other_edition_ids": [cls.old_id]},
+            {"source_id": "eeeeeeee-1111-4222-8333-444444444444", "stage": "高中", "subject": "语文",
+             "title": "普通高中教科书·语文 必修 上册", "edition_label": "统编版", "publisher": "人民教育出版社", "cover": None,
+             "size_bytes": None, "sources": [{"kind": "upstream", "url": "https://jks-ai.bdfz.net/pdf/eeeeeeee-1111-4222-8333-444444444444"}],
+             "edition_id": cls.cur_id, "held_other_edition_ids": []},
+        ]
+        cls.rev_root = cls.tmp / "rev2" / "catalog"
+        synthetic.write_release(cls.rev_root / "releases" / "r-rev2", "r-rev2", [old, new, cur], rows, maps)
+        synthetic.set_current(cls.rev_root, "r-rev2")
+        app, cls.rev_lib = cls.make_app({"LIBRARY_CATALOG_ROOT": str(cls.rev_root)})
+        cls.rev = TestClient(app)
+
+    def test_release_loads(self):
+        body = self.rev.get("/api/library/release").json()
+        self.assertTrue(body["available"], self.rev_lib.state.error)
+        self.assertEqual((body["counts"]["editions"], body["counts"]["previewable"], body["counts"]["downloads"]), (3, 2, 3))
+
+    def test_edition_exposes_the_new_fields(self):
+        body = self.rev.get(f"/api/library/editions/{self.old_id}").json()["edition"]
+        self.assertIs(body["platform_current"], False)
+        self.assertEqual(body["newer_edition_id"], self.new_id)
+        self.assertEqual(body["source"]["id_basis"], "bytes:sha256=learn-books")
+        self.assertEqual(body["metadata_basis"], "smartedu-details")
+        self.assertEqual(body["corpus"]["text_identity"], "same-file")
+        self.assertTrue(body["corpus"]["text_identity_declared"])
+        self.assertEqual(body["newer_edition"], {
+            "edition_id": self.new_id, "title": "义务教育教科书·物理 八年级 上册", "edition_label": "人教版",
+            "publisher": "人民教育出版社", "status": "pending-verification", "pages": None, "previewable": False,
+            "platform_current": True, "update_time": "2026-08-18T00:00:00Z", "download_row_id": self.SID})
+        # the page of a not-current edition offers this site's file only: no upstream link under its name
+        self.assertTrue(body["file"]["download_url"].startswith(f"/files/pdf/{self.old_id}/"))
+        self.assertEqual(body["sources"], [])
+        other = self.rev.get(f"/api/library/editions/{self.new_id}").json()["edition"]
+        self.assertEqual(other["supersedes_edition"]["edition_id"], self.old_id)
+        self.assertIs(other["platform_current"], True)
+        self.assertIsNone(other["file"])
+        card = self.rev.get("/api/library/editions", params={"phase": "初中"}).json()["editions"][0]
+        self.assertEqual((card["platform_current"], card["newer_edition_id"]), (False, self.new_id))
+
+    def test_dangling_reference_is_dropped_not_fatal(self):
+        body = self.rev.get(f"/api/library/editions/{self.cur_id}").json()["edition"]
+        self.assertIsNone(body["newer_edition_id"])
+        self.assertIsNone(body["newer_edition"])
+
+    def test_text_identity_travels_with_resolved_links(self):
+        body = self.rev.get("/api/library/resolve", params={"book_key": synthetic.REAL_SUN_KEY, "section": "3"}).json()
+        self.assertEqual((body["available"], body["pdf_page"], body["text_identity"]), (True, 2, "page-aligned-other-printing"))
+        body = self.rev.get("/api/library/resolve", params={"book_key": synthetic.SECOND_SUN_KEY, "section": "3"}).json()
+        self.assertEqual((body["pdf_page"], body["text_identity"]), (4, "same-file"))
+        detail = self.rev.get(f"/api/library/editions/{self.cur_id}").json()["edition"]
+        self.assertEqual(detail["badges"]["text_identity"], "page-aligned-other-printing")
+
+    def test_two_files_of_one_book_are_two_labelled_rows(self):
+        rows = {r["row_id"]: r for r in self.rev.get("/api/library/downloads", params={"stage": "初中"}).json()["downloads"]}
+        self.assertEqual(set(rows), {self.SID, self.old_id})
+        held, platform = rows[self.old_id], rows[self.SID]
+        self.assertEqual([s["kind"] for s in held["sources"]], ["vps"])            # 本站 only, this edition only
+        self.assertIs(held["platform_current"], False)
+        self.assertEqual(held["retrieved_at"], "2026-03-15T08:09:07Z")
+        self.assertEqual(held["newer_edition"]["download_row_id"], self.SID)
+        self.assertEqual([s["kind"] for s in platform["sources"]], ["upstream"])   # never a 本站 source here
+        self.assertIsNone(platform["edition_id"])
+        self.assertEqual([(o["edition_id"], o["platform_current"]) for o in platform["other_editions"]], [(self.old_id, False)])
+        self.assertEqual(platform["cover"], f"https://jks-ai.bdfz.net/cover/{self.SID}")
+
+    def test_row_filter_addresses_one_entry(self):
+        body = self.rev.get("/api/library/downloads", params={"row": self.SID}).json()
+        self.assertEqual([r["row_id"] for r in body["downloads"]], [self.SID])
+        self.assertEqual(self.rev.get("/api/library/downloads", params={"row": "nope"}).json()["total"], 0)
+
+    def test_old_shape_gets_the_cautious_text_identity(self):
+        # no corpus.text_identity in the synthetic release: aligned/partial are treated as another printing
+        e1 = self.get(f"/api/library/editions/{self.eid('e1')}").json()["edition"]
+        self.assertEqual((e1["corpus"]["text_identity"], e1["corpus"]["text_identity_declared"]), ("page-aligned-other-printing", False))
+        self.assertIsNone(e1["platform_current"])
+        self.assertIsNone(e1["newer_edition"])
+        e2 = self.get(f"/api/library/editions/{self.eid('e2')}").json()["edition"]
+        self.assertIsNone(e2["corpus"]["text_identity"])
+
+    def test_no_edition_is_called_newest(self):
+        texts = [(ROOT / "frontend" / "assets" / name).read_text(encoding="utf-8") for name in ("library.js", "library.css")]
+        texts.append((ROOT / "backend" / "library.py").read_text(encoding="utf-8"))
+        for text in texts:
+            self.assertNotIn("最新", text)
+            self.assertNotRegex(text, r"(?i)\blatest\b")
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

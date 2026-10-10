@@ -18,7 +18,14 @@ import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
 ORIGIN = "https://sun.bdfz.net"
-HEADERS = {"Origin": ORIGIN, "Content-Type": "application/json", "Sec-Fetch-Site": "same-origin"}
+HEADERS = {"Origin": ORIGIN, "Content-Type": "application/json", "Sec-Fetch-Site": "same-origin", "X-Sun-AI-Client": "2"}
+OLD_CLIENT_HEADERS = {"Origin": ORIGIN, "Content-Type": "application/json", "Sec-Fetch-Site": "same-origin"}
+LEGACY = json.loads((Path(__file__).resolve().parent / "fixtures" / "ai_legacy_replies.json").read_text(encoding="utf-8"))
+# This test must NEVER load an embedding / reranker model, whatever the interpreter has installed
+# and whatever index files the checkout contains. Importing these names is made to fail, so
+# main.py takes its dependency-free path (FAISS_AVAILABLE = False) by construction.
+HEAVY_MODULES = ("faiss", "sentence_transformers", "torch", "transformers")
+_SAVED_MODULES = {}
 KEY = "integration-key-" + "q" * 40
 _TMP = None
 main = None
@@ -33,6 +40,8 @@ def setUpModule():
     env = {
         "DATA_ROOT": str(root / "data"), "STATE_ROOT": str(root / "state"), "PROJECT_ROOT": str(ROOT),
         "RERANKER_ENABLED": "0", "RERANKER_PRELOAD": "0", "RUNTIME_DB_SYNC_MODE": "disabled",
+        "SUPPLEMENTAL_VECTOR_ENABLED": "0", "GRAPH_RAG_ENABLED": "0",
+        "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "HF_HOME": str(root / "hf-empty"),
         "AI_ENABLED": "1", "AI_SESSION_KEY": KEY, "AI_DAILY_REQUEST_BUDGET": "5", "AI_RATE_BURST": "50",
         # A non-routable placeholder: the upstream function is replaced below and never used.
         "AI_SERVICE_URL": "http://127.0.0.1:9/never-called",
@@ -41,19 +50,44 @@ def setUpModule():
         _SAVED_ENV[name] = os.environ.get(name)
         os.environ[name] = value
     sys.path.insert(0, str(ROOT / "backend"))
+    if "main" in sys.modules:
+        _restore()
+        raise unittest.SkipTest("a module named 'main' is already imported in this process; run this file on its own")
+    for name in HEAVY_MODULES:
+        _SAVED_MODULES[name] = sys.modules.get(name, _ABSENT)
+        sys.modules[name] = None          # `import faiss` now raises ImportError
     try:
         import main as imported  # noqa: WPS433
     except Exception as exc:  # pragma: no cover - environment without fastapi etc.
+        _restore()
         raise unittest.SkipTest(f"backend/main.py is not importable here: {exc!r}")
+    loaded = [name for name in ("faiss_index", "supplemental_faiss_index", "embedder", "reranker") if getattr(imported, name, None) is not None]
+    if getattr(imported, "FAISS_AVAILABLE", False) or loaded:
+        _restore()
+        raise unittest.SkipTest(f"refusing to run: main.py took a model-loading path (FAISS_AVAILABLE or {loaded})")
     main = imported
 
 
-def tearDownModule():
+_ABSENT = object()
+
+
+def _restore():
+    for name, value in _SAVED_MODULES.items():
+        if value is _ABSENT:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = value
+    _SAVED_MODULES.clear()
     for name, value in _SAVED_ENV.items():
         if value is None:
             os.environ.pop(name, None)
         else:
             os.environ[name] = value
+    _SAVED_ENV.clear()
+
+
+def tearDownModule():
+    _restore()
     sys.modules.pop("main", None)
     if _TMP is not None:
         _TMP.cleanup()
@@ -105,6 +139,8 @@ class MainIntegrationTests(unittest.IsolatedAsyncioTestCase):
             "cross_links": [], "_question_text": "一物体在水平面上……",
         }
         self.guard._cache.clear()
+        self.guard._status_budget = None
+        self.budget_before = self.guard.budget.snapshot(main.AI_GUARD_CONFIG.daily_budget)["count"]
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app, client=("127.0.0.1", 40000)), base_url=ORIGIN)
 
     async def asyncTearDown(self):
@@ -171,7 +207,9 @@ class MainIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         # 5. Retired endpoints.
         self.assertEqual((await self.post("/api/chat/log", {"query": "伪造", "user_message": "伪造"})).status_code, 410)
-        self.assertEqual((await self.post("/api/chat/context", payload)).status_code, 410)
+        retired_context = await self.post("/api/chat/context", payload)   # no retrieval; fixed reply for old pages
+        self.assertEqual((retired_context.status_code, retired_context.json()), (200, LEGACY["context"]["body"]))
+        self.assertEqual(self.context_calls, 1)
 
         # 6. Server-side log in the real table: additive columns, no raw text.
         await self.guard.drain_logs()
@@ -194,6 +232,24 @@ class MainIntegrationTests(unittest.IsolatedAsyncioTestCase):
         status = (await self.client.get("/api/ai/status")).json()
         self.assertEqual((status["budget"]["count"], status["budget"]["limit"], status["budget"]["remaining"]), (5, 5, 0))
         self.assertTrue((Path(os.environ["STATE_ROOT"]) / "ai_guard" / "ai_budget.sqlite3").exists())
+
+    async def test_old_client_on_the_real_app(self):
+        """A page still running the 035d2d4 script (no client marker) against the real app."""
+        chat = await self.client.post("/api/chat", headers=OLD_CLIENT_HEADERS, content=json.dumps({"query": "牛顿第二定律", "user_message": "x", "history": []}).encode())
+        self.assertEqual((chat.status_code, chat.json()), (200, LEGACY["chat"]["body"]))
+        context = await self.client.post("/api/chat/context", headers=OLD_CLIENT_HEADERS, content=b"{}")
+        self.assertEqual((context.status_code, context.json()), (200, LEGACY["context"]["body"]))
+        dict_chat = await self.client.post("/api/dict/chat", headers=OLD_CLIENT_HEADERS, content=b'{"headword":"x","user_message":"y"}')
+        self.assertEqual((dict_chat.status_code, dict_chat.json()), (200, LEGACY["dict"]["body"]))
+        link = await self.client.get("/api/gaokao/link?question_id=12&limit=5", headers={"Sec-Fetch-Site": "same-origin", "Referer": ORIGIN + "/"})
+        self.assertEqual((link.status_code, link.json()), (410, LEGACY["gaokao_link"]["body"]))
+        self.assertEqual((self.calls, self.context_calls), ([], 0))
+        self.assertEqual(self.guard.status()["budget"]["count"], self.budget_before)
+
+    async def test_no_model_was_loaded(self):
+        self.assertFalse(main.FAISS_AVAILABLE)
+        for name in ("faiss_index", "supplemental_faiss_index", "embedder", "reranker"):
+            self.assertIsNone(getattr(main, name), name)
 
     async def test_served_pages_and_assets(self):
         for page, script in (("/", "assets/app.js"), ("/chuzhong.html", "assets/app.js"), ("/dict.html", "assets/dict.js"), ("/chuzhong-dict.html", "assets/dict.js")):
@@ -228,6 +284,11 @@ class MainIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((main.AI_GUARD_CONFIG.retries, main.AI_SERVICE_RETRIES), (0, 0))
         self.assertLessEqual(main.AI_GUARD_CONFIG.upstream_deadline_sec, 30.0)
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ai_test_timeout  # noqa: E402
+
+ai_test_timeout.protect(globals())
 
 if __name__ == "__main__":
     unittest.main()

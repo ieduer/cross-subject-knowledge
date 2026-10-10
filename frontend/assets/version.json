@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.05.07-r37",
-  "updated_at": "2026-05-07",
+  "frontend_refactor_version": "2026.10.10-r38",
+  "updated_at": "2026-10-10",
   "history": [
+    {
+      "version": "2026.10.10-r38",
+      "date": "2026-10-10",
+      "summary": "added two tabs to 高中 / 初中 pages — PDF 预览 (vendored PDF.js 4.10.38, pages read on demand by HTTP Range, PDF page / verified printed page labels, in-book search, 在 PDF 中打开 from search hits, old JC / JKS links) and 教材下载 (full catalog with per-edition sources); ?view= links now select the view; AI requests go through the server-side guard only (no browser fallback, no automatic trigger); asset cache key 20261010a"
+    },
     {
       "version": "2026.05.07-r37",
       "date": "2026-05-07",

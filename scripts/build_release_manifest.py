@@ -47,6 +47,8 @@ SOURCE_ASSETS = (
     ".dockerignore",
     "requirements.runtime.txt",
     "backend/main.py",
+    "backend/ai_guard.py",
+    "backend/library.py",
     "backend/entrypoint.sh",
     "backend/preflight.py",
     "backend/sync_db.py",
@@ -60,11 +62,14 @@ SOURCE_ASSETS = (
     "frontend/dict.html",
     "frontend/chuzhong.html",
     "frontend/chuzhong-dict.html",
+    "frontend/assets/ai-client.js",
     "frontend/assets/app.js",
     "frontend/assets/style.css",
     "frontend/assets/background-mx.jpg",
     "frontend/assets/dict.js",
     "frontend/assets/dict.css",
+    "frontend/assets/library.css",
+    "frontend/assets/library.js",
     "frontend/assets/version.json",
     "frontend/assets/pages/book_map.json",
     "scripts/deploy_vps.sh",
@@ -72,6 +77,26 @@ SOURCE_ASSETS = (
     "scripts/build_release_manifest.py",
     "scripts/verify_release_manifest.py",
 )
+
+# Whole directories whose every file is a source asset (vendored PDF.js incl. VENDOR.json).
+SOURCE_TREES = (
+    "frontend/vendor/pdfjs",
+)
+
+
+def source_asset_paths() -> list[str]:
+    paths = list(SOURCE_ASSETS)
+    for relative_dir in SOURCE_TREES:
+        base = PLATFORM_ROOT / relative_dir
+        if not base.is_dir():
+            raise FileNotFoundError(f"Missing required source directory: {base}")
+        for path in sorted(base.rglob("*")):
+            if path.is_file():
+                rel = path.relative_to(PLATFORM_ROOT).as_posix()
+                if rel not in paths:
+                    paths.append(rel)
+    return paths
+
 
 RUNTIME_ASSETS = (
     ("textbook_mineru_fts.db", DATA_INDEX / "textbook_mineru_fts.db"),
@@ -100,6 +125,16 @@ RUNTIME_ASSETS = (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build release_manifest.json for textbook-knowledge.")
     parser.add_argument("--output", type=Path, default=OUTPUT_PATH)
+    parser.add_argument(
+        "--reuse-runtime-from",
+        type=Path,
+        help=(
+            "Rebuild only the source-asset half and carry runtime_assets / runtime_facts over, unchanged, "
+            "from this existing manifest. For code-only releases prepared on a machine that does not hold "
+            "the runtime data (data/index). The carried entries are still verified against the VPS by "
+            "deploy_vps.sh before cutover. Not valid when any runtime data file changed."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -242,11 +277,13 @@ def verify_textbook_config_sync() -> None:
         )
 
 
-def build_manifest() -> dict[str, object]:
+def build_manifest(reuse_runtime_from: Path | None = None) -> dict[str, object]:
     source_assets = [
         file_entry("source", rel_path, PLATFORM_ROOT / rel_path)
-        for rel_path in SOURCE_ASSETS
+        for rel_path in source_asset_paths()
     ]
+    if reuse_runtime_from is not None:
+        return build_manifest_with_carried_runtime(source_assets, reuse_runtime_from)
     runtime_assets = []
     for logical_name, actual_path in RUNTIME_ASSETS:
         entry = file_entry(
@@ -295,10 +332,60 @@ def build_manifest() -> dict[str, object]:
     }
 
 
+def build_manifest_with_carried_runtime(source_assets: list[dict[str, object]], previous_path: Path) -> dict[str, object]:
+    previous = json.loads(previous_path.read_text(encoding="utf-8"))
+    runtime_assets = previous.get("runtime_assets")
+    if previous.get("schema_version") != 1 or not isinstance(runtime_assets, list) or not runtime_assets:
+        raise RuntimeError(f"{previous_path} has no runtime_assets to carry over")
+    expected = {f"data/index/{name}" for name, _ in RUNTIME_ASSETS}
+    carried = {str(entry.get("logical_path")) for entry in runtime_assets}
+    if carried != expected:
+        raise RuntimeError(
+            "runtime asset list of the previous manifest differs from RUNTIME_ASSETS; "
+            "run without --reuse-runtime-from on a machine that holds data/index"
+        )
+    # The two bundled supplemental files are both source and runtime assets: they must not have changed.
+    by_path = {str(entry["logical_path"]): entry for entry in source_assets}
+    for entry in runtime_assets:
+        source_path = str(entry.get("source_path") or "")
+        remainder = source_path.split("/", 1)[1] if "/" in source_path else ""
+        twin = by_path.get(remainder) if remainder.startswith("backend/") else None
+        if twin is not None and twin["sha256"] != entry.get("sha256"):
+            raise RuntimeError(f"bundled runtime file changed since the previous manifest: {source_path}")
+    return {
+        "schema_version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "git_head": git_head_sha(),
+        "frontend_version": load_frontend_version(),
+        "source_of_truth": previous.get("source_of_truth"),
+        "source_assets": source_assets,
+        "runtime_assets": runtime_assets,
+        "runtime_assets_carried_from": {
+            "generated_at": previous.get("generated_at"),
+            "git_head": previous.get("git_head"),
+            "note": "runtime half not re-measured in this build; deploy_vps.sh verifies it on the VPS",
+        },
+        "page_mapping": book_map_summary(),
+        "runtime_facts": previous.get("runtime_facts"),
+        "release_rules": previous.get("release_rules"),
+    }
+
+
 def main() -> None:
     args = parse_args()
-    verify_textbook_config_sync()
-    manifest = build_manifest()
+    if args.reuse_runtime_from is None:
+        verify_textbook_config_sync()
+    else:
+        # Without the canonical workspace copy the sync check cannot run; require instead that
+        # backend/textbook_config.py is byte-identical to the one the previous manifest recorded.
+        previous = json.loads(args.reuse_runtime_from.read_text(encoding="utf-8"))
+        recorded = {str(e.get("logical_path")): e.get("sha256") for e in previous.get("source_assets") or []}
+        canonical = WORKSPACE_ROOT / "scripts" / "textbook_config.py"
+        if canonical.exists():
+            verify_textbook_config_sync()
+        elif sha256_file(PLATFORM_ROOT / "backend" / "textbook_config.py") != recorded.get("backend/textbook_config.py"):
+            raise RuntimeError("backend/textbook_config.py changed and the canonical copy is not available to compare")
+    manifest = build_manifest(args.reuse_runtime_from)
     args.output.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",

@@ -119,6 +119,15 @@
 /* extra link inside existing search-result cards */
 .view-page-btn.lib-open-pdf { display: inline-flex; align-items: center; color: var(--lib-strong); text-decoration: none; }
 
+/* notes about a different printing / a different edition */
+.lib-open-note, .lib-hit-note { display: block; font-size: 12px; line-height: 1.5; color: var(--lib-warn); }
+.lib-open-note { flex-basis: 100%; }
+.result-actions:has(.lib-open-note) { flex-wrap: wrap; }
+.lib-hit-note { margin: 0 0 8px; padding: 6px 8px; background: var(--lib-warn-bg); border-radius: 6px; }
+.lib-hit-kind { font-size: 11px; color: var(--lib-soft); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-right: 4px; white-space: nowrap; }
+.lib-dl-edition-note { color: var(--lib-warn); }
+.lib-dl-body > .lib-badges { margin: 2px 0; }
+
 /* ── notices ─────────────────────────────────────────────── */
 .lib-notices:empty { display: none; }
 .lib-notice {
@@ -367,6 +376,7 @@
     font-size: 15px;
 }
 
+.lib-cover[data-cover-state="loading"] span::after { content: '…'; }
 .lib-cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 .lib-dl-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .lib-dl-title { font-size: 15px; font-weight: 600; line-height: 1.45; color: var(--text); }

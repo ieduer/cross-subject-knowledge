@@ -29,10 +29,11 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterator, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 from urllib.parse import quote, urlsplit
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -65,6 +66,7 @@ SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$")
 STATUSES = ("active", "superseded", "pending-verification")
 CORPUS_RELATIONS = ("same-bytes", "aligned", "partial", "different-edition", "none")
 SEARCHABLE_RELATIONS = ("same-bytes", "aligned", "partial")
+TEXT_IDENTITIES = ("same-file", "page-aligned-other-printing")
 STAGE_ORDER = {"小学": 0, "初中": 1, "高中": 2}
 SOURCE_LABELS = {"vps": "本站", "drive": "云端硬盘", "upstream": "官方平台"}
 SOURCE_ORDER = ("vps", "drive", "upstream")
@@ -72,7 +74,7 @@ SOURCE_ORDER = ("vps", "drive", "upstream")
 UNTITLED = "未命名教材"
 DRIVE_HOSTS = ("drive.google.com", "drive.usercontent.google.com", "docs.google.com")
 DEFAULT_UPSTREAM_HOSTS = "jks-ai.bdfz.net,smartedu.cn,ykt.cbern.com.cn"
-DEFAULT_COVER_HOSTS = "ykt.cbern.com.cn,smartedu.cn,img.rdfzer.com,img.bdfz.net"
+DEFAULT_COVER_HOSTS = "jks-ai.bdfz.net,ykt.cbern.com.cn,smartedu.cn,img.rdfzer.com,img.bdfz.net"
 
 mimetypes.add_type("text/javascript", ".mjs")
 
@@ -99,6 +101,25 @@ def _env_float(env: Mapping[str, str], name: str, default: float, lo: float, hi:
     return max(lo, min(hi, value))
 
 
+def parse_networks(value: Any) -> tuple:
+    """`LIBRARY_TRUSTED_PROXIES`: comma-separated addresses or CIDR blocks (same
+    syntax as AI_TRUSTED_PROXIES).  Unparseable entries and blocks wider than
+    /8 (IPv4) or /16 (IPv6) are ignored: a typo must never trust the world."""
+    out = []
+    for item in str(value or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            network = ipaddress.ip_network(item, strict=False)
+        except ValueError:
+            continue
+        if network.prefixlen < (8 if network.version == 4 else 16):
+            continue
+        out.append(network)
+    return tuple(out)
+
+
 def _csv(value: str) -> tuple[str, ...]:
     return tuple(item.strip().lower() for item in str(value or "").split(",") if item.strip())
 
@@ -114,7 +135,7 @@ class Settings:
     json_per_second: float
     pdf_capacity: int
     pdf_per_second: float
-    trusted_proxies: tuple[str, ...]
+    trusted_proxies: tuple   # ip_network objects; loopback is always trusted in addition
     upstream_hosts: tuple[str, ...]
     cover_hosts: tuple[str, ...]
     upstream_template: str
@@ -142,7 +163,7 @@ class Settings:
             json_per_second=_env_float(env, "LIBRARY_RATE_JSON_PER_SECOND", 8.0, 0.01, 10000.0),
             pdf_capacity=_env_int(env, "LIBRARY_RATE_PDF_BURST", 1200, 1, 100000),
             pdf_per_second=_env_float(env, "LIBRARY_RATE_PDF_PER_SECOND", 40.0, 0.01, 10000.0),
-            trusted_proxies=_csv(env.get("LIBRARY_TRUSTED_PROXIES", "")),
+            trusted_proxies=parse_networks(env.get("LIBRARY_TRUSTED_PROXIES", "")),
             upstream_hosts=_csv(env.get("LIBRARY_UPSTREAM_HOSTS", DEFAULT_UPSTREAM_HOSTS)),
             cover_hosts=_csv(env.get("LIBRARY_COVER_HOSTS", DEFAULT_COVER_HOSTS)),
             upstream_template=template,
@@ -477,6 +498,20 @@ def _build_edition(raw: Any, order: int, release_dir: Path, listed: set[str], se
         raise ReleaseError(f"invalid corpus.relation: {edition_id}")
     source = raw.get("source") if isinstance(raw.get("source"), dict) else {}
     processing = raw.get("processing") if isinstance(raw.get("processing"), dict) else {}
+    platform_current = raw.get("platform_current", source.get("platform_current"))
+    if not isinstance(platform_current, bool):
+        platform_current = None
+    # Is the searchable corpus text the text of THIS file?  When the release does not
+    # say, assume the weaker claim for anything that is not byte-identical.
+    declared_identity = corpus.get("text_identity")
+    if declared_identity in TEXT_IDENTITIES:
+        text_identity = declared_identity
+    elif relation == "same-bytes":
+        text_identity = "same-file"
+    elif relation in ("aligned", "partial"):
+        text_identity = "page-aligned-other-printing"
+    else:
+        text_identity = None
 
     page_map = None
     rel = f"page-maps/{edition_id}.json"
@@ -510,7 +545,14 @@ def _build_edition(raw: Any, order: int, release_dir: Path, listed: set[str], se
             "online_time": _opt_str(source.get("online_time"), 40),
             "update_time": _opt_str(source.get("update_time"), 40),
             "retrieved_at": _opt_str(source.get("retrieved_at"), 40),
+            "id_basis": _opt_str(source.get("id_basis", source.get("source_id_basis")), 80),
         },
+        "metadata_basis": _opt_str(raw.get("metadata_basis"), 80),
+        # Whether this file is the one the official platform serves now.  Unknown stays null.
+        "platform_current": platform_current,
+        # Filled in by load_release once every edition is known (dangling ids become null).
+        "newer_edition_id": _edition_ref(raw.get("newer_edition_id")),
+        "supersedes_edition_id": _edition_ref(raw.get("supersedes_edition_id")),
         "pdf": ({
             "sha256": sha256,
             "bytes": size,
@@ -519,6 +561,8 @@ def _build_edition(raw: Any, order: int, release_dir: Path, listed: set[str], se
         } if has_pdf else None),
         "corpus": {
             "relation": relation,
+            "text_identity": text_identity,
+            "text_identity_declared": declared_identity in TEXT_IDENTITIES,
             "basis": _opt_str(corpus.get("basis"), 200),
             "coverage": corpus.get("coverage") if isinstance(corpus.get("coverage"), (int, float)) and not isinstance(corpus.get("coverage"), bool) else _opt_str(corpus.get("coverage"), 80),
         },
@@ -622,17 +666,26 @@ def _build_download(raw: Any, editions: Mapping[str, Edition], settings: Setting
         "row_id": edition.edition_id if edition else (source_id or "t-" + hashlib.sha256(
             "\x1f".join([title, stage or "", subject or "", edition_label or "", publisher or ""]).encode("utf-8")).hexdigest()[:16]),
         "previewable": bool(edition and edition.previewable),
+        "platform_current": edition.record["platform_current"] if edition else None,
+        "retrieved_at": edition.record["source"]["retrieved_at"] if edition else None,
+        "newer_edition": None,   # filled by load_release
         "sources": [by_kind[kind] for kind in SOURCE_ORDER if kind in by_kind],
         # Other files held for the same source id are different editions: listed, never merged.
         "other_editions": [
             {"edition_id": other.edition_id, "edition_label": other.record["edition_label"],
-             "status": other.status, "previewable": other.previewable}
+             "status": other.status, "previewable": other.previewable,
+             "platform_current": other.record["platform_current"],
+             "retrieved_at": other.record["source"]["retrieved_at"]}
             for other in (editions.get(i) for i in (raw.get("held_other_edition_ids") or [])[:8] if isinstance(i, str))
             if other is not None and (edition is None or other.edition_id != edition.edition_id)
         ],
     }
     haystack = " ".join(filter(None, [title, edition_label, publisher, subject, stage])).lower()
     return DownloadRow(record=record, stage=stage, subject=subject, publisher=publisher, region=region, haystack=haystack)
+
+
+def _edition_ref(value: Any) -> Optional[str]:
+    return value if isinstance(value, str) and EDITION_ID_RE.fullmatch(value) else None
 
 
 def _contract(doc: Mapping[str, Any]) -> Optional[str]:
@@ -685,6 +738,12 @@ def load_release(catalog_root: Path, settings: Settings, release_id: Optional[st
             raise ReleaseError(f"duplicate edition_id: {edition.edition_id}")
         editions[edition.edition_id] = edition
 
+    for edition in editions.values():
+        for key in ("newer_edition_id", "supersedes_edition_id"):
+            ref = edition.record[key]
+            if ref is not None and (ref not in editions or ref == edition.edition_id):
+                edition.record[key] = None
+
     downloads_raw = _read_json(release_dir / "downloads.json", MAX_CATALOG_JSON_BYTES)
     if isinstance(downloads_raw, dict):
         if downloads_raw.get("release_id") not in (None, release_id):
@@ -714,8 +773,14 @@ def load_release(catalog_root: Path, settings: Settings, release_id: Optional[st
         if row.record["row_id"] in seen_rows:
             raise ReleaseError(f"duplicate download row: {row.record['row_id']}")
         seen_rows.add(row.record["row_id"])
-    # stable sort: keeps the catalog order inside each (stage, subject)
-    downloads.sort(key=lambda row: (STAGE_ORDER.get(row.stage or "", 9), row.subject or ""))
+    for row in downloads:
+        held = editions.get(row.record["edition_id"]) if row.record["edition_id"] else None
+        if held is not None and held.record["newer_edition_id"]:
+            row.record["newer_edition"] = _edition_brief(editions, downloads, held.record["newer_edition_id"])
+    # stable sort; the title key puts a file held on this site next to the platform's
+    # entry for the same book (platform entry first)
+    downloads.sort(key=lambda row: (STAGE_ORDER.get(row.stage or "", 9), row.subject or "", row.record["title"],
+                                    row.record["platform_current"] is False))
 
     sun_pairs, short_pairs, jks_pairs = [], [], []
     for edition in editions.values():
@@ -855,7 +920,8 @@ class RateLimiter:
     def take(self, key: str, cost: float = 1.0) -> tuple[bool, int]:
         now = self._clock()
         with self._lock:
-            tokens, stamp = self._buckets.get(key, (self.capacity, now))
+            # pop + re-insert keeps the dict ordered by last use (oldest first)
+            tokens, stamp = self._buckets.pop(key, (self.capacity, now))
             tokens = min(self.capacity, tokens + max(0.0, now - stamp) * self.per_second)
             if tokens >= cost:
                 self._buckets[key] = (tokens - cost, now)
@@ -863,12 +929,10 @@ class RateLimiter:
             else:
                 self._buckets[key] = (tokens, now)
                 allowed, retry = False, max(1, int((cost - tokens) / self.per_second + 0.999))
-            if len(self._buckets) > self._max_keys:
-                full_after = self.capacity / self.per_second
-                for stale in [k for k, (_, s) in self._buckets.items() if now - s > full_after]:
-                    del self._buckets[stale]
-                if len(self._buckets) > self._max_keys:
-                    self._buckets.clear()
+            # Bounded table: drop the least recently used keys, never the whole map,
+            # so a flood of fresh keys cannot refill an exhausted bucket that is still in use.
+            while len(self._buckets) > self._max_keys:
+                del self._buckets[next(iter(self._buckets))]
         return allowed, retry
 
 
@@ -881,13 +945,16 @@ def _parse_ip(value: Optional[str]):
         return None
 
 
-def client_key(request: Request, trusted_proxies: tuple[str, ...] = ()) -> str:
+def client_key(request: Request, trusted_proxies: tuple = ()) -> str:
     """Rate-limit key.  ``X-Real-IP`` is honoured only when the TCP peer is
-    loopback or an explicitly configured proxy address; IPv6 is grouped by /64."""
+    loopback or inside an explicitly configured proxy network; IPv6 is grouped by /64."""
     peer_text = request.client.host if request.client else ""
     peer = _parse_ip(peer_text)
     address = peer
-    trusted = bool(peer and (peer.is_loopback or peer_text.lower() in trusted_proxies or str(peer) in trusted_proxies))
+    if peer is not None and peer.version == 6 and peer.ipv4_mapped is not None:
+        peer = peer.ipv4_mapped
+    trusted = bool(peer and (peer.is_loopback or any(
+        peer.version == network.version and peer in network for network in trusted_proxies)))
     if trusted:
         forwarded = _parse_ip(request.headers.get("x-real-ip"))
         if forwarded is not None:
@@ -920,7 +987,7 @@ def _text_param(value: Optional[str], limit: int, name: str) -> Optional[str]:
 def _int_param(value: Optional[str], name: str, default: int, lo: int, hi: int) -> int:
     if value is None or value == "":
         return default
-    if not re.fullmatch(r"\d{1,7}", value):
+    if not re.fullmatch(r"[0-9]{1,7}", value):
         raise _bad(f"{name} must be a non-negative integer")
     number = int(value)
     if number < lo or number > hi:
@@ -960,12 +1027,35 @@ def _edition_card(edition: Edition) -> dict:
         "status": edition.status,
         "pages": edition.pages,
         "bytes": edition.size,
+        "platform_current": record["platform_current"],
+        "newer_edition_id": record["newer_edition_id"],
         "badges": {
             "searchable": edition.searchable and bool(page_map and page_map.legacy_mapped_pages > 0),
             "corpus_relation": edition.corpus_relation,
             "printed_verified": bool(page_map and page_map.printed_verified_pages > 0),
             "has_text_layer": (record["pdf"] or {}).get("has_text_layer"),
+            "text_identity": record["corpus"]["text_identity"],
         },
+    }
+
+
+def _edition_brief(editions: Mapping[str, Edition], downloads, edition_id: Optional[str]) -> Optional[dict]:
+    """A different edition, described on its own terms (never merged with the caller's)."""
+    other = editions.get(edition_id) if edition_id else None
+    if other is None:
+        return None
+    source_id = other.record["source"]["source_id"]
+    row_id = None
+    for row in downloads:
+        if row.record["edition_id"] == other.edition_id or (
+                row.record["edition_id"] is None and source_id and row.record["source_id"] == source_id):
+            row_id = row.record["row_id"]
+            break
+    return {
+        "edition_id": other.edition_id, "title": other.title, "edition_label": other.record["edition_label"],
+        "publisher": other.record["publisher"], "status": other.status, "pages": other.pages or None,
+        "previewable": other.previewable, "platform_current": other.record["platform_current"],
+        "update_time": other.record["source"]["update_time"], "download_row_id": row_id,
     }
 
 
@@ -977,7 +1067,7 @@ def _parse_range(header: Optional[str], size: int):
     text = header.strip().lower()
     if not text.startswith("bytes=") or "," in text:
         return None
-    match = re.fullmatch(r"bytes=\s*(\d*)\s*-\s*(\d*)", text)
+    match = re.fullmatch(r"bytes=[ \t]*([0-9]*)[ \t]*-[ \t]*([0-9]*)", text)
     if not match:
         return "invalid"
     first, last = match.group(1), match.group(2)
@@ -999,16 +1089,37 @@ def _parse_range(header: Optional[str], size: int):
     return (start, end)
 
 
-def _file_iter(path: Path, start: int, length: int) -> Iterator[bytes]:
-    with path.open("rb") as handle:
-        handle.seek(start)
+def _open_pdf(path: Path):
+    return path.open("rb")
+
+
+async def _file_stream(path: Path, start: int, length: int):
+    """Async body iterator.  The file is opened only once iteration starts and
+    is closed in ``finally``: when the client disconnects the response task is
+    cancelled and the generator is closed, so no descriptor waits for a later
+    GC pass (and a response that is never iterated opens nothing)."""
+    handle = None
+    try:
+        handle = await run_in_threadpool(_open_pdf, path)
+        await run_in_threadpool(handle.seek, start)
         remaining = length
         while remaining > 0:
-            block = handle.read(min(STREAM_CHUNK, remaining))
+            block = await run_in_threadpool(handle.read, min(STREAM_CHUNK, remaining))
             if not block:
                 break
             remaining -= len(block)
             yield block
+    finally:
+        if handle is not None:
+            handle.close()
+
+
+def _etag_matches(header: Optional[str], etag: str) -> bool:
+    if not header:
+        return False
+    if header.strip() == "*":
+        return True
+    return any(part.strip() in (etag, "W/" + etag) for part in header[:2000].split(","))
 
 
 # ── Router ───────────────────────────────────────────────────────────────────
@@ -1071,7 +1182,8 @@ class Library:
                 hits.append((edition, pdf_page))
         if len(hits) == 1:
             edition, pdf_page = hits[0]
-            return {"available": True, "edition_id": edition.edition_id, "pdf_page": pdf_page}
+            return {"available": True, "edition_id": edition.edition_id, "pdf_page": pdf_page,
+                    "text_identity": edition.record["corpus"]["text_identity"]}
         if len(hits) > 1:
             return {"available": False, "reason": "ambiguous"}
         return {"available": False, "reason": "page-not-mapped"}
@@ -1147,9 +1259,17 @@ class Library:
                     "legacy_mapped_pages": page_map.legacy_mapped_pages if page_map else 0,
                 },
                 # Other sources for THIS edition only.
+                # (when this file is not the platform's current one, the upstream link would
+                # deliver a different file, so it is not offered as a source of this edition)
                 "sources": [s for row in release.downloads if row.record["edition_id"] == edition.edition_id
-                            for s in row.record["sources"] if s["kind"] != "vps"][:4]
+                            for s in row.record["sources"]
+                            if s["kind"] != "vps" and not (s["kind"] == "upstream" and edition.record["platform_current"] is False)][:4]
                            or ([edition.record["storage"]["drive"]] if edition.record["storage"]["drive"] else []),
+                # A newer / older file of the same book is a different edition with its own entry.
+                "newer_edition": _edition_brief(release.editions, release.downloads, edition.record["newer_edition_id"]),
+                "supersedes_edition": _edition_brief(release.editions, release.downloads,
+                                                     edition.record["supersedes_edition_id"]),
+                "metadata_basis": edition.record["metadata_basis"],
                 # Different editions of the same work are listed separately, never merged.
                 "other_editions": [
                     {"edition_id": other.edition_id, "title": other.title, "edition_label": other.record["edition_label"],
@@ -1200,7 +1320,7 @@ class Library:
                     raise _bad(f"items must contain 1-{MAX_RESOLVE_ITEMS} entries")
                 results = []
                 for part in parts:
-                    match = re.fullmatch(r"([0-9a-f]{12})\.(\d{1,6})", part)
+                    match = re.fullmatch(r"([0-9a-f]{12})\.([0-9]{1,6})", part)
                     if not match:
                         raise _bad("malformed item")
                     outcome = lib._resolve_one(release, release.by_short_key.get(match.group(1), ()), int(match.group(2)))
@@ -1212,7 +1332,7 @@ class Library:
                 if sections is None or len(sections) > MAX_ITEMS_PARAM_CHARS:
                     raise _bad("sections required")
                 parts = [p for p in sections.split(",") if p]
-                if not parts or len(parts) > MAX_RESOLVE_ITEMS or not all(re.fullmatch(r"\d{1,6}", p) for p in parts):
+                if not parts or len(parts) > MAX_RESOLVE_ITEMS or not all(re.fullmatch(r"[0-9]{1,6}", p) for p in parts):
                     raise _bad(f"sections must contain 1-{MAX_RESOLVE_ITEMS} integers")
                 usable = (edition.previewable and edition.page_map is not None
                           and edition.corpus_relation in SEARCHABLE_RELATIONS)
@@ -1242,7 +1362,7 @@ class Library:
             number = None
             page_valid = True
             if has_page:
-                if re.fullmatch(r"\d{1,6}", page or ""):
+                if re.fullmatch(r"[0-9]{1,6}", page or ""):
                     number = int(page)
                 else:
                     page_valid = False  # old links with a broken page still open the book
@@ -1313,7 +1433,7 @@ class Library:
         @router.get("/api/library/downloads")
         def library_downloads(request: Request, stage: Optional[str] = None, subject: Optional[str] = None,
                               publisher: Optional[str] = None, q: Optional[str] = None, region: Optional[str] = None,
-                              offset: Optional[str] = None, limit: Optional[str] = None):
+                              offset: Optional[str] = None, limit: Optional[str] = None, row: Optional[str] = None):
             lib._limit(request, lib.json_limiter)
             stage = _text_param(stage, MAX_FACET_CHARS, "stage")
             subject = _text_param(subject, MAX_FACET_CHARS, "subject")
@@ -1322,8 +1442,12 @@ class Library:
             terms = _terms(_text_param(q, MAX_Q_CHARS, "q"))
             start = _int_param(offset, "offset", 0, 0, MAX_OFFSET)
             size = _int_param(limit, "limit", DEFAULT_DOWNLOADS_LIMIT, 1, MAX_LIST_LIMIT)
+            if row is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,95}", row):
+                raise _bad("malformed row")
             release = lib._release()
             rows = _filter_downloads(release, stage, subject, publisher, region, terms)
+            if row is not None:   # one exact entry (used by "官方平台已有更新版本" links)
+                rows = [item for item in rows if item.record["row_id"] == row]
             return lib._json({"total": len(rows), "offset": start, "limit": size,
                               "downloads": [row.record for row in rows[start:start + size]]}, release)
 
@@ -1338,51 +1462,54 @@ class Library:
             if not edition.previewable or edition.sha12 != sha12:
                 raise _bad("not found", 404)
             disposition = "attachment" if download == "1" else "inline"
-            headers = {
+            base = {"X-Content-Type-Options": "nosniff", "X-Library-Release": release.release_id}
+            # The long-lived cache header goes on successful bodies only (200/206);
+            # error and 416 answers must never be stored against this URL.
+            good = {
+                **base,
                 "Content-Disposition": f"{disposition}; filename*=UTF-8''{quote(edition.filename, safe='')}",
                 "Cache-Control": "public, max-age=31536000, immutable",
-                "X-Content-Type-Options": "nosniff",
-                "X-Library-Release": release.release_id,
             }
+            uncached = {**base, "Cache-Control": "no-store"}
             stored_name = f"{edition.sha256}.pdf"          # derived from the catalog only
             path = lib.settings.pdf_root / stored_name
             root_readable = lib.settings.pdf_root.is_dir()
 
             if lib.settings.serve_mode == "accel":
                 if root_readable and not path.is_file():
-                    raise _bad("file missing", 404)
-                headers["X-Accel-Redirect"] = lib.settings.accel_prefix + stored_name
+                    raise HTTPException(status_code=404, detail="file missing", headers={"Cache-Control": "no-store"})
+                good["X-Accel-Redirect"] = lib.settings.accel_prefix + stored_name
                 # nginx serves the body, Range, Content-Length and its own validators.
-                return Response(status_code=200, media_type="application/pdf", headers=headers)
+                return Response(status_code=200, media_type="application/pdf", headers=good)
 
             try:
                 size = path.stat().st_size if path.is_file() else -1
             except OSError:
                 size = -1
             if size < 0:
-                raise _bad("file missing", 404)
+                raise HTTPException(status_code=404, detail="file missing", headers={"Cache-Control": "no-store"})
             etag = f'"{edition.sha256}"'
-            headers.update({"Accept-Ranges": "bytes", "ETag": etag})
-            if request.headers.get("if-none-match") in (etag, "W/" + etag):
-                return Response(status_code=304, headers=headers)
+            if _etag_matches(request.headers.get("if-none-match"), etag):
+                return Response(status_code=304, headers={**base, "ETag": etag})
             byte_range = _parse_range(request.headers.get("range"), size)
             if_range = request.headers.get("if-range")
             if if_range is not None and if_range != etag:
                 byte_range = None
             if byte_range == "invalid":
-                headers["Content-Range"] = f"bytes */{size}"
-                return Response(status_code=416, headers=headers)
+                return Response(status_code=416, headers={**uncached, "Accept-Ranges": "bytes",
+                                                          "Content-Range": f"bytes */{size}"})
+            good.update({"Accept-Ranges": "bytes", "ETag": etag})
             if byte_range is None:
                 start, length, status = 0, size, 200
             else:
                 start, end = byte_range
                 length, status = end - start + 1, 206
-                headers["Content-Range"] = f"bytes {start}-{end}/{size}"
-            headers["Content-Length"] = str(length)
+                good["Content-Range"] = f"bytes {start}-{end}/{size}"
+            good["Content-Length"] = str(length)
             if request.method == "HEAD":
-                return Response(status_code=status, media_type="application/pdf", headers=headers)
-            return StreamingResponse(_file_iter(path, start, length), status_code=status,
-                                     media_type="application/pdf", headers=headers)
+                return Response(status_code=status, media_type="application/pdf", headers=good)
+            return StreamingResponse(_file_stream(path, start, length), status_code=status,
+                                     media_type="application/pdf", headers=good)
 
         return router
 

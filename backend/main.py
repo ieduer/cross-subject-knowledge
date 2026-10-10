@@ -5099,7 +5099,12 @@ def init_ai_chat_logs():
             except Exception:
                 pass  # column already exists
             # Minimised logging columns (additive only; see ai_guard.write_chat_log).
-            ai_guard.ensure_chat_log_columns(con)
+            # Never block startup on this: if the table cannot be altered (read-only
+            # mount, lock) AI logging fails soft in _write_ai_chat_log_record instead.
+            try:
+                ai_guard.ensure_chat_log_columns(con)
+            except Exception as exc:
+                print(f"ai_chat_logs columns not updated: {type(exc).__name__}", flush=True)
             con.commit()
         finally:
             con.close()
@@ -9408,6 +9413,8 @@ app.include_router(
         {"chat": _ai_build_chat, "dict": _ai_build_dict_chat, "gaokao": _ai_build_gaokao_chat},
     )
 )
+# Pages that still run the pre-guard script: stop their gaokao button before its browser-direct call.
+ai_guard.install_legacy_gaokao_shim(app, AI_GUARD)
 
 
 # library-tabs: PDF 预览 + 教材下载 (backend/library.py; docs/LIBRARY_TABS.md)

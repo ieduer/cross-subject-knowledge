@@ -1,10 +1,13 @@
 // Behavioural test of frontend/assets/ai-client.js with a fake fetch. No network.
-// Run: node --test tests/
-import test from 'node:test';
+// Run: node --test --test-timeout=60000 tests/ai_client.test.mjs
+import baseTest from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+
+// Every test has a hard timeout: a hang fails loudly instead of blocking the run.
+const test = (name, fn) => baseTest(name, { timeout: 20000 }, fn);
 
 const source = readFileSync(fileURLToPath(new URL('../frontend/assets/ai-client.js', import.meta.url)), 'utf8');
 
@@ -37,6 +40,8 @@ test('one user action = one admission call + exactly one AI request, same-origin
     for (const call of calls) {
         assert.equal(call.options.method, 'POST');
         assert.equal(call.options.credentials, 'same-origin');
+        assert.equal(call.options.headers['X-Sun-AI-Client'], '2', 'guarded-client marker on every request');
+        assert.equal(call.options.headers['Content-Type'], 'application/json');
         assert.ok(!/^https?:/.test(call.url));
     }
     await SunAI.ask('/api/chat', { query: 'q2', user_message: 'm' }).promise;

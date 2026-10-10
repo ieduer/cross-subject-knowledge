@@ -33,6 +33,13 @@ HARD_MAX_UPSTREAM_DEADLINE_SEC = 30.0
 HARD_MAX_RETRIES = 1
 MIN_SESSION_KEY_CHARS = 32
 SESSION_COOKIE = "sun_ai_session"
+# Sent by frontend/assets/ai-client.js on every AI request. A POST to /api/chat or
+# /api/dict/chat WITHOUT it comes from a page that still runs the pre-guard script.
+CLIENT_MARKER_HEADER = "x-sun-ai-client"
+CLIENT_MARKER_VALUE = "2"
+LEGACY_REPLY_TEXT = "页面已更新，请刷新后再使用 AI 解答。"
+LEGACY_PROVIDER_LABEL = "本站提示"
+STATUS_CACHE_SEC = 5.0
 ANSWER_TRUNCATION_MARK = "\n……（回答过长，已截断）"
 
 _USER_MESSAGES = {
@@ -259,14 +266,28 @@ def client_subject(peer_host: Optional[str], x_real_ip: Optional[str], trusted_p
 _WS_RE = re.compile(r"\s+")
 
 
+_SURROGATE_RE = re.compile("[\ud800-\udfff]")
+
+
 def normalize_text(value: Any) -> str:
     return _WS_RE.sub(" ", unicodedata.normalize("NFKC", str(value))).strip()
+
+
+def _dedup_text(value: str) -> str:
+    # Invisible format characters (zero-width space/joiner, BOM, bidi marks) do not change the question.
+    return normalize_text("".join(ch for ch in value if unicodedata.category(ch) != "Cf"))
+
+
+def _reject_unencodable(value: str) -> None:
+    """A lone surrogate (JSON ``"\\ud800"``) cannot be encoded, hashed or sent upstream."""
+    if _SURROGATE_RE.search(value):
+        raise AIGuardError(400, "bad_request")
 
 
 def dedup_key(kind: str, fields: Mapping[str, Any]) -> str:
     def norm(value):
         if isinstance(value, str):
-            return normalize_text(value)
+            return _dedup_text(value)
         if isinstance(value, (list, tuple)):
             return [norm(item) for item in value]
         if isinstance(value, dict):
@@ -274,13 +295,14 @@ def dedup_key(kind: str, fields: Mapping[str, Any]) -> str:
         return value
 
     blob = json.dumps([kind, norm(dict(fields))], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+    return hashlib.sha256(blob.encode("utf-8", errors="surrogatepass")).hexdigest()
 
 
 def _required_text(payload: Mapping[str, Any], name: str, limit: int) -> str:
     value = payload.get(name)
     if not isinstance(value, str):
         raise AIGuardError(400, "bad_request")
+    _reject_unencodable(value)
     value = value.strip()
     if not value:
         raise AIGuardError(400, "bad_request")
@@ -295,6 +317,7 @@ def _optional_text(payload: Mapping[str, Any], name: str, limit: int) -> Optiona
         return None
     if not isinstance(value, str):
         raise AIGuardError(400, "bad_request")
+    _reject_unencodable(value)
     value = value.strip()
     if len(value) > limit:
         raise AIGuardError(413, "input_too_long")
@@ -324,6 +347,7 @@ def validate_history(raw: Any, cfg: GuardConfig) -> list:
         content = item.get("content")
         if role not in ("user", "assistant") or not isinstance(content, str):
             raise AIGuardError(400, "bad_request")
+        _reject_unencodable(content)
         content = content.strip()
         if len(content) > cfg.max_history_item_chars:
             raise AIGuardError(413, "history_too_long")
@@ -437,7 +461,7 @@ def verify_session_token(key: bytes, token: Optional[str], subject: str, *, now:
     if not key or not token or len(token) > 256:
         return False
     parts = token.split(".")
-    if len(parts) != 4 or parts[0] != "v1" or not parts[1].isdigit():
+    if len(parts) != 4 or parts[0] != "v1" or not (parts[1].isascii() and parts[1].isdigit()) or len(parts[1]) > 12:
         return False
     expires = int(parts[1])
     if expires <= (time.time() if now is None else now):
@@ -606,10 +630,10 @@ async def post_upstream(
                     retry_after = None
                     if response.status_code == 429:
                         raw_retry = response.headers.get("retry-after", "")
-                        retry_after = min(float(raw_retry), 300.0) if raw_retry.isdigit() else 30.0
+                        retry_after = min(float(raw_retry), 300.0) if (raw_retry.isascii() and raw_retry.isdigit()) else 30.0
                     raise AIGuardError(429 if response.status_code == 429 else 502, "ai_upstream", retry_after=retry_after)
                 declared = response.headers.get("content-length", "")
-                if declared.isdigit() and int(declared) > max_bytes:
+                if declared.isascii() and declared.isdigit() and int(declared) > max_bytes:
                     raise AIGuardError(502, "ai_oversize")
                 buffer = bytearray()
                 async for chunk in response.aiter_bytes():
@@ -703,7 +727,9 @@ class Guard:
         self.counters = {
             "upstream_calls": 0, "cache_hits": 0, "joined": 0, "rate_limited": 0, "unauthorized": 0,
             "forbidden_origin": 0, "busy": 0, "budget_refused": 0, "cancelled": 0,
+            "legacy_client": 0, "legacy_gaokao_blocked": 0, "internal_error": 0,
         }
+        self._status_budget: Optional[tuple] = None
 
     # -- admission ---------------------------------------------------------
     def require_enabled(self) -> None:
@@ -727,7 +753,7 @@ class Guard:
         return hmac.new(self.cfg.session_key, f"subject|{subject}".encode("utf-8"), hashlib.sha256).hexdigest()[:24]
 
     def text_hash(self, text: str) -> str:
-        return hmac.new(self.cfg.session_key, f"text|{normalize_text(text)}".encode("utf-8"), hashlib.sha256).hexdigest()[:16]
+        return hmac.new(self.cfg.session_key, f"text|{normalize_text(text)}".encode("utf-8", errors="surrogatepass"), hashlib.sha256).hexdigest()[:16]
 
     def issue_session(self, subject: str) -> tuple:
         wait = self.session_limiter.take(subject)
@@ -880,6 +906,15 @@ class Guard:
         started = self.clock()
         record = dict(log_base, outcome="ok", prompt_chars=0, answer_chars=0, upstream_called=False)
         try:
+            # Refuse before retrieval once the day's budget is gone (read-only look; the
+            # atomic reservation below remains the only thing that grants a call).
+            state = self.budget.snapshot(self.cfg.daily_budget)
+            if not state["available"]:
+                self.counters["budget_refused"] += 1
+                raise AIGuardError(503, "AI_BUDGET_UNAVAILABLE")
+            if state["remaining"] <= 0:
+                self.counters["budget_refused"] += 1
+                raise AIGuardError(503, "AI_BUDGET_EXHAUSTED", retry_after=self.budget._seconds_to_reset())
             async with self._slot():
                 built = await build()
                 record.update({k: v for k, v in (built.meta or {}).items() if k in ("subject_count", "evidence_count", "gaokao_hit_count")})
@@ -895,6 +930,8 @@ class Guard:
                 except AIGuardError:
                     self.counters["budget_refused"] += 1
                     raise
+                finally:
+                    self._status_budget = None
                 self.counters["upstream_calls"] += 1
                 record["upstream_called"] = True
                 answer = cap_answer(await self._upstream(built.prompt), self.cfg.max_answer_chars)
@@ -930,12 +967,22 @@ class Guard:
             await asyncio.gather(*list(self._log_tasks), return_exceptions=True)
 
     # -- read-only state for the status system (no user data) --------------
+    def _budget_for_status(self) -> dict:
+        """At most one SQLite read per STATUS_CACHE_SEC, however often the public endpoint is polled."""
+        now = self.clock()
+        cached = self._status_budget
+        if cached is not None and cached[0] > now:
+            return cached[1]
+        snapshot = self.budget.snapshot(self.cfg.daily_budget)
+        self._status_budget = (now + STATUS_CACHE_SEC, snapshot)
+        return snapshot
+
     def status(self) -> dict:
         if not self.cfg.enabled:
             return {"enabled": False, "missing": self.cfg.disabled_reasons(), "budget": None}
         return {
             "enabled": True,
-            "budget": self.budget.snapshot(self.cfg.daily_budget),
+            "budget": self._budget_for_status(),
             "subject_daily_cap": self.cfg.subject_daily_cap,
             "limits": self.cfg.public_limits(),
             "runtime": {"inflight": len(self.inflight), "active": self._active, "queued": self._queued, "cached": len(self._cache)},
@@ -1059,9 +1106,10 @@ async def read_capped_json(request: Any, max_bytes: int) -> Any:
     if content_type != "application/json":
         raise AIGuardError(415, "unsupported_media_type")
     declared = request.headers.get("content-length")
-    if declared is None or not declared.strip().isdigit():
+    declared = (declared or "").strip()
+    if not (declared.isascii() and declared.isdigit()):
         raise AIGuardError(411, "length_required")
-    if int(declared) > max_bytes:
+    if len(declared) > 12 or int(declared) > max_bytes:
         raise AIGuardError(413, "body_too_large")
     buffer = bytearray()
     async for chunk in request.stream():
@@ -1070,7 +1118,8 @@ async def read_capped_json(request: Any, max_bytes: int) -> Any:
             raise AIGuardError(413, "body_too_large")
     try:
         return json.loads(buffer.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError) as exc:
+    except (ValueError, UnicodeDecodeError, RecursionError) as exc:
+        # RecursionError: a small body of deeply nested brackets.
         raise AIGuardError(400, "bad_json") from exc
 
 
@@ -1084,6 +1133,87 @@ async def _watch_disconnect(request: Any, gone: asyncio.Event) -> None:
                 return
     except Exception:
         gone.set()
+
+
+# ── Pages still running the pre-guard script (production 035d2d4 and earlier) ──
+
+LEGACY_REPLIES = {
+    # Old shape of POST /api/chat: {answer, provider, context{summary,evidence,alias_hints,relation_hints,suggested_questions}}
+    "chat": {
+        "answer": LEGACY_REPLY_TEXT,
+        "provider": LEGACY_PROVIDER_LABEL,
+        "context": {"summary": None, "evidence": [], "alias_hints": [], "relation_hints": [], "suggested_questions": []},
+        "legacy_client": True,
+    },
+    # Old shape of POST /api/dict/chat: {answer, provider}
+    "dict": {"answer": LEGACY_REPLY_TEXT, "provider": LEGACY_PROVIDER_LABEL, "legacy_client": True},
+}
+# The old buildClientAIPrompt() starts with ``(contextPayload.history_text || '').trim()``.
+# A truthy NUMBER there raises a TypeError inside the old browser-fallback function before
+# it reaches its gateway call, so the fallback promise rejects and the (successful) server
+# reply above is what the page shows. Do not "tidy" this value into a string.
+LEGACY_CONTEXT_REPLY = {"legacy_client": True, "history_text": 1, "detail": LEGACY_REPLY_TEXT}
+LEGACY_GAOKAO_LIMIT = "5"
+
+
+class LegacyGaokaoShim:
+    """Pure ASGI middleware for the old gaokao "AI 关联分析" button.
+
+    That button first does ``GET /api/gaokao/link?question_id=N&limit=5`` and only then
+    posts a browser-authored prompt straight to the model gateway. The old script throws
+    on a non-2xx link response, which is the one server-side handle on that path.
+    ``limit=5`` is used by nothing else in this site (the link panel asks for 10, the
+    server-side builder calls the function directly), so exactly that request, when it
+    comes from one of our own pages (Sec-Fetch-Site same-origin, or a same-origin Referer),
+    is answered 410. Other callers of the route are untouched. ``AI_LEGACY_GAOKAO_SHIM=0`` turns it off.
+    """
+
+    def __init__(self, app: Any, guard: "Guard", enabled: bool = True):
+        self.app = app
+        self.guard = guard
+        self.enabled = enabled
+        self._body = json.dumps({"detail": LEGACY_REPLY_TEXT, "code": "client_outdated"}, ensure_ascii=False).encode("utf-8")
+
+    def _matches(self, scope: Mapping[str, Any]) -> bool:
+        if scope.get("type") != "http" or scope.get("method") != "GET" or scope.get("path") != "/api/gaokao/link":
+            return False
+        query = scope.get("query_string") or b""
+        if len(query) > 512:
+            return False
+        limits = [part[6:] for part in query.split(b"&") if part.startswith(b"limit=")]
+        if limits != [LEGACY_GAOKAO_LIMIT.encode()]:
+            return False
+        headers = {}
+        for name, value in scope.get("headers") or ():
+            if name in (b"sec-fetch-site", b"referer"):
+                headers[name] = value.decode("latin-1")
+        if headers.get(b"sec-fetch-site", "").strip().lower() == "same-origin":
+            return True
+        referer = headers.get(b"referer", "")
+        return any(referer == origin or referer.startswith(origin + "/") for origin in self.guard.cfg.allowed_origins)
+
+    async def __call__(self, scope, receive, send):
+        if not self.enabled or not self._matches(scope):
+            await self.app(scope, receive, send)
+            return
+        self.guard.counters["legacy_gaokao_blocked"] += 1
+        await send({
+            "type": "http.response.start",
+            "status": 410,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(self._body)).encode()),
+                (b"cache-control", b"no-store"),
+            ],
+        })
+        await send({"type": "http.response.body", "body": self._body})
+
+
+def install_legacy_gaokao_shim(app: Any, guard: "Guard", env: Optional[Mapping[str, str]] = None) -> bool:
+    env = os.environ if env is None else env
+    enabled = str(env.get("AI_LEGACY_GAOKAO_SHIM", "1")).strip() != "0"
+    app.add_middleware(LegacyGaokaoShim, guard=guard, enabled=enabled)
+    return enabled
 
 
 def build_router(guard: Guard, builders: Mapping[str, Callable[[dict], Awaitable[Built]]]):
@@ -1111,7 +1241,24 @@ def build_router(guard: Guard, builders: Mapping[str, Callable[[dict], Awaitable
         peer = request.client.host if request.client else None
         return guard.subject_for(peer, request.headers.get("x-real-ip"))
 
+    def is_legacy_client(request: Request) -> bool:
+        return request.headers.get(CLIENT_MARKER_HEADER) != CLIENT_MARKER_VALUE
+
+    def legacy_response(payload: dict) -> JSONResponse:
+        """HTTP 200 in the pre-guard response shape for a page that still runs the old script.
+
+        The old main-page script treats any non-2xx from /api/chat as "server failed" and then
+        calls the model gateway straight from the browser. A fixed, successful-looking reply stops
+        that and tells the user to reload. It is answered before the enabled check (so it also
+        holds while AI is off), reads no body, touches no storage, makes no model call and spends
+        no budget. It is deliberately never 429: a refusal would re-open the browser fallback.
+        """
+        guard.counters["legacy_client"] += 1
+        return JSONResponse(payload, headers=no_store)
+
     async def guarded(request: Request, kind: str, validate: Callable[[Any, GuardConfig], dict], primary: str) -> JSONResponse:
+        if kind in LEGACY_REPLIES and is_legacy_client(request):
+            return legacy_response(LEGACY_REPLIES[kind])
         try:
             guard.require_enabled()
             guard.check_origin(request.headers.get("origin"), request.headers.get("sec-fetch-site"))
@@ -1136,6 +1283,9 @@ def build_router(guard: Guard, builders: Mapping[str, Callable[[dict], Awaitable
             return JSONResponse(result, headers=no_store)
         except AIGuardError as exc:
             return error_response(exc)
+        except Exception:  # any unforeseen input: a clean 500 body, never a traceback to the client
+            guard.counters["internal_error"] += 1
+            return error_response(AIGuardError(500, "internal_error"))
 
     @router.post("/api/ai/session")
     async def ai_session(request: Request):
@@ -1146,6 +1296,9 @@ def build_router(guard: Guard, builders: Mapping[str, Callable[[dict], Awaitable
             token, expires = guard.issue_session(subject_of(request))
         except AIGuardError as exc:
             return error_response(exc)
+        except Exception:
+            guard.counters["internal_error"] += 1
+            return error_response(AIGuardError(500, "internal_error"))
         response = JSONResponse({"ok": True, "expires_at": expires, "limits": guard.cfg.public_limits()}, headers=no_store)
         response.set_cookie(
             SESSION_COOKIE,
@@ -1177,9 +1330,15 @@ def build_router(guard: Guard, builders: Mapping[str, Callable[[dict], Awaitable
 
     # Retired: the client no longer runs a second retrieval or reports its own telemetry.
     # The handlers take no body parameter, so nothing the caller sends is read or stored.
+    # Only the pre-guard script calls /api/chat/context. It feeds the result into its
+    # browser-side prompt builder 8 s later, right before calling the gateway directly;
+    # LEGACY_CONTEXT_REPLY makes that builder stop (see the constant). No retrieval runs.
     @router.post("/api/chat/context")
     async def chat_context_retired():
-        return error_response(AIGuardError(410, "retired"))
+        return legacy_response(LEGACY_CONTEXT_REPLY)
+
+    # The old script only posts here AFTER a browser-direct answer and ignores the result,
+    # so the status cannot trigger anything; 410 is kept.
 
     @router.post("/api/chat/log")
     async def chat_log_retired():

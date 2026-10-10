@@ -23,8 +23,19 @@
     const DOWNLOAD_PAGE_SIZE = 30;
     const RESOLVE_BATCH = 40;
     const ROW_SPAN = 200;
-    const MAX_CANVAS_PIXELS = 12 * 1024 * 1024;
-    const INLINE_DOWNLOAD_MAX_BYTES = 150 * 1024 * 1024;
+    // Canvas backing-store cap (total pixels, whatever the zoom or device pixel ratio):
+    // 5,000,000 px (about 20 MB RGBA) on phones and low-memory devices, 8,000,000 px
+    // (about 32 MB) elsewhere.  The ratio is reduced to fit; the CSS size is unchanged.
+    const MAX_CANVAS_PIXELS_SMALL = 5000000;
+    const MAX_CANVAS_PIXELS = 8000000;
+    // Same-origin downloads: only files of known size up to 25 MB are fetched in the page
+    // (progress + cancel, one at a time).  Anything larger or of unknown size is a plain
+    // browser download of the ?download=1 URL: nothing is buffered in JavaScript.
+    const INLINE_DOWNLOAD_MAX_BYTES = 25 * 1024 * 1024;
+    const COVER_CONCURRENCY = 3;
+    const COVER_TIMEOUT_MS = 20000;
+    const OTHER_PRINTING = 'page-aligned-other-printing';
+    const OTHER_PRINTING_NOTE = '检索文字来自较早印次，可能与此 PDF 的文字略有出入，以 PDF 为准';
     const RANGE_CHUNK = 65536;   // PDF.js default; a flat page tree costs about one chunk per page on open
     const OTHER_VIEWS = ['gaokao', 'insights', 'graph'];
 
@@ -47,6 +58,27 @@
             node.append(child.nodeType ? child : document.createTextNode(String(child)));
         }
         return node;
+    }
+
+    // Defence in depth: the server already allow-lists hosts; never put a non-https URL in an href.
+    function externalUrl(url) {
+        return typeof url === 'string' && /^https:\/\/[^\s"'<>]+$/.test(url) ? url : null;
+    }
+
+    function monthOf(stamp) {
+        const match = /^(\d{4})-(\d{2})/.exec(String(stamp || ''));
+        return match ? `${match[1]}-${match[2]}` : '';
+    }
+
+    function canvasBudget() {
+        const small = Math.min(window.screen.width || 9999, window.screen.height || 9999) <= 820
+            || (navigator.deviceMemory && navigator.deviceMemory <= 4);
+        return small ? MAX_CANVAS_PIXELS_SMALL : MAX_CANVAS_PIXELS;
+    }
+
+    // Give canvas memory back at once (older iOS Safari reclaims dropped canvases slowly).
+    function releaseCanvases(container) {
+        container.querySelectorAll('canvas').forEach(canvas => { canvas.width = 0; canvas.height = 0; });
     }
 
     function clear(node) {
@@ -224,8 +256,14 @@
         return pdfjsPromise;
     }
 
-    function badgeNodes(badges, statusValue) {
+    function badgeNodes(badges, statusValue, platformCurrent) {
         const out = [];
+        if (platformCurrent === false) {
+            out.push(el('span', {
+                class: 'lib-badge lib-badge-warn', text: '非平台现行版',
+                title: '本站保存的这一版次不是官方平台目前提供的文件',
+            }));
+        }
         if (badges.searchable) {
             out.push(el('span', { class: 'lib-badge lib-badge-ok', text: badges.corpus_relation === 'partial' ? '部分可检索' : '可检索' }));
         } else {
@@ -339,7 +377,7 @@
             el('strong', { class: 'lib-card-title', text: item.title }),
             el('span', { class: 'lib-card-meta', text: editionLine(item) }),
             el('span', { class: 'lib-card-meta', text: `共 ${item.pages} 页 · ${formatBytes(item.bytes)}` }),
-            el('span', { class: 'lib-badges' }, badgeNodes(item.badges, item.status)),
+            el('span', { class: 'lib-badges' }, badgeNodes(item.badges, item.status, item.platform_current)),
         ]);
     }
 
@@ -499,6 +537,7 @@
         pdf.printedIndex = null;
         pdf.hasVerified = false;
         pdf.outlineLoaded = false;
+        if (pdf.dom.pageWrap) releaseCanvases(pdf.dom.pageWrap);
     }
 
     function pdfLoadError(error, status) {
@@ -564,7 +603,7 @@
         pdf.edition = edition;
         d.vTitle.textContent = edition.title;
         d.vMeta.textContent = `${[edition.stage, edition.subject].filter(Boolean).join(' · ')} · ${editionLine(edition)} · 共 ${edition.pages} 页`;
-        d.vBadges.append.apply(d.vBadges, badgeNodes(edition.badges, edition.status));
+        d.vBadges.append.apply(d.vBadges, badgeNodes(edition.badges, edition.status, edition.platform_current));
         renderViewerSources(edition);
         if (edition.status === 'superseded') d.vNotices.append(notice('warn', '此版次已被较新的版次取代，内容与页码可能与现行教材不同。'));
         if (edition.status === 'pending-verification') d.vNotices.append(notice('warn', '此版次尚待核对，信息可能不完整。'));
@@ -643,23 +682,59 @@
         }
     }
 
+    function downloadsRowHref(rowId) {
+        return location.pathname + '?view=downloads&stage=all&row=' + encodeURIComponent(rowId);
+    }
+
+    function differentEditionText(other) {
+        return [other.edition_label || '版次未标注', other.pages ? `${other.pages} 页` : '',
+            other.update_time ? `平台更新于 ${monthOf(other.update_time) || other.update_time}` : ''].filter(Boolean).join('，');
+    }
+
     function renderViewerSources(edition) {
         const d = pdf.dom;
         clear(d.vSources);
+        const notCurrent = edition.platform_current === false;
         if (edition.file) {
+            // This button always delivers THIS edition from this site, nothing else.
             d.vDownload.href = edition.file.download_url;
             d.vDownload.setAttribute('download', edition.file.filename);
-            d.vDownload.textContent = `⬇ 下载本册 PDF（${formatBytes(edition.file.bytes)}）`;
+            d.vDownload.textContent = `⬇ 下载本册 PDF（本站 · ${notCurrent ? '此版次 · ' : ''}${formatBytes(edition.file.bytes)}）`;
             d.vDownload.classList.remove('hidden');
         }
         const label = edition.edition_label || '本版次';
+        if (notCurrent) {
+            const got = monthOf(edition.source && edition.source.retrieved_at);
+            const newer = edition.newer_edition;
+            const actions = [];
+            if (newer && newer.download_row_id) {
+                actions.push(el('a', {
+                    class: 'lib-btn', href: downloadsRowHref(newer.download_row_id),
+                    text: '查看另一版次的下载条目',
+                    onclick: event => {
+                        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button) return;
+                        event.preventDefault();
+                        openDownloadRow(newer.download_row_id);
+                    },
+                }));
+            }
+            d.vNotices.append(notice('warn',
+                `非平台现行版：本站保存的这一版次${got ? `取得于 ${got}` : ''}，不是官方平台目前提供的文件。`
+                + (newer ? `官方平台已有更新版本（不同版次：${differentEditionText(newer)}），`
+                    + (newer.pages && newer.pages !== edition.pages ? `页数 ${edition.pages}→${newer.pages}，两者页码不能互用；` : '')
+                    + '上方按钮只下载本站保存的这一版次。' : '上方按钮只下载本站保存的这一版次。'),
+                actions));
+        }
         for (const source of edition.sources || []) {
+            const url = externalUrl(source.url);
+            if (!url) continue;
             d.vSources.append(el('a', {
-                class: 'lib-link', href: source.url, target: '_blank', rel: 'noopener noreferrer',
+                class: 'lib-link', href: url, target: '_blank', rel: 'noopener noreferrer',
                 text: `${source.label} · ${label}（新标签页）`,
             }));
         }
         for (const other of edition.other_editions || []) {
+            if (edition.newer_edition && other.edition_id === edition.newer_edition.edition_id) continue;
             const text = `其他版次：${other.edition_label || other.title}${other.status === 'superseded' ? '（旧版）' : ''}`;
             d.vSources.append(other.previewable
                 ? el('a', {
@@ -750,7 +825,8 @@
             d.zoomLabel.textContent = pdf.zoomMode === 'fit' ? '适合宽度' : Math.round(cssScale * 100) + '%';
             let ratio = Math.min(window.devicePixelRatio || 1, 2);
             const pixels = base.width * base.height * cssScale * cssScale * ratio * ratio;
-            if (pixels > MAX_CANVAS_PIXELS) ratio *= Math.sqrt(MAX_CANVAS_PIXELS / pixels);
+            const budget = canvasBudget();
+            if (pixels > budget) ratio *= Math.sqrt(budget / pixels);
             const cssViewport = page.getViewport({ scale: cssScale });
             const renderViewport = page.getViewport({ scale: cssScale * ratio });
             const canvas = el('canvas', { class: 'lib-canvas', role: 'img', 'aria-label': `PDF 第 ${number} 页` });
@@ -766,6 +842,7 @@
             d.pageWrap.style.setProperty('--scale-factor', String(cssScale));
             d.pageWrap.style.width = canvas.style.width;
             d.pageWrap.style.height = canvas.style.height;
+            releaseCanvases(d.pageWrap);
             clear(d.pageWrap);
             d.pageWrap.append(canvas, textDiv);
             d.pageWrap.classList.remove('lib-page-stale');
@@ -780,9 +857,11 @@
                 if (seq !== pdf.renderSeq) return;
                 if (pdf.query) {
                     const count = highlightLayer(textDiv, pdf.query);
+                    const otherPrinting = pdf.edition && pdf.edition.corpus && pdf.edition.corpus.text_identity === OTHER_PRINTING;
                     d.stageStatus.textContent = count
-                        ? `本页高亮 ${count} 处「${pdf.query}」`
-                        : `本页文字层中没有找到「${pdf.query}」（检索依据的是站内语料，与 PDF 文字层可能不同）。`;
+                        ? `本页 PDF 文字层中高亮 ${count} 处「${pdf.query}」`
+                        : `本页 PDF 文字层中没有找到「${pdf.query}」。`
+                            + (otherPrinting ? OTHER_PRINTING_NOTE + '。' : '检索依据的是站内检索库，与 PDF 文字层可能不同。');
                 }
             } else if (pdf.query) {
                 d.stageStatus.textContent = '此页无文字层，无法高亮。';
@@ -967,7 +1046,10 @@
             results.sort((a, b) => (pageOf.get(a.section) || 1e9) - (pageOf.get(b.section) || 1e9));
             clear(d.hits);
             const mapped = results.filter(r => pageOf.has(r.section)).length;
-            d.hits.append(el('p', { class: 'lib-muted', text: `找到 ${results.length} 处，其中 ${mapped} 处可定位到本 PDF。` }));
+            d.hits.append(el('p', { class: 'lib-muted', text: `检索库中找到 ${results.length} 处，其中 ${mapped} 处可定位到本 PDF 的页面。下列文字是检索库片段，不是 PDF 页面的原文引用。` }));
+            if (edition.corpus && edition.corpus.text_identity === OTHER_PRINTING) {
+                d.hits.append(el('p', { class: 'lib-hit-note', text: OTHER_PRINTING_NOTE + '。' }));
+            }
             const list = el('ul', { class: 'lib-hit-list' });
             for (const r of results) {
                 const page = pageOf.get(r.section);
@@ -975,7 +1057,8 @@
                 const where = page
                     ? `PDF 第 ${page} 页` + (row && row.printed_verified && row.printed_label ? ` · 书页 p.${row.printed_label}` : '')
                     : '页码未能对应到本 PDF';
-                const body = [el('span', { class: 'lib-hit-page', text: where }), el('span', { class: 'lib-hit-snippet' }, snippetNodes(r.snippet, 140))];
+                const body = [el('span', { class: 'lib-hit-page', text: where }),
+                    el('span', { class: 'lib-hit-snippet' }, [el('span', { class: 'lib-hit-kind', text: '检索库片段 ' })].concat(snippetNodes(r.snippet, 140)))];
                 list.append(el('li', null, page
                     ? el('button', {
                         class: 'lib-hit', type: 'button',
@@ -1032,7 +1115,7 @@
     // 教材下载
     // ════════════════════════════════════════════════════════════════════════
     const dl = {
-        built: false, stage: null, subject: '', publisher: '', q: '', page: 1, total: 0,
+        built: false, stage: null, subject: '', publisher: '', q: '', row: '', page: 1, total: 0,
         listCtl: null, facetCtl: null, active: 0, dom: {},
     };
 
@@ -1063,10 +1146,10 @@
             ]),
             d.notices, d.status, d.list, d.pager);
         viewDownloads.querySelector('form').addEventListener('submit', event => event.preventDefault());
-        d.stage.addEventListener('change', () => { dl.stage = d.stage.value; dl.subject = ''; dl.publisher = ''; dl.page = 1; refreshDownloads(true); });
-        d.subject.addEventListener('change', () => { dl.subject = d.subject.value; dl.publisher = ''; dl.page = 1; refreshDownloads(true); });
-        d.publisher.addEventListener('change', () => { dl.publisher = d.publisher.value; dl.page = 1; refreshDownloads(false); });
-        d.q.addEventListener('input', debounce(() => { dl.q = d.q.value.trim(); dl.page = 1; refreshDownloads(false); }, 300));
+        d.stage.addEventListener('change', () => { dl.stage = d.stage.value; dl.subject = ''; dl.publisher = ''; dl.page = 1; dl.row = ''; refreshDownloads(true); });
+        d.subject.addEventListener('change', () => { dl.subject = d.subject.value; dl.publisher = ''; dl.page = 1; dl.row = ''; refreshDownloads(true); });
+        d.publisher.addEventListener('change', () => { dl.publisher = d.publisher.value; dl.page = 1; dl.row = ''; refreshDownloads(false); });
+        d.q.addEventListener('input', debounce(() => { dl.q = d.q.value.trim(); dl.page = 1; dl.row = ''; refreshDownloads(false); }, 300));
         d.prev.addEventListener('click', () => { if (dl.page > 1) { dl.page--; refreshDownloads(false, true); } });
         d.next.addEventListener('click', () => { if (dl.page * DOWNLOAD_PAGE_SIZE < dl.total) { dl.page++; refreshDownloads(false, true); } });
     }
@@ -1088,7 +1171,7 @@
         if (currentView() !== 'downloads') return;
         setUrl({
             view: 'downloads', stage: dl.stage === '' ? 'all' : dl.stage, subject: dl.subject,
-            publisher: dl.publisher, q: dl.q, page: dl.page > 1 ? dl.page : '',
+            publisher: dl.publisher, q: dl.q, row: dl.row, page: dl.page > 1 ? dl.page : '',
         }, push);
     }
 
@@ -1127,12 +1210,17 @@
         d.status.textContent = '加载中…';
         try {
             const data = await api('/api/library/downloads', {
-                stage: dl.stage, subject: dl.subject, publisher: dl.publisher, q: dl.q, region: REGION,
+                stage: dl.stage, subject: dl.subject, publisher: dl.publisher, q: dl.q, region: REGION, row: dl.row,
                 offset: (dl.page - 1) * DOWNLOAD_PAGE_SIZE, limit: DOWNLOAD_PAGE_SIZE,
             }, ctl.signal);
             if (ctl.signal.aborted) return;
             dl.total = data.total;
             clear(d.notices); clear(d.list);
+            resetCoverQueue();
+            if (dl.row) {
+                d.notices.append(notice('warn', dl.total ? '只显示指定的这一个条目。' : '没有找到指定的条目（目录可能已更新）。', [
+                    el('button', { class: 'lib-btn', type: 'button', text: '显示全部', onclick: () => { dl.row = ''; dl.page = 1; refreshDownloads(true); } })]));
+            }
             const pages = Math.max(1, Math.ceil(dl.total / DOWNLOAD_PAGE_SIZE));
             if (dl.page > pages) { dl.page = pages; return refreshDownloads(false); }
             for (const row of data.downloads) d.list.append(downloadCard(row));
@@ -1151,33 +1239,110 @@
         }
     }
 
+    // Covers are decoration.  The official cover files are large (about 1 MB each) and slow
+    // to start, so: the subject placeholder is always shown first; images start only when a
+    // card nears the viewport; at most COVER_CONCURRENCY load at once; one that has not
+    // arrived within COVER_TIMEOUT_MS is abandoned (the placeholder stays, marked as such);
+    // nothing is loaded when the browser asks to save data.
+    const coverQueue = { waiting: [], active: 0, generation: 0, observer: null };
+
+    function resetCoverQueue() {
+        coverQueue.generation++;
+        coverQueue.waiting = [];
+        coverQueue.active = 0;
+        if (coverQueue.observer) coverQueue.observer.disconnect();
+        coverQueue.observer = ('IntersectionObserver' in window) ? new IntersectionObserver(entries => {
+            for (const entry of entries) {
+                if (!entry.isIntersecting) continue;
+                coverQueue.observer.unobserve(entry.target);
+                coverQueue.waiting.push(entry.target);
+            }
+            pumpCovers();
+        }, { rootMargin: '200px' }) : null;
+    }
+
+    function pumpCovers() {
+        while (coverQueue.active < COVER_CONCURRENCY && coverQueue.waiting.length) {
+            const box = coverQueue.waiting.shift();
+            const url = externalUrl(box.dataset.cover);
+            if (!url || !box.isConnected) continue;
+            const generation = coverQueue.generation;
+            coverQueue.active++;
+            box.dataset.coverState = 'loading';
+            const img = el('img', { alt: '', decoding: 'async', referrerpolicy: 'no-referrer' });
+            let settled = false;
+            const done = ok => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                if (ok) {
+                    box.append(img);
+                    box.dataset.coverState = 'loaded';
+                } else {
+                    img.removeAttribute('src');   // stop the transfer
+                    box.dataset.coverState = 'none';
+                    box.title = '封面未能加载';
+                }
+                if (generation === coverQueue.generation) { coverQueue.active--; pumpCovers(); }
+            };
+            const timer = setTimeout(() => done(false), COVER_TIMEOUT_MS);
+            img.addEventListener('load', () => done(true), { once: true });
+            img.addEventListener('error', () => done(false), { once: true });
+            img.src = url;
+        }
+    }
+
     function coverNode(row) {
-        // The subject text is always there; a cover image, when it loads, sits on top of it.
         const box = el('div', { class: 'lib-cover', 'aria-hidden': 'true' }, el('span', { text: (row.subject || '教材').slice(0, 2) }));
-        if (row.cover) {
-            const img = el('img', { src: row.cover, alt: '', loading: 'lazy', decoding: 'async', referrerpolicy: 'no-referrer' });
-            img.addEventListener('error', () => img.remove(), { once: true });
-            box.append(img);
+        const saveData = navigator.connection && navigator.connection.saveData;
+        if (externalUrl(row.cover) && !saveData && coverQueue.observer) {
+            box.dataset.cover = row.cover;
+            box.dataset.coverState = 'waiting';
+            coverQueue.observer.observe(box);
+        } else {
+            box.dataset.coverState = 'none';
         }
         return box;
+    }
+
+    function openDownloadRow(rowId) {
+        activateView('downloads');
+        if (!dl.built) { dl.built = true; buildDownloads(); }
+        dl.stage = ''; dl.subject = ''; dl.publisher = ''; dl.q = ''; dl.page = 1; dl.row = rowId;
+        dl.dom.q.value = '';
+        syncDownloadsUrl(true);
+        refreshDownloads(true, true);
+    }
+
+    function previewLink(editionId, text) {
+        return el('a', {
+            class: 'lib-link', href: pdfHref(editionId, 1, ''), text,
+            onclick: event => {
+                if (event.metaKey || event.ctrlKey || event.shiftKey || event.button) return;
+                event.preventDefault();
+                openEdition(editionId, 1, { push: true });
+            },
+        });
     }
 
     function downloadCard(row) {
         const state = el('div', { class: 'lib-dl-state', 'aria-live': 'polite' });
         const actions = el('div', { class: 'lib-dl-actions' });
-        const sources = row.sources || [];
+        const sources = (row.sources || []).filter(s => s.same_origin || externalUrl(s.url));
         const usable = sources.filter(s => s.available !== false);
         const primary = usable[0];
+        const others = row.other_editions || [];
+        const notCurrent = row.platform_current === false;
         if (!primary) {
             actions.append(el('button', { class: 'lib-btn lib-btn-primary', type: 'button', disabled: true, text: '暂无下载来源' }));
             state.textContent = sources.length ? '已登记的来源目前都不可用。' : '本册尚未取得文件，暂时无法下载。';
         } else {
             actions.append(sourceControl(row, primary, state, true));
-            const others = sources.filter(s => s !== primary);
-            if (others.length) {
+            const rest = sources.filter(s => s !== primary);
+            if (rest.length) {
                 actions.append(el('details', { class: 'lib-menu' }, [
                     el('summary', { class: 'lib-btn', text: '其他来源' }),
-                    el('div', { class: 'lib-menu-list' }, others.map(s => s.available === false
+                    el('div', { class: 'lib-menu-list' }, rest.map(s => s.available === false
                         ? el('span', { class: 'lib-muted', text: `${s.label}（暂不可用）` })
                         : sourceControl(row, s, state, false))),
                 ]));
@@ -1185,37 +1350,53 @@
             state.textContent = '来源：' + sources.map(s => s.label + (s.available === false ? '（暂不可用）' : '')).join('、')
                 + (primary.same_origin ? '' : ' · 将在新标签页打开，由浏览器显示下载进度');
         }
-        if (row.previewable && row.edition_id) {
-            actions.append(el('a', {
-                class: 'lib-link', href: pdfHref(row.edition_id, 1, ''), text: '可预览',
-                onclick: event => {
-                    if (event.metaKey || event.ctrlKey || event.shiftKey || event.button) return;
-                    event.preventDefault();
-                    openEdition(row.edition_id, 1, { push: true });
-                },
-            }));
+        if (row.previewable && row.edition_id) actions.append(previewLink(row.edition_id, '可预览'));
+
+        // Which file is this?  Two files of one book never share a card, and each says what it is.
+        const chips = [];
+        if (notCurrent) chips.push(el('span', { class: 'lib-badge lib-badge-warn', text: '非平台现行版', title: '本站保存的这一版次不是官方平台目前提供的文件' }));
+        if (!row.edition_id && others.length) chips.push(el('span', { class: 'lib-badge', text: '官方平台现行文件 · 未存于本站' }));
+        const lines = [];
+        if (notCurrent) {
+            const got = monthOf(row.retrieved_at);
+            const newer = row.newer_edition;
+            const line = el('p', { class: 'lib-dl-meta lib-dl-edition-note' },
+                `本条目只提供本站保存的这一版次${got ? `（取得于 ${got}）` : ''}。`);
+            if (newer) {
+                line.append('官方平台已有更新版本');
+                if (newer.download_row_id) {
+                    line.append('：', el('a', {
+                        class: 'lib-link', href: downloadsRowHref(newer.download_row_id),
+                        text: `另一版次的条目（${differentEditionText(newer)}）`,
+                        onclick: event => {
+                            if (event.metaKey || event.ctrlKey || event.shiftKey || event.button) return;
+                            event.preventDefault();
+                            openDownloadRow(newer.download_row_id);
+                        },
+                    }));
+                } else {
+                    line.append(`（不同版次：${differentEditionText(newer)}）。`);
+                }
+            }
+            lines.push(line);
+        }
+        for (const other of others) {
+            // A different edition held on this site: its own entry, never merged into this one.
+            const got = monthOf(other.retrieved_at);
+            const label = `${other.edition_label || '版次未标注'}${other.platform_current === false ? '，非平台现行版' : ''}`
+                + `${other.status === 'superseded' ? '，旧版' : ''}${got ? `，取得于 ${got}` : ''}`;
+            lines.push(el('p', { class: 'lib-dl-meta lib-dl-edition-note' }, ['本站另存不同版次（与本条目不是同一份文件）：',
+                other.previewable ? previewLink(other.edition_id, label + ' · 预览') : label]));
         }
         return el('article', { class: 'lib-dl-card' }, [
             coverNode(row),
             el('div', { class: 'lib-dl-body' }, [
                 el('h3', { class: 'lib-dl-title', text: row.title }),
+                chips.length ? el('p', { class: 'lib-badges' }, chips) : null,
                 el('p', { class: 'lib-dl-meta', text: [row.stage, row.subject, row.publisher].filter(Boolean).join(' · ') }),
                 el('p', { class: 'lib-dl-meta', text: `版次：${row.edition_label || '未标注'} · 大小：${formatBytes(row.size_bytes) || '未知'}` }),
                 actions, state,
-            ].concat((row.other_editions || []).map(other => {
-                // A different edition held on this site: its own entry, never merged into this one.
-                const label = `${other.edition_label || '版次未标注'}${other.status === 'superseded' ? '（旧版）' : ''}`;
-                return el('p', { class: 'lib-dl-meta' }, ['本站另存不同版次：', other.previewable
-                    ? el('a', {
-                        class: 'lib-link', href: pdfHref(other.edition_id, 1, ''), text: label + ' · 预览',
-                        onclick: event => {
-                            if (event.metaKey || event.ctrlKey || event.shiftKey || event.button) return;
-                            event.preventDefault();
-                            openEdition(other.edition_id, 1, { push: true });
-                        },
-                    })
-                    : label]);
-            }))),
+            ].concat(lines)),
         ]);
     }
 
@@ -1223,7 +1404,7 @@
         const cls = isPrimary ? 'lib-btn lib-btn-primary lib-dl-btn' : 'lib-btn';
         const label = isPrimary ? '⬇ 下载' : `从${source.label}下载`;
         if (!source.same_origin) {
-            return el('a', { class: cls, href: source.url, target: '_blank', rel: 'noopener noreferrer' },
+            return el('a', { class: cls, href: externalUrl(source.url) || '#', target: '_blank', rel: 'noopener noreferrer' },
                 [label, isPrimary ? el('small', { text: source.label }) : null]);
         }
         const button = el('button', { class: cls, type: 'button' }, [label, isPrimary ? el('small', { text: source.label }) : null]);
@@ -1249,13 +1430,11 @@
 
     async function startInlineDownload(row, source, state, button) {
         const size = source.bytes || row.size_bytes || 0;
-        if (size > INLINE_DOWNLOAD_MAX_BYTES || !window.ReadableStream || !window.Blob) {
+        // Default: let the browser download the ?download=1 URL itself (no JS buffering).
+        // The in-page progress view is used only for small files of known size, one at a time.
+        if (!size || size > INLINE_DOWNLOAD_MAX_BYTES || !window.ReadableStream || !window.Blob || dl.active >= 1) {
             browserDownload(source.url);
-            state.textContent = '已交给浏览器下载（文件较大，进度请看浏览器的下载列表）。';
-            return;
-        }
-        if (dl.active >= 2) {
-            state.textContent = '已有两册正在下载，请等其中一册完成。';
+            state.textContent = '已交给浏览器下载，进度请看浏览器的下载列表。';
             return;
         }
         dl.active++;
@@ -1329,6 +1508,7 @@
             dl.subject = (q.get('subject') || '').slice(0, 60);
             dl.publisher = (q.get('publisher') || '').slice(0, 60);
             dl.q = (q.get('q') || '').slice(0, 80);
+            dl.row = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/.test(q.get('row') || '') ? q.get('row') : '';
             dl.page = /^\d{1,4}$/.test(q.get('page') || '') ? Math.max(1, +q.get('page')) : 1;
             dl.dom.q.value = dl.q;
             refreshDownloads(true);
@@ -1376,9 +1556,11 @@
                     if (!card || !card.isConnected || card.querySelector('.lib-open-pdf')) continue;
                     let actions = card.querySelector('.result-actions');
                     if (!actions) { actions = el('div', { class: 'result-actions' }); card.append(actions); }
+                    const otherPrinting = result.text_identity === OTHER_PRINTING;
                     actions.append(el('a', {
                         class: 'view-page-btn lib-open-pdf', href: pdfHref(result.edition_id, result.pdf_page, query),
-                        title: `在 PDF 预览中打开（PDF 第 ${result.pdf_page} 页）`, text: '📕 在 PDF 中打开',
+                        title: `在 PDF 预览中打开（PDF 第 ${result.pdf_page} 页）` + (otherPrinting ? '。' + OTHER_PRINTING_NOTE : ''),
+                        text: otherPrinting ? '📕 在 PDF 中打开对应页' : '📕 在 PDF 中打开',
                         onclick: event => {
                             event.stopPropagation();
                             if (event.metaKey || event.ctrlKey || event.shiftKey || event.button) return;
@@ -1386,6 +1568,7 @@
                             openEdition(result.edition_id, result.pdf_page, { push: true, query });
                         },
                     }));
+                    if (otherPrinting) actions.append(el('span', { class: 'lib-open-note', text: OTHER_PRINTING_NOTE }));
                 }
             }
         } catch (_) { /* the existing result list keeps working without the extra link */ }

@@ -8,6 +8,9 @@
     'use strict';
 
     const SESSION_PATH = '/api/ai/session';
+    // Marks requests from this (guarded) client. The server answers marker-less chat
+    // requests — pages still running the pre-guard script — with a fixed "please reload" reply.
+    const CLIENT_HEADERS = { 'Content-Type': 'application/json', 'X-Sun-AI-Client': '2' };
     const CLIENT_TIMEOUT_MS = 75000;
     const SESSION_REFRESH_MARGIN_SEC = 60;
     const limits = {
@@ -55,7 +58,7 @@
                 const response = await fetch(SESSION_PATH, {
                     method: 'POST',
                     credentials: 'same-origin',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: CLIENT_HEADERS,
                     body: '{}',
                 });
                 if (!response.ok) throw await errorFromResponse(response);
@@ -91,7 +94,7 @@
                 const response = await fetch(path, {
                     method: 'POST',
                     credentials: 'same-origin',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: CLIENT_HEADERS,
                     body: JSON.stringify(payload),
                     signal: controller.signal,
                 });
