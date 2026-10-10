@@ -1,0 +1,72 @@
+# nginx additions for the SUN library tabs (PDF 预览 / 教材下载).
+# EXAMPLE ONLY — not installed by any script. Review, adapt and `nginx -t` before use.
+# See docs/LIBRARY_TABS.md §4.
+#
+# Preconditions
+#   * PDFs live in /srv/sun-textbooks/pdf/<sha256>.pdf, readable by the nginx
+#     worker user (www-data). nginx cannot read /root, so the files must not be
+#     placed under /root/cross-subject-knowledge.
+#   * The app runs with PDF_SERVE_MODE=accel (the default) and answers
+#     /files/pdf/... with `X-Accel-Redirect: /_protected_pdf/<sha256>.pdf`.
+
+# ── http { } context ─────────────────────────────────────────────────────────
+# Outer per-address limits. The app has its own token buckets as well
+# (LIBRARY_RATE_*); these protect the single uvicorn worker from floods.
+# A whole classroom can share one address, so the PDF zone is generous: PDF.js
+# issues several 64 KiB Range requests per page.
+limit_req_zone $binary_remote_addr zone=sun_library_api:10m rate=10r/s;
+limit_req_zone $binary_remote_addr zone=sun_library_pdf:10m rate=60r/s;
+limit_req_status 429;
+
+# ── server { } for sun.bdfz.net (443) — add next to the existing `location /` ─
+
+    # Internal only: reachable solely through X-Accel-Redirect from the app,
+    # which signs off each request against the loaded catalog release.
+    location /_protected_pdf/ {
+        internal;
+        alias /srv/sun-textbooks/pdf/;
+        types { application/pdf pdf; }
+        default_type application/pdf;
+        sendfile on;
+        tcp_nopush on;
+        # Range, Content-Length, Last-Modified and ETag are produced here.
+        # Content-Type, Content-Disposition and Cache-Control come from the app
+        # response and are kept by nginx across the internal redirect.
+        add_header X-Content-Type-Options nosniff always;
+    }
+
+    location /files/pdf/ {
+        limit_req zone=sun_library_pdf burst=600 nodelay;
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 15s;
+    }
+
+    location /api/library/ {
+        limit_req zone=sun_library_api burst=60 nodelay;
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 15s;
+    }
+
+    # Vendored PDF.js is versioned by query string (?v=<version>).
+    location /vendor/pdfjs/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        add_header Cache-Control "public, max-age=604800" always;
+    }
+
+# ── checks after reload ──────────────────────────────────────────────────────
+#   curl -sI https://sun.bdfz.net/_protected_pdf/<sha256>.pdf            -> 404 (internal)
+#   curl -sI "https://sun.bdfz.net/files/pdf/<edition_id>/<sha12>/x.pdf" -> 200, application/pdf, Accept-Ranges: bytes
+#   curl -s -o /dev/null -w '%{http_code} %{size_download}\n' -H 'Range: bytes=0-1023' \
+#        "https://sun.bdfz.net/files/pdf/<edition_id>/<sha12>/x.pdf"     -> 206 1024
+#   curl -sI "https://sun.bdfz.net/files/pdf/<edition_id>/000000000000/x.pdf" -> 404

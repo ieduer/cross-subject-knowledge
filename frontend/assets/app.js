@@ -1263,6 +1263,7 @@ function renderResults(data, filterSubject = null, subjectCountsOverride = null)
     if (typeof renderKaTeX === 'function') {
         renderKaTeX(resultsEl);
     }
+    if (window.SunLibrary) window.SunLibrary.decorateSearchResults(resultsEl, groups); // library-tabs
 }
 
 function getSubjectIcon(s) {

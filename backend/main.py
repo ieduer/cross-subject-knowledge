@@ -9422,6 +9422,10 @@ def book_pages(phase: Optional[str] = Query(None, description="Filter by phase: 
     }
 
 
+# library-tabs: PDF 预览 + 教材下载 (backend/library.py; docs/LIBRARY_TABS.md)
+import library as sun_library  # library-tabs
+sun_library.install(app, data_root=DATA_ROOT, frontend_dir=FRONTEND)  # library-tabs
+
 # Serve frontend
 if FRONTEND.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND / "assets"), name="assets")
