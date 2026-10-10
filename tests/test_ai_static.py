@@ -33,7 +33,7 @@ def function_body(source: str, header: str) -> str:
 
 class FrontendStaticTests(unittest.TestCase):
     def test_expected_files_exist(self):
-        self.assertEqual([p.name for p in JS_FILES], ["ai-client.js", "app.js", "dict.js"])
+        self.assertEqual([p.name for p in JS_FILES], ["ai-client.js", "app.js", "dict.js", "library.js"])
 
     def test_no_model_host_anywhere_in_served_js_or_html(self):
         forbidden = re.compile(
