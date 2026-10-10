@@ -15,6 +15,8 @@ const state = {
     modalTitle: '',
     searchInFlight: false,
     chatInFlight: false,
+    chatRequest: null,      // { promise, cancel } of the single in-flight AI request
+    chatOfferReady: false,  // evidence loaded; AI waits for an explicit click
     dictEntries: [],
     moeEntries: [],
     idiomEntries: [],
@@ -201,20 +203,69 @@ function updateCopyButton() {
     el.chatCopyBtn.classList.toggle('hidden', state.chatHistory.length === 0);
 }
 
+const CHAT_OFFER_LABEL = '让 AI 结合检索结果解答';
+
+function buildChatOfferPrompt(query) {
+    return `请分析「${query}」这个字或词：先抓教材中的核心义项，再对应${PHASE === '高中' ? '真题拿分点' : '考点'}。`;
+}
+
 function renderChatMessages() {
     if (!state.chatHistory.length) {
-        el.chatMessages.innerHTML = '';
+        // No AI call is made on lookup or on a ?q= page load: the user decides.
+        el.chatMessages.innerHTML = state.chatOfferReady && state.query ? `
+            <div class="dict-chat-message assistant">
+                <div class="dict-chat-role">AI</div>
+                <div class="dict-chat-bubble"><button class="dict-chat-copy" type="button" data-chat-action="offer">${escHtml(CHAT_OFFER_LABEL)}</button></div>
+            </div>
+        ` : '';
+        bindChatActions();
         updateCopyButton();
         return;
     }
-    el.chatMessages.innerHTML = state.chatHistory.map(item => `
+    const lastIndex = state.chatHistory.length - 1;
+    el.chatMessages.innerHTML = state.chatHistory.map((item, index) => {
+        let action = '';
+        if (item.pending) {
+            action = ' <button class="dict-chat-copy" type="button" data-chat-action="cancel">取消</button>';
+        } else if (item.isError && item.retry && index === lastIndex && !state.chatInFlight) {
+            action = ' <button class="dict-chat-copy" type="button" data-chat-action="retry">重试</button>';
+        }
+        return `
         <div class="dict-chat-message ${item.role === 'user' ? 'user' : 'assistant'}">
             <div class="dict-chat-role">${item.role === 'user' ? '我' : 'AI'}</div>
-            <div class="dict-chat-bubble">${escHtml(item.content)}</div>
+            <div class="dict-chat-bubble">${escHtml(item.content)}${action}</div>
         </div>
-    `).join('');
+    `;
+    }).join('');
+    bindChatActions();
     el.chatMessages.scrollTop = el.chatMessages.scrollHeight;
     updateCopyButton();
+}
+
+function bindChatActions() {
+    el.chatMessages.querySelectorAll('[data-chat-action]').forEach(button => {
+        button.addEventListener('click', () => {
+            const action = button.dataset.chatAction;
+            if (action === 'offer') {
+                sendChatMessage(buildChatOfferPrompt(state.query), { silentUser: true });
+            } else if (action === 'cancel') {
+                if (state.chatRequest) state.chatRequest.cancel();
+            } else if (action === 'retry') {
+                retryLastChatMessage();
+            }
+        });
+    });
+}
+
+function retryLastChatMessage() {
+    if (state.chatInFlight) return;
+    const last = state.chatHistory[state.chatHistory.length - 1];
+    if (!last || !last.isError || !last.retry) return;
+    const { message, silentUser } = last.retry;
+    state.chatHistory.pop();
+    const previous = state.chatHistory[state.chatHistory.length - 1];
+    if (previous && previous.role === 'user') state.chatHistory.pop();
+    sendChatMessage(message, { silentUser });
 }
 
 function setChatPending(pending) {
@@ -1356,6 +1407,12 @@ function resetPanelsForSearch() {
     el.moeCount.textContent = '0';
     el.idiomCount.textContent = '0';
     el.gkCount.textContent = '0';
+    // A new lookup is a new conversation: abort the in-flight AI request, if any.
+    if (state.chatRequest) {
+        state.chatRequest.cancel();
+        state.chatRequest = null;
+    }
+    state.chatOfferReady = false;
     state.chatHistory = [];
     state.dictEntries = [];
     state.moeEntries = [];
@@ -1364,56 +1421,50 @@ function resetPanelsForSearch() {
     setChatPending(true);
 }
 
+// Explicit user action only (offer button, send, retry). Exactly one server request:
+// no automatic call, no retry, cancellable, and a stale answer is never shown for another lookup.
 async function sendChatMessage(message, { silentUser = false, queryKey = state.queryKey, expectedQuery = state.query } = {}) {
     const userMessage = String(message || '').trim();
-    if (!userMessage || !state.query || state.chatInFlight) return;
+    if (!userMessage || !state.query || state.chatInFlight || !window.SunAI) return;
     if (queryKey !== state.queryKey || expectedQuery !== state.query) return;
 
-    const historyForRequest = [...state.chatHistory];
-    if (!silentUser) {
-        state.chatHistory.push({ role: 'user', content: userMessage });
-        renderChatMessages();
-    }
+    const historyForRequest = window.SunAI.boundedHistory(state.chatHistory);
+    const shownUserMessage = silentUser
+        ? `请系统梳理「${state.query}」的教材、词典${PHASE === '高中' ? '与真题' : ''}要点。`
+        : userMessage;
+    const pendingItem = { role: 'assistant', content: '思考中…', pending: true };
+    state.chatHistory.push({ role: 'user', content: shownUserMessage });
+    state.chatHistory.push(pendingItem);
 
-    state.chatHistory.push({ role: 'assistant', content: '思考中…' });
-    renderChatMessages();
+    // The server rebuilds its own evidence from the headword; no context text is uploaded.
+    const request = window.SunAI.ask(`${API}/api/dict/chat`, {
+        headword: state.query,
+        user_message: userMessage,
+        history: historyForRequest,
+        phase: PHASE,
+    });
+    state.chatRequest = request;
     setChatPending(true);
+    renderChatMessages();
 
+    let reply;
     try {
-        const data = await fetchJson(`${API}/api/dict/chat`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                headword: state.query,
-                user_message: userMessage,
-                dict_context: state.dictContext,
-                textbook_context: state.textbookContext,
-                gaokao_context: state.gaokaoContext,
-                history: historyForRequest,
-                phase: PHASE,
-            }),
-        });
-        if (queryKey !== state.queryKey || expectedQuery !== state.query) {
-            return;
-        }
-        state.chatHistory.pop();
-        if (silentUser) {
-            state.chatHistory.push({ role: 'user', content: `请系统梳理「${state.query}」的教材、词典${PHASE === '高中' ? '与真题' : ''}要点。` });
-        }
-        state.chatHistory.push({ role: 'assistant', content: String(data.answer || 'AI 没有返回内容。') });
+        const data = await request.promise;
+        reply = { role: 'assistant', content: String(data.answer || 'AI 没有返回内容。') };
     } catch (error) {
-        if (queryKey !== state.queryKey || expectedQuery !== state.query) {
-            return;
-        }
-        state.chatHistory.pop();
-        state.chatHistory.push({ role: 'assistant', content: `请求失败：${error.message}` });
-    } finally {
-        if (queryKey !== state.queryKey || expectedQuery !== state.query) {
-            return;
-        }
-        renderChatMessages();
-        setChatPending(false);
+        reply = {
+            role: 'assistant',
+            isError: true,
+            content: error && error.cancelled ? error.message : `请求失败：${(error && error.message) || '未知错误'}`,
+            retry: { message: userMessage, silentUser },
+        };
     }
+    if (queryKey !== state.queryKey || expectedQuery !== state.query) return;
+    if (state.chatRequest === request) state.chatRequest = null;
+    const pendingIndex = state.chatHistory.indexOf(pendingItem);
+    if (pendingIndex >= 0) state.chatHistory.splice(pendingIndex, 1, reply);
+    setChatPending(false);
+    renderChatMessages();
 }
 
 async function runSearch(initialQuery) {
@@ -1501,8 +1552,10 @@ async function runSearch(initialQuery) {
         const evidenceReady = !textbookFailed || !dictFailed || !gaokaoFailed;
         state.searchInFlight = false;
         if (evidenceReady) {
+            // Evidence is ready; AI stays idle until the user clicks the offer button or sends a question.
+            state.chatOfferReady = true;
             setChatPending(false);
-            void sendChatMessage(`请分析「${query}」这个字或词：先抓教材中的核心义项，再对应${PHASE === '高中' ? '真题拿分点' : '考点'}。`, { silentUser: true, queryKey, expectedQuery: query });
+            renderChatMessages();
         } else {
             setChatPending(true);
         }
@@ -1602,6 +1655,8 @@ suggestionButtons.forEach(button => {
         runSearch(value);
     });
 });
+
+el.chatInput.maxLength = 800;
 
 el.chatSendBtn.addEventListener('click', () => {
     const message = el.chatInput.value.trim();

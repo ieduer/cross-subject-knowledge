@@ -18,5 +18,5 @@ This project uses the Cloudflare Worker custom domain `https://ai.bdfz.net/` as 
 ## Current implementation points
 
 - Backend default: `backend/main.py` -> `AI_SERVICE_URL`
-- Frontend fallback default: `frontend/assets/app.js` -> `AI_API`
+- Frontend: none. Since 2026-10-10 the browser never contacts the gateway; every model call is made by the backend through `backend/ai_guard.py` (see [AI_GUARD.md](./AI_GUARD.md)). The 'browser entrypoint' wording above is historical.
 - Project overview: `README.md`
