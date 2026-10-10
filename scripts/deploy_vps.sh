@@ -200,11 +200,13 @@ PY
 }
 
 warm_precision_agent() {
-  curl -sf --max-time 120 \
-    -H 'Content-Type: application/json' \
-    -X POST \
-    -d '{"query":"晶体的定义","user_message":"请只根据教材原文说明「晶体」的定义，并给出最相关出处。","history":[]}' \
-    http://127.0.0.1:8080/api/chat/context >/tmp/textbook_precision_warmup.json
+  # /api/chat/context is retired (docs/AI_GUARD.md). Warm retrieval through the public,
+  # model-free search route instead; the reranker itself is preloaded at startup
+  # (RERANKER_PRELOAD) and still gated by HEALTH_REQUIRE_RERANKER below.
+  curl -sf --max-time 120 -G \
+    --data-urlencode 'q=晶体的定义' \
+    --data-urlencode 'limit=3' \
+    http://127.0.0.1:8080/api/search >/tmp/textbook_precision_warmup.json
 }
 
 echo "=== deploy start $(date -u '+%Y-%m-%d %H:%M:%S UTC') commit=${commit_sha} ==="

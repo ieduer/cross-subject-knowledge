@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 import httpx
+import ai_guard
 from fastapi import FastAPI, Query, HTTPException, Body
 from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
@@ -177,8 +178,10 @@ _runtime_warmup_started = False
 # Frontend should stay on ai.bdfz.net, but the current VPS reaches the same Worker more reliably via workers.dev.
 AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "https://apis.bdfz.workers.dev/")
 AI_SERVICE_LABEL = os.getenv("AI_SERVICE_LABEL", "Gemini")
-AI_SERVICE_TIMEOUT = float(os.getenv("AI_SERVICE_TIMEOUT_SEC", "35"))
-AI_SERVICE_RETRIES = max(0, int(os.getenv("AI_SERVICE_RETRIES", "1")))
+# One upstream attempt with a total deadline. Both values are re-clamped inside ai_guard
+# (deadline <= 30 s; retries <= 1 and only for a connection that was never established).
+AI_SERVICE_TIMEOUT = min(30.0, float(os.getenv("AI_SERVICE_TIMEOUT_SEC", "30")))
+AI_SERVICE_RETRIES = min(1, max(0, int(os.getenv("AI_SERVICE_RETRIES", "0"))))
 AI_SERVICE_RETRY_DELAY = max(0.0, float(os.getenv("AI_SERVICE_RETRY_DELAY_SEC", "0.8")))
 AI_SERVICE_MODEL = os.getenv("AI_SERVICE_MODEL", "gemini-flash-latest").strip() or "gemini-flash-latest"
 AI_SERVICE_ORIGIN = os.getenv("AI_SERVICE_ORIGIN", "https://sun.bdfz.net").rstrip("/")
@@ -195,6 +198,8 @@ AI_SERVICE_PROJECT = os.getenv("AI_SERVICE_PROJECT", "").strip()
 AI_SERVICE_TASK_TYPE = os.getenv("AI_SERVICE_TASK_TYPE", "chat").strip() or "chat"
 AI_SERVICE_THINKING_LEVEL = os.getenv("AI_SERVICE_THINKING_LEVEL", "low").strip() or "low"
 AI_INTERNAL_TOKEN = os.getenv("AI_INTERNAL_TOKEN", "").strip()
+# AI is OFF unless AI_ENABLED=1, AI_SESSION_KEY and AI_DAILY_REQUEST_BUDGET are all set (docs/AI_GUARD.md).
+AI_GUARD_CONFIG = ai_guard.GuardConfig.from_env(state_root=STATE_ROOT)
 _write_lock = threading.Lock()
 _jieba_concept_token = None
 CHAT_STOPWORDS = {
@@ -4983,7 +4988,9 @@ def _build_chat_prompt(query: str, user_message: str, context_payload: dict, his
     return _build_chat_prompt_legacy(query, user_message, context_payload, history=history)
 
 
-async def _call_ai_service(prompt: str) -> dict:
+async def _call_ai_service(prompt: str) -> str:
+    """Single upstream attempt. Only ai_guard.Guard calls this, after admission,
+    caps, dedup, the concurrency slot and the daily budget reservation."""
     payload_obj = {
         "prompt": prompt,
         "model": AI_SERVICE_MODEL,
@@ -5002,54 +5009,14 @@ async def _call_ai_service(prompt: str) -> dict:
         headers["X-Project-Name"] = AI_SERVICE_PROJECT
     if AI_INTERNAL_TOKEN:
         headers["X-Internal-Token"] = AI_INTERNAL_TOKEN
-
-    last_http_error: Optional[tuple[int, str]] = None
-    last_network_error: Optional[str] = None
-    timeout_hit = False
-
-    async with httpx.AsyncClient(timeout=httpx.Timeout(AI_SERVICE_TIMEOUT)) as client:
-        for attempt in range(AI_SERVICE_RETRIES + 1):
-            try:
-                response = await client.post(AI_SERVICE_URL, json=payload_obj, headers=headers)
-                raw = response.text
-                if response.status_code >= 400:
-                    detail = raw[:400]
-                    last_http_error = (response.status_code, detail)
-                    if response.status_code >= 500 and attempt < AI_SERVICE_RETRIES:
-                        await asyncio.sleep(AI_SERVICE_RETRY_DELAY)
-                        continue
-                    raise HTTPException(502, f"AI service http error: {response.status_code} {detail}")
-                break
-            except httpx.TimeoutException as e:
-                timeout_hit = True
-                if attempt < AI_SERVICE_RETRIES:
-                    await asyncio.sleep(AI_SERVICE_RETRY_DELAY)
-                    continue
-                raise HTTPException(504, "AI service timeout") from e
-            except httpx.RequestError as e:
-                last_network_error = str(e)
-                if attempt < AI_SERVICE_RETRIES:
-                    await asyncio.sleep(AI_SERVICE_RETRY_DELAY)
-                    continue
-                raise HTTPException(502, f"AI service unavailable: {e}") from e
-        else:
-            if last_http_error:
-                raise HTTPException(502, f"AI service http error: {last_http_error[0]} {last_http_error[1]}")
-            if last_network_error:
-                raise HTTPException(502, f"AI service unavailable: {last_network_error}")
-            if timeout_hit:
-                raise HTTPException(504, "AI service timeout")
-            raise HTTPException(502, "AI service unavailable")
-
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise HTTPException(502, "AI service returned invalid JSON") from e
-
-    answer = str(data.get("answer") or "").strip()
-    if not answer:
-        raise HTTPException(502, f"AI service returned no answer: {data.get('error') or 'unknown error'}")
-    return data
+    return await ai_guard.post_upstream(
+        AI_SERVICE_URL,
+        payload_obj,
+        headers,
+        deadline_sec=AI_GUARD_CONFIG.upstream_deadline_sec,
+        max_bytes=AI_GUARD_CONFIG.max_upstream_bytes,
+        retries=AI_GUARD_CONFIG.retries,
+    )
 
 
 # ── Search logs table ─────────────────────────────────────────────────
@@ -5131,6 +5098,8 @@ def init_ai_chat_logs():
                 con.execute("ALTER TABLE ai_chat_logs ADD COLUMN phase TEXT")
             except Exception:
                 pass  # column already exists
+            # Minimised logging columns (additive only; see ai_guard.write_chat_log).
+            ai_guard.ensure_chat_log_columns(con)
             con.commit()
         finally:
             con.close()
@@ -5139,67 +5108,19 @@ def init_ai_chat_logs():
 init_ai_chat_logs()
 
 
-def _write_ai_chat_log(
-    query: str,
-    user_message: str,
-    summary: dict,
-    *,
-    provider: str,
-    success: bool,
-    error: str | None = None,
-    phase: str | None = None,
-):
+def _write_ai_chat_log_record(record: dict):
+    """Server-side AI log: counters, lengths, a keyed hash and a coarse outcome.
+    No raw user text is stored and nothing caller-supplied is accepted."""
     try:
         with _write_lock:
             con = get_db()
             try:
-                con.execute(
-                    """
-                    INSERT INTO ai_chat_logs (
-                        query, user_message, subject_count, evidence_count, gaokao_hit_count,
-                        provider, success, error, phase, ts
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?)
-                    """,
-                    (
-                        query.strip(),
-                        user_message.strip(),
-                        int(summary.get("subject_count") or 0),
-                        int(summary.get("evidence_count") or 0),
-                        int(summary.get("gaokao_hit_count") or 0),
-                        provider,
-                        1 if success else 0,
-                        error,
-                        phase,
-                        time.time(),
-                    ),
-                )
+                ai_guard.write_chat_log(con, record, provider=AI_SERVICE_LABEL)
                 con.commit()
             finally:
                 con.close()
     except Exception:
         pass
-
-
-def log_ai_chat(
-    query: str,
-    user_message: str,
-    context_payload: dict,
-    *,
-    provider: str | None = None,
-    success: bool,
-    error: str | None = None,
-    phase: str | None = None,
-):
-    summary = context_payload.get("summary") or {}
-    _write_ai_chat_log(
-        query,
-        user_message,
-        summary,
-        provider=provider or AI_SERVICE_LABEL,
-        success=success,
-        error=error,
-        phase=phase or context_payload.get("phase"),
-    )
 
 
 def _compute_search_subject_counts(
@@ -7480,90 +7401,61 @@ def related(
         con.close()
 
 
-@app.post("/api/chat/context")
-async def chat_context(payload: dict = Body(...)):
-    """Build grounded context for AI chat before calling an external model service."""
-    query = str(payload.get("query", "")).strip()
-    user_message = str(payload.get("user_message", "")).strip()
-    history = payload.get("history") or []
-    scope_subject = str(payload.get("scope_subject", "")).strip() or None
-    book_key = str(payload.get("book_key", "")).strip() or None
-    phase = str(payload.get("phase", "")).strip() or None
-    return await run_in_threadpool(
-        _build_chat_context_for_request,
-        query,
-        user_message,
-        history,
-        scope_subject=scope_subject,
-        book_key=book_key,
-        phase=phase,
-    )
+# ── AI chat (guarded) ─────────────────────────────────────────────────
+# The HTTP routes (/api/ai/session, /api/ai/status, /api/chat, /api/dict/chat,
+# /api/gaokao/chat) are registered by ai_guard.build_router near the end of this
+# file. The functions below only do server-side retrieval + prompt assembly and
+# run strictly after admission, caps, rate limiting and dedup.
+# /api/chat/context and /api/chat/log are retired (410).
+
+def _ai_builder_error(exc: HTTPException) -> ai_guard.AIGuardError:
+    return ai_guard.AIGuardError(404 if exc.status_code == 404 else 400, "not_found" if exc.status_code == 404 else "bad_request")
 
 
-@app.post("/api/chat/log")
-def chat_log(payload: dict = Body(...)):
-    """Client-side fallback telemetry for AI chat."""
-    query = str(payload.get("query", "")).strip()
-    user_message = str(payload.get("user_message", "")).strip()
-    if not query or not user_message:
-        raise HTTPException(400, "query and user_message are required")
-
-    summary = payload.get("summary") or {}
-    provider = str(payload.get("provider", "")).strip() or AI_SERVICE_LABEL
-    success = bool(payload.get("success", True))
-    error = str(payload.get("error", "")).strip() or None
-
-    _write_ai_chat_log(
-        query,
-        user_message,
-        summary,
-        provider=provider,
-        success=success,
-        error=error,
-    )
-    return {"ok": True}
-
-
-@app.post("/api/chat")
-async def chat(payload: dict = Body(...)):
-    """Server-side grounded AI chat orchestration."""
-    query = str(payload.get("query", "")).strip()
-    user_message = str(payload.get("user_message", "")).strip()
-    history = payload.get("history") or []
-    scope_subject = str(payload.get("scope_subject", "")).strip() or None
-    book_key = str(payload.get("book_key", "")).strip() or None
-    phase = str(payload.get("phase", "")).strip() or None
-    if not query or not user_message:
-        raise HTTPException(400, "query and user_message are required")
-
-    context_payload = await run_in_threadpool(
-        _build_chat_context_for_request,
-        query,
-        user_message,
-        history,
-        scope_subject=scope_subject,
-        book_key=book_key,
-        phase=phase,
-    )
-    prompt = _build_chat_prompt(query, user_message, context_payload, history=history)
+async def _ai_build_chat(fields: dict) -> ai_guard.Built:
+    query = fields["query"]
+    user_message = fields["user_message"]
+    history = fields["history"]
     try:
-        ai_data = await _call_ai_service(prompt)
-        await run_in_threadpool(log_ai_chat, query, user_message, context_payload, success=True, phase=phase)
-    except HTTPException as e:
-        await run_in_threadpool(log_ai_chat, query, user_message, context_payload, success=False, error=str(e.detail), phase=phase)
-        raise
+        context_payload = await run_in_threadpool(
+            _build_chat_context_for_request,
+            query,
+            user_message,
+            history,
+            scope_subject=fields.get("scope_subject"),
+            book_key=fields.get("book_key"),
+            phase=fields.get("phase"),
+        )
+    except HTTPException as exc:
+        raise _ai_builder_error(exc) from exc
+    prompt = _build_chat_prompt(query, user_message, context_payload, history=history)
+    # Citations shown to the user come from these retrieval records only.
+    evidence = ai_guard.sanitize_evidence(context_payload.get("evidence"))
+    summary = context_payload.get("summary") or {}
 
-    return {
-        "answer": ai_data.get("answer"),
-        "provider": AI_SERVICE_LABEL,
-        "context": {
-            "summary": context_payload.get("summary"),
-            "evidence": context_payload.get("evidence"),
-            "alias_hints": context_payload.get("alias_hints"),
-            "relation_hints": context_payload.get("relation_hints"),
-            "suggested_questions": context_payload.get("suggested_questions"),
+    def finish(answer: str) -> dict:
+        return {
+            "answer": answer,
+            "provider": AI_SERVICE_LABEL,
+            "context": {
+                "summary": context_payload.get("summary"),
+                "evidence": evidence,
+                "alias_hints": context_payload.get("alias_hints"),
+                "relation_hints": context_payload.get("relation_hints"),
+                "suggested_questions": context_payload.get("suggested_questions"),
+            },
+            "citation_check": ai_guard.check_citations(answer, evidence),
+        }
+
+    return ai_guard.Built(
+        prompt=prompt,
+        finish=finish,
+        meta={
+            "subject_count": summary.get("subject_count") or len(summary.get("top_subjects") or []),
+            "evidence_count": summary.get("evidence_count") or len(evidence),
+            "gaokao_hit_count": summary.get("gaokao_hit_count") or 0,
         },
-    }
+    )
 
 
 # ── Dictionary APIs ────────────────────────────────────────────────────
@@ -7930,35 +7822,32 @@ def dict_page_images(
     }
 
 
-@app.post("/api/dict/chat")
-async def dict_chat(payload: dict = Body(...)):
-    headword = str(payload.get("headword", "")).strip()
-    user_message = str(payload.get("user_message", "")).strip()
-    if not headword or not user_message:
-        raise HTTPException(400, "headword and user_message are required")
-
-    history = payload.get("history") or []
-    phase = str(payload.get("phase", "")).strip() or None
-    context_payload = await run_in_threadpool(_build_dict_chat_context_for_request, headword, phase=phase)
+async def _ai_build_dict_chat(fields: dict) -> ai_guard.Built:
+    headword = fields["headword"]
+    phase = fields.get("phase")
+    try:
+        context_payload = await run_in_threadpool(_build_dict_chat_context_for_request, headword, phase=phase)
+    except HTTPException as exc:
+        raise _ai_builder_error(exc) from exc
     prompt = _build_dict_chat_prompt(
         headword,
-        user_message,
+        fields["user_message"],
         dict_context=context_payload.get("dict_context", ""),
         textbook_context=context_payload.get("textbook_context", ""),
         gaokao_context=context_payload.get("gaokao_context", ""),
-        history=history,
+        history=fields["history"],
         phase=phase,
     )
-    try:
-        ai_data = await _call_ai_service(prompt)
-        await run_in_threadpool(log_ai_chat, headword, user_message, context_payload, success=True, phase=phase)
-    except HTTPException as e:
-        await run_in_threadpool(log_ai_chat, headword, user_message, context_payload, success=False, error=str(e.detail), phase=phase)
-        raise
-    return {
-        "answer": ai_data.get("answer"),
-        "provider": AI_SERVICE_LABEL,
-    }
+    summary = context_payload.get("summary") or {}
+    return ai_guard.Built(
+        prompt=prompt,
+        finish=lambda answer: {"answer": answer, "provider": AI_SERVICE_LABEL},
+        meta={
+            "subject_count": summary.get("subject_count") or 0,
+            "evidence_count": summary.get("evidence_count") or 0,
+            "gaokao_hit_count": summary.get("gaokao_hit_count") or 0,
+        },
+    )
 
 
 # ── Gaokao APIs ───────────────────────────────────────────────────────
@@ -9420,6 +9309,105 @@ def book_pages(phase: Optional[str] = Query(None, description="Filter by phase: 
         )
         and (not phase or (str(info.get("phase") or ("初中" if bk.startswith("初中_") else "高中")).strip() == phase))
     }
+
+
+# ── AI routes (guarded) ───────────────────────────────────────────────
+def _ai_gaokao_source_context(items: list[dict], limit: int = 3) -> str:
+    return "\n\n".join(
+        f"[{item.get('subject')}·{item.get('title')}·§{item.get('section')}] "
+        f"{item.get('summary') or str(item.get('text') or '')[:320]}"
+        for item in (items or [])[:limit]
+    )
+
+
+def _ai_gaokao_context_for_request(question_id: int) -> dict:
+    link_data = gaokao_link(question_id=question_id, limit=5)
+    con = get_db()
+    try:
+        row = con.execute("SELECT text FROM chunks WHERE id = ? AND source = 'gaokao'", [question_id]).fetchone()
+    finally:
+        con.close()
+    link_data["_question_text"] = _normalize_text_line(row["text"] if row else "")[:600]
+    return link_data
+
+
+async def _ai_build_gaokao_chat(fields: dict) -> ai_guard.Built:
+    """Server-side port of the former browser-authored gaokao prompt: the browser
+    now sends only a question id, never prompt text."""
+    phase = fields.get("phase")
+    exam = "中考" if phase == "初中" else "高考"
+    display_phase = "初中" if phase == "初中" else "高中"
+    try:
+        link_data = await run_in_threadpool(_ai_gaokao_context_for_request, fields["question_id"])
+    except HTTPException as exc:
+        raise _ai_builder_error(exc) from exc
+    links = link_data.get("links") or []
+    cross_links = link_data.get("cross_links") or []
+    precomputed = link_data.get("precomputed_analysis") or {}
+    question_type = {"objective": "客观题", "subjective": "主观题"}.get(link_data.get("question_type"), "未知")
+    matched = "、".join(str(item.get("concept")) for item in (link_data.get("matched_concepts") or []) if item.get("concept")) or "（未识别）"
+    prompt = f"""你是一位{exam}命题研究专家。请分析以下{exam}真题与教材内容之间的关系。
+
+【真题元数据】
+标题：{link_data.get('question_title') or ''}
+学科：{link_data.get('question_subject') or ''}
+年份：{link_data.get('question_year') or '未知'}
+卷种：{link_data.get('question_category') or '未知'}
+题型：{question_type}
+匹配概念：{matched}
+预计算知识点：{'、'.join(precomputed.get('knowledge_points') or []) or '（无）'}
+预计算结论：{precomputed.get('summary') or '（无）'}
+预计算教材锚点：{'；'.join(precomputed.get('textbook_refs') or []) or '（无）'}
+
+【题干】
+{link_data.get('_question_text') or ''}
+
+【同学科教材证据】
+{_ai_gaokao_source_context(links, 3) or '（未找到直接同学科教材）'}
+
+【跨学科教材证据】
+{_ai_gaokao_source_context(cross_links, 3) or '（未找到直接跨学科教材）'}
+
+请严格按以下小标题输出：
+显性关联：
+隐性关联：
+跨学科迁移：
+易错提醒：
+
+要求：
+1. 220 字以内，语言简洁，面向{display_phase}生。
+2. 只根据给定证据回答，不要编造教材内容。
+3. 如果跨学科证据不足，必须明确写“跨学科证据不足”。"""
+    sources = ai_guard.sanitize_evidence(links[:3] + cross_links[:2], limit=5)
+
+    def finish(answer: str) -> dict:
+        return {
+            "answer": answer,
+            "provider": AI_SERVICE_LABEL,
+            "question": {
+                "subject": link_data.get("question_subject"),
+                "year": link_data.get("question_year"),
+                "category": link_data.get("question_category"),
+                "link_count": len(links),
+                "cross_link_count": len(cross_links),
+            },
+            "sources": sources,
+        }
+
+    return ai_guard.Built(
+        prompt=prompt,
+        finish=finish,
+        meta={"evidence_count": len(sources), "subject_count": len({item.get("subject") for item in sources})},
+    )
+
+
+AI_GUARD = ai_guard.Guard(AI_GUARD_CONFIG, upstream=_call_ai_service, log=_write_ai_chat_log_record)
+app.include_router(
+    ai_guard.build_router(
+        AI_GUARD,
+        {"chat": _ai_build_chat, "dict": _ai_build_dict_chat, "gaokao": _ai_build_gaokao_chat},
+    )
+)
 
 
 # Serve frontend
