@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_at": "2026-10-10T13:28:18.906861+00:00",
-  "git_head": "27840c3dfaa16da0e31365986fa43c6374ef4274",
+  "git_head": "49f65134864cd89c7acaf3567c1135900e644c02",
   "frontend_version": "2026.10.10-r38",
   "source_of_truth": {
     "local_workspace": "authoritative",
@@ -1347,8 +1347,8 @@
     {
       "kind": "runtime",
       "logical_path": "data/index/textbook_mineru_fts.db",
-      "size": 80961536,
-      "sha256": "dd33663982fd4654b1f96759498d2af429d9061bde58f419bc6f0292b661984a",
+      "size": 81891328,
+      "sha256": "c497315996f62f026ed883bbd6544d2a98b6f3b5e1d5f693aa7fceebcb7ffac6",
       "source_path": "data/index/textbook_mineru_fts.db",
       "runtime_identity": {
         "type": "sqlite_textbook_runtime_identity_v1",
@@ -1362,7 +1362,7 @@
         "content_tables": {
           "chunks": {
             "row_count": 24096,
-            "sha256": "645f067848299aec0e7bf5cb2b848c5e501abb48054fe82dff5ca64172fff313"
+            "sha256": "6596ddc41751dc11b2f13ac74ee1913488bd673b4382e4e56c7e7c08b47aaf1f"
           },
           "ai_summaries": {
             "row_count": 17506,
@@ -1414,14 +1414,14 @@
       "kind": "runtime",
       "logical_path": "data/index/textbook_chunks.index",
       "size": 82355058,
-      "sha256": "456b663becd0c5175d0d2b090ea599c2ddcf48e0ca7605e891a9522cfcc4c8e0",
+      "sha256": "9e0f7bc19de9236b15c238b45cb9d480eb1b554036e5c95ef99eadf178375e00",
       "source_path": "data/index/textbook_chunks.index"
     },
     {
       "kind": "runtime",
       "logical_path": "data/index/textbook_chunks.manifest.json",
-      "size": 890,
-      "sha256": "1de837c1c208722dd8f2392936a4b3f778afc967af13926673a58c605de992cc",
+      "size": 1246,
+      "sha256": "b5da78854fce67bfdcf85703597f84e6953925e32fdb31becee9f9ccfad103c9",
       "source_path": "data/index/textbook_chunks.manifest.json"
     },
     {
@@ -1477,15 +1477,10 @@
       "kind": "runtime",
       "logical_path": "data/index/dict_moe_revised.db",
       "size": 145301504,
-      "sha256": "5b3c0aa6c07fc740faa3e9eb2acb7c01a2a858c49007413f323e75e7cafc709a",
+      "sha256": "eea862edfc521d0f4bccaccc04ccafbce5fa17c77dd086f96ab82327ff8e7b26",
       "source_path": "data/index/dict_moe_revised.db"
     }
   ],
-  "runtime_assets_carried_from": {
-    "generated_at": "2026-10-10T13:16:56.861814+00:00",
-    "git_head": "a22a0795fa4130c80c01366cc367fd5f19f0891c",
-    "note": "runtime half not re-measured in this build; deploy_vps.sh verifies it on the VPS"
-  },
   "page_mapping": {
     "book_count": 144,
     "required_r2_prefixes": [
@@ -1504,5 +1499,9 @@
     "runtime data changes must be synchronized to VPS before production cutover",
     "page-image changes must be synchronized to R2 before production cutover",
     "deploy_vps.sh must verify this manifest before cutover"
-  ]
+  ],
+  "runtime_assets_measured_from": {
+    "at": "2026-10-10T15:07:37.835238+00:00",
+    "source": "consistent SQLite snapshot of the production host captured 2026-10-10T11:19:29Z (backup 20261010T112150Z) plus the rebuilt primary vector pair (fingerprint bc888f19…, FAISS-REPAIR.md); verified again on the host by deploy_vps.sh before cutover"
+  }
 }
