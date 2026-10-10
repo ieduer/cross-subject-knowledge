@@ -386,6 +386,7 @@ docker rm "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 docker run -d \
   --name "${CONTAINER_NAME}" \
   --restart unless-stopped \
+  --log-opt max-size=20m --log-opt max-file=5 \
   -p "${PUBLISH_ADDR}:8080:8080" \
   ${runtime_env_args[@]+"${runtime_env_args[@]}"} \
   -e PROJECT_ROOT=/app \
@@ -440,6 +441,7 @@ if [ "${healthy}" != "true" ]; then
     docker run -d \
       --name "${CONTAINER_NAME}" \
       --restart unless-stopped \
+      --log-opt max-size=20m --log-opt max-file=5 \
       -p "${PUBLISH_ADDR}:8080:8080" \
       ${runtime_env_args[@]+"${runtime_env_args[@]}"} \
       -e PROJECT_ROOT=/app \
