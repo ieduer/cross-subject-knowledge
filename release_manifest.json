@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_at": "2026-10-10T13:28:18.906861+00:00",
-  "git_head": "68c86b689ba638726242a63a5dcea02ef2590a75",
+  "git_head": "f6dd0ac6ddd7ff1a5fe97c975c1d334d2a44a9d1",
   "frontend_version": "2026.10.10-r38",
   "source_of_truth": {
     "local_workspace": "authoritative",
@@ -1477,7 +1477,7 @@
       "kind": "runtime",
       "logical_path": "data/index/dict_moe_revised.db",
       "size": 145301504,
-      "sha256": "eea862edfc521d0f4bccaccc04ccafbce5fa17c77dd086f96ab82327ff8e7b26",
+      "sha256": "5b3c0aa6c07fc740faa3e9eb2acb7c01a2a858c49007413f323e75e7cafc709a",
       "source_path": "data/index/dict_moe_revised.db"
     }
   ],
@@ -1502,6 +1502,7 @@
   ],
   "runtime_assets_measured_from": {
     "at": "2026-10-10T15:07:37.835238+00:00",
-    "source": "consistent SQLite snapshot of the production host captured 2026-10-10T11:19:29Z (backup 20261010T112150Z) plus the rebuilt primary vector pair (fingerprint bc888f19…, FAISS-REPAIR.md); verified again on the host by deploy_vps.sh before cutover"
+    "source": "consistent SQLite snapshot of the production host captured 2026-10-10T11:19:29Z (backup 20261010T112150Z) plus the rebuilt primary vector pair (fingerprint bc888f19…, FAISS-REPAIR.md); verified again on the host by deploy_vps.sh before cutover",
+    "note": "dict_moe_revised.db is recorded by the sha256 of the file as it sits on the production host (read 2026-10-10); an SQLite online-backup copy has the same content but different bytes. All runtime entries were verified on the host with verify_release_manifest.py before cutover."
   }
 }
