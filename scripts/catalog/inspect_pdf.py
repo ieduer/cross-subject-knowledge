@@ -5,7 +5,7 @@ Cache file: <cache>/<sha256>.<EXTRACTOR_VERSION>.json — written once per (hash
 version); an existing cache file is never recomputed.
 
 A page is `ocr_needed` when it carries fewer than MIN_PAGE_CHARS non-space characters of
-text AND has raster content (an embedded image). A page with neither text nor image is
+text (the platform watermark line is not counted) AND has raster content (an embedded image). A page with neither text nor image is
 `blank`. `has_text_layer` is true when at least half of the non-blank pages have text.
 """
 from __future__ import annotations
@@ -18,6 +18,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import EXTRACTOR_VERSION, SHA256_RE, file_hashes, read_json, write_json  # noqa: E402
 
 MIN_PAGE_CHARS = 8
+# Platform watermark printed on every page of some files; it is not page content.
+WATERMARKS = ("仅供个人学习使用，未经授权不得另做他用", "仅供个人学习使用,未经授权不得另做他用")
+
+
+def content_chars(text: str) -> int:
+    for w in WATERMARKS:
+        text = text.replace(w, "")
+    return sum(1 for ch in text if not ch.isspace())
 MARGIN_FRACTION = 0.12  # top / bottom strips read position-true for folio detection
 
 
@@ -79,7 +87,7 @@ def extract(pdf_path: Path, sha256: str) -> dict:
         for i in range(doc.page_count):
             page = doc.load_page(i)
             text = page.get_text("text") or ""
-            chars = sum(1 for ch in text if not ch.isspace())
+            chars = content_chars(text)   # watermark-only pages are not text pages
             has_image = bool(page.get_images(full=False))
             if chars >= MIN_PAGE_CHARS:
                 kind = "text"
@@ -88,8 +96,8 @@ def extract(pdf_path: Path, sha256: str) -> dict:
             else:
                 kind = "blank"
             margin = margin_lines(page, pymupdf) if chars else {"top": [], "bottom": []}
-            pages.append({"pdf_page": i + 1, "chars": chars, "kind": kind, "text": text,
-                          "margin": margin})
+            pages.append({"pdf_page": i + 1, "chars": chars, "kind": kind, "has_image": has_image,
+                          "text": text, "margin": margin})
         meta = doc.metadata or {}
         text_pages = sum(1 for p in pages if p["kind"] == "text")
         ocr_pages = sum(1 for p in pages if p["kind"] == "ocr_needed")

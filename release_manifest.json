@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-10-10T13:16:56.861814+00:00",
-  "git_head": "a22a0795fa4130c80c01366cc367fd5f19f0891c",
+  "generated_at": "2026-10-10T13:28:18.906861+00:00",
+  "git_head": "27840c3dfaa16da0e31365986fa43c6374ef4274",
   "frontend_version": "2026.10.10-r38",
   "source_of_truth": {
     "local_workspace": "authoritative",
@@ -1482,8 +1482,8 @@
     }
   ],
   "runtime_assets_carried_from": {
-    "generated_at": "2026-05-08T04:32:06.934948+00:00",
-    "git_head": "938b015baac153778ab8abcf7e5d59a08c5eef1a",
+    "generated_at": "2026-10-10T13:16:56.861814+00:00",
+    "git_head": "a22a0795fa4130c80c01366cc367fd5f19f0891c",
     "note": "runtime half not re-measured in this build; deploy_vps.sh verifies it on the VPS"
   },
   "page_mapping": {

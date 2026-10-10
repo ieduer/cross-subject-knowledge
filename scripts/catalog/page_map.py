@@ -16,10 +16,11 @@ Legacy page-image index — two admissible proofs only:
                (legacy = pdf_page - 1);
   anchors    : corpus text of a legacy page is located on exactly one PDF page by shingle match;
                >= 8 distinct legacy pages must agree on a single mapping and none may contradict.
-               Rows are filled on anchored pages, between anchors, before the first anchor only
-               when the offset is 0, and after the last anchor only when the anchors reach the
-               last 15 % and both sequences end together; every row records which of these it is
-               (`legacy_basis`). Anchors that stop earlier prove a prefix only: relation `partial`.
+               Rows are filled on anchored pages; between two anchors at most 16 pages apart;
+               before the first anchor only at offset 0 and within 16 pages; after the last anchor
+               only when the anchors reach the last 15 %, both sequences end together and the tail
+               is within 16 pages. Every row records which of these it is (`legacy_basis`); all
+               other rows are null. `aligned` needs anchors to the end and no wide stretch.
 """
 from __future__ import annotations
 
@@ -163,9 +164,11 @@ def verify_folios(page_recs: list[dict]) -> dict:
         last = best["last_matched_pdf_page"]
         for p, (expected, ok) in best["_per_page"].items():
             if p <= last and expected >= 1:
-                # Pages between verified neighbours carry the mapped folio but are not
-                # individually verified; nothing is asserted after the last verified page.
-                labels[p - 1] = {"printed_label": str(expected), "printed_verified": bool(ok)}
+                # A page on which no number could be read between verified neighbours carries the
+                # mapped folio, flagged unverified. A page on which a DIFFERENT number was read gets
+                # no label at all. Nothing is asserted after the last verified page.
+                if ok or not zone_cands[p - 1][zone]:
+                    labels[p - 1] = {"printed_label": str(expected), "printed_verified": bool(ok)}
     evidence = {z: {k: v for k, v in r.items() if k != "_per_page"} for z, r in results.items()}
     out = {k: v for k, v in best.items() if k != "_per_page"}
     out.update({
@@ -195,6 +198,7 @@ ANCHOR_MARGIN = 2.0          # and at least twice the best page that is not a ne
 LEAD_RUN = 3
 LEGACY_MIN_ANCHORS = 8
 LEGACY_END_FRACTION = 0.85   # anchors must reach the last 15 % before the book is called aligned
+LEGACY_MAX_GAP = 16          # widest stretch without an anchor that may be filled by inference
 
 
 def build_shingle_index(page_texts: list[str]) -> dict[str, set[int]]:
@@ -305,12 +309,22 @@ def legacy_mapping(anchor_info: dict, pdf_pages: int, legacy_pages: int | None) 
         anchored = {a["pdf_page"] for a in anchors}
         last_legacy = max(a["legacy_index"] for a in anchors)
         reaches_end = legacy_pages is not None and last_legacy >= int(legacy_pages * LEGACY_END_FRACTION)
-        # Beyond the outermost anchors a row is filled only where no hidden page can be inserted or
-        # dropped without contradicting an anchor: before the first anchor when both sequences start
-        # together (offset 0); after the last anchor when the anchors already reach the last 15 %
-        # and both sequences end together.
-        head_consistent = d == 0
-        tail_consistent = bool(reaches_end and pdf_pages - d == legacy_pages)
+        # An anchor proves its own page. A stretch without anchors is filled only when it is at most
+        # LEGACY_MAX_GAP pages wide: one offset at both ends of a wide stretch does not exclude a page
+        # added in one place and removed in another inside it. The same limit applies before the
+        # first anchor (and only at offset 0, where both sequences start together) and after the
+        # last anchor (and only when both sequences end together).
+        order = sorted(anchored)
+        fill_ok: dict[int, str] = {}
+        wide_gaps = []
+        for a, b2 in zip(order, order[1:]):
+            if b2 - a <= LEGACY_MAX_GAP:
+                for p in range(a + 1, b2):
+                    fill_ok[p] = "between-anchors"
+            elif b2 - a > 1:
+                wide_gaps.append({"from_pdf_page": a, "to_pdf_page": b2, "unfilled_rows": b2 - a - 1})
+        head_consistent = d == 0 and (lo - 1) <= LEGACY_MAX_GAP
+        tail_consistent = bool(reaches_end and pdf_pages - d == legacy_pages and pdf_pages - hi <= LEGACY_MAX_GAP)
         rows = {}
         for p in range(1, pdf_pages + 1):
             li = p - 1 - d
@@ -318,8 +332,8 @@ def legacy_mapping(anchor_info: dict, pdf_pages: int, legacy_pages: int | None) 
                 continue
             if p in anchored:
                 rows[p] = (li, "anchor")
-            elif lo < p < hi:
-                rows[p] = (li, "between-anchors")
+            elif p in fill_ok:
+                rows[p] = (li, fill_ok[p])
             elif p < lo and head_consistent:
                 rows[p] = (li, "head-consistent")
             elif p > hi and tail_consistent:
@@ -327,16 +341,20 @@ def legacy_mapping(anchor_info: dict, pdf_pages: int, legacy_pages: int | None) 
         out.update({"accepted": True, "offset": d, "rows": rows,
                     "first_anchor_pdf_page": lo, "last_anchor_pdf_page": hi,
                     "last_anchor_legacy_index": last_legacy, "reaches_end": reaches_end,
-                    "head_consistent": head_consistent, "tail_consistent": tail_consistent})
-    # Relation as evidence for the catalog. An accepted mapping whose anchors stop before the last
-    # 15 % proves only a prefix (the tail was never tested): partial, rows kept for the proven span.
-    strong = [k for k, v in hist.items() if v >= 2]
+                    "head_consistent": head_consistent, "tail_consistent": tail_consistent,
+                    "max_gap": LEGACY_MAX_GAP, "wide_gaps": wide_gaps,
+                    "rows_nulled_by_gap_rule": sum(g["unfilled_rows"] for g in wide_gaps)})
+    # Relation as evidence for the catalog.
+    #   aligned           accepted, anchors reach the last 15 %, and no wide unproven stretch between them
+    #   partial           accepted, but only part of the book is proven (rows exist for that part)
+    #   different-edition anchors contradict one another: the pagination differs somewhere
+    #   none              nothing could be established (too few anchors); no rows
     if out["accepted"]:
-        out["relation"] = "aligned" if out["reaches_end"] else "partial"
-    elif len(strong) >= 2:
+        out["relation"] = "aligned" if out["reaches_end"] and not out["wide_gaps"] else "partial"
+    elif out["reason"] == "contradictory-anchors":
         out["relation"] = "different-edition"
     else:
-        out["relation"] = "partial"
+        out["relation"] = "none"
     return out
 
 

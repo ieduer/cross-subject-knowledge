@@ -2,8 +2,13 @@
 """Validate a sun-catalog-v1 release directory: schema plus cross-file invariants.
 
 Exit 0 when valid, 1 with one line per violation otherwise. Used by the tests and by the
-deploy gate. With --holdings (JSON {sha256: {...}} of the PDFs actually stored) it also checks
-that every stored PDF is referenced by exactly one edition and every referenced PDF is stored.
+deploy gate.
+
+--holdings <dir>   directory of <sha256>.pdf (the files staged for the server). Every file is
+                   hashed and opened: its SHA-256 must equal its name and the catalog's
+                   pdf.sha256, its page count must equal pdf.pages, it must be referenced by
+                   exactly one edition, and every edition with storage.vps must be present.
+--holdings <json>  {sha256: {...}}: key comparison only (no hashing); for callers without the files.
 """
 from __future__ import annotations
 
@@ -13,23 +18,44 @@ import re
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
+from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import CONTRACT, SHA256_RE, UUID_RE, jc_short_key, read_json  # noqa: E402
+from common import CONTRACT, SHA256_RE, UUID_RE, file_hashes, jc_short_key, read_json  # noqa: E402
 
 RELATIONS = {"same-bytes", "aligned", "partial", "different-edition", "none"}
+TEXT_IDENTITY = {"same-bytes": "same-file", "aligned": "page-aligned-other-printing",
+                 "partial": "page-aligned-other-printing", "different-edition": None, "none": None}
 STATUSES = {"active", "superseded", "pending-verification"}
 LEGACY_BASES = {"identifier:jc-content-id", "identifier:jc-book-key", "bytes:source-pdf"}
 SOURCE_ID_BASES = {"identifier:jc-content-id", "identifier:jks-slug", "bytes:sha256=learn-books", "bytes:md5=ti_md5"}
+ID_BASES = {"md5-size-current", "downloaded-by-id:md5-equal", "downloaded-by-id:size-only",
+            "baseline-join-unreproven", "platform-record"}
 EDITION_KEYS = {"edition_id", "work_id", "region", "stage", "subject", "title", "volume", "publisher",
-                "edition_label", "source", "pdf", "storage", "legacy", "corpus", "processing", "status"}
+                "edition_label", "source", "pdf", "storage", "legacy", "corpus", "processing", "status",
+                "platform_current", "newer_edition_id", "supersedes_edition_id", "metadata_basis"}
 SOURCE_KEYS = {"provider", "source_id", "catalog_module", "online_time", "update_time", "ti_md5", "ti_size",
-               "retrieved_at", "retrieved_via"}
+               "retrieved_at", "retrieved_via", "id_basis"}
 PDF_KEYS = {"sha256", "bytes", "pages", "has_text_layer", "producer"}
 ROW_KEYS = {"pdf_page", "printed_label", "printed_verified", "legacy_image_index", "ocr_page"}
 DOWNLOAD_KEYS = {"source_id", "stage", "subject", "title", "edition_label", "publisher", "cover", "size_bytes",
-                 "sources", "edition_id"}
+                 "sources", "edition_id", "held_other_edition_ids", "upstream_status"}
+DRIVE_KEYS = {"file_id", "resource_key", "view_url", "download_url", "shared"}
 RELEASE_ID_RE = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{8}$")
+ALLOWED_HOSTS = ("jks-ai.bdfz.net", "img.rdfzer.com", "img.bdfz.net")
+ALLOWED_SUFFIXES = (".smartedu.cn", ".ykt.cbern.com.cn")
+DRIVE_HOSTS = ("drive.google.com", "drive.usercontent.google.com", "docs.google.com")
+FORBIDDEN_WORDS = ("latest", "最新")
+UPSTREAM_PDF = "https://jks-ai.bdfz.net/pdf/"
+
+
+def host_ok(url, hosts=ALLOWED_HOSTS, suffixes=ALLOWED_SUFFIXES) -> bool:
+    if not isinstance(url, str):
+        return False
+    u = urlsplit(url)
+    if u.scheme != "https" or not u.hostname or u.username or u.port not in (None, 443):
+        return False
+    return u.hostname in hosts or any(u.hostname.endswith(s) for s in suffixes)
 
 
 def edition_id_ok(e: dict) -> bool:
@@ -43,16 +69,7 @@ def edition_id_ok(e: dict) -> bool:
     return bool(short) and eid == f"cn-x-legacy-{short}" and e.get("status") == "pending-verification"
 
 
-def validate(release_dir: Path, holdings: dict | None = None) -> list[str]:
-    errs: list[str] = []
-    E = errs.append
-    for name in ("catalog.json", "downloads.json", "RELEASE.json", "SHA256SUMS"):
-        if not (release_dir / name).is_file():
-            E(f"missing file: {name}")
-    if errs:
-        return errs
-
-    # --- SHA256SUMS covers every file and verifies -----------------------------------------
+def check_sums(release_dir: Path, E) -> None:
     listed = {}
     for line in (release_dir / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
         m = re.match(r"^([0-9a-f]{64})  (.+)$", line)
@@ -71,6 +88,167 @@ def validate(release_dir: Path, holdings: dict | None = None) -> list[str]:
         if name not in actual:
             E(f"SHA256SUMS: listed file missing: {name}")
 
+
+def check_storage(e: dict, E) -> None:
+    eid, st, pdf = e["edition_id"], e["storage"] or {}, e["pdf"]
+    sid = (e["source"] or {}).get("source_id")
+    if set(st) != {"vps", "drive", "upstream"}:
+        E(f"{eid}: storage must have vps / drive / upstream")
+        return
+    vps = st["vps"]
+    if vps is not None:
+        if pdf is None:
+            E(f"{eid}: storage.vps set on an edition without a PDF")
+        elif not isinstance(vps, dict) or set(vps) != {"path"} or vps["path"] != f"pdf/{pdf.get('sha256')}.pdf":
+            E(f"{eid}: storage.vps.path must be exactly pdf/<pdf.sha256>.pdf")
+    drive = st["drive"]
+    if drive is not None:
+        if pdf is None or not isinstance(drive, dict) or set(drive) != DRIVE_KEYS:
+            E(f"{eid}: storage.drive must be null or {{{', '.join(sorted(DRIVE_KEYS))}}} on a held edition")
+        elif not all(host_ok(drive[k], DRIVE_HOSTS, ()) for k in ("view_url", "download_url")):
+            E(f"{eid}: storage.drive URL host not allowed")
+    up = st["upstream"]
+    if not isinstance(up, dict) or not {"available", "url"} <= set(up) or not isinstance(up.get("available"), bool):
+        E(f"{eid}: storage.upstream must be {{available: bool, url}}")
+        return
+    if up["url"] is not None and (not host_ok(up["url"]) or up["url"] != UPSTREAM_PDF + str(sid)):
+        E(f"{eid}: storage.upstream.url must be {UPSTREAM_PDF}<source_id> on an allowed host")
+    if up["available"] and (up["url"] is None or e["platform_current"] is not True):
+        E(f"{eid}: upstream marked available for a file that is not the platform's current file")
+
+
+def check_page_map(e: dict, pm: dict, E) -> None:
+    eid = e["edition_id"]
+    name = f"page-maps/{eid}.json"
+    rows = pm.get("pages") or []
+    if pm.get("edition_id") != eid or pm.get("pdf_sha256") != e["pdf"].get("sha256"):
+        E(f"{name}: edition id / PDF hash differ from the catalog")
+    if len(rows) != e["pdf"].get("pages") or [r.get("pdf_page") for r in rows] != list(range(1, len(rows) + 1)):
+        E(f"{name}: rows are not exactly pdf_page 1..{e['pdf'].get('pages')}")
+        return
+    if any(ROW_KEYS - set(r) for r in rows):
+        E(f"{name}: a row is missing one of {sorted(ROW_KEYS)}")
+        return
+    printed, lev = pm.get("printed") or {}, ((pm.get("legacy") or {}).get("evidence") or {})
+    verified_book = bool(printed.get("verified"))
+    cat_printed = e.get("printed") or {}
+    if bool(cat_printed.get("verified")) != verified_book:
+        E(f"{eid}: printed.verified in the catalog differs from the page map")
+    # --- printed labels: only in verified books, unique, and equal to pdf_page - c -------------
+    segments = sorted(((s["start_pdf_page"], s["offset"]) for s in (printed.get("evidence") or {}).get("segments") or []))
+    labels = [(r["pdf_page"], r["printed_label"]) for r in rows if r["printed_label"] is not None]
+    if not verified_book and (labels or any(r["printed_verified"] for r in rows)):
+        E(f"{name}: printed label in a book that failed folio verification")
+    if any(r["printed_verified"] and r["printed_label"] is None for r in rows):
+        E(f"{name}: a page is marked verified without a label")
+    if verified_book:
+        if not segments:
+            E(f"{name}: verified book without a recorded folio mapping")
+        elif cat_printed.get("offset") != segments[0][1]:
+            E(f"{eid}: printed.offset in the catalog differs from the page map")
+        for p, label in labels:
+            seg = [s for s in segments if s[0] <= p]
+            if not seg or label != str(p - seg[-1][1]):
+                E(f"{name}: printed label {label!r} on pdf page {p} is not pdf_page - c")
+                break
+        if len(segments) == 1 and len({l for _, l in labels}) != len(labels):
+            E(f"{name}: duplicate printed label")
+    # --- legacy rows ---------------------------------------------------------------------------
+    legacy = [(r["pdf_page"], r["legacy_image_index"], r.get("legacy_basis")) for r in rows
+              if r["legacy_image_index"] is not None]
+    idx = [li for _, li, _ in legacy]
+    relation = (e.get("corpus") or {}).get("relation")
+    leg = e.get("legacy") or {}
+    accepted = bool(lev.get("accepted"))
+    legacy_pages = lev.get("legacy_pages")
+    if idx != sorted(set(idx)) or any(i < 0 for i in idx):
+        E(f"{name}: legacy_image_index values are not unique, increasing and >= 0")
+    if legacy_pages is not None and any(i >= legacy_pages for i in idx):
+        E(f"{name}: legacy_image_index beyond the image set ({legacy_pages} pages)")
+    if leg.get("mapped_pages") != len(legacy) or (pm.get("legacy") or {}).get("mapped_pages") != len(legacy):
+        E(f"{eid}: legacy.mapped_pages differs from the rows in the page map")
+    if relation != lev.get("relation"):
+        E(f"{eid}: corpus.relation {relation!r} differs from the page-map evidence {lev.get('relation')!r}")
+    if legacy:
+        offset = lev.get("offset")
+        if relation not in ("same-bytes", "aligned", "partial") or not accepted:
+            E(f"{eid}: legacy_image_index filled while corpus.relation is {relation!r} (mapping accepted: {accepted})")
+        if not (leg.get("sun_book_key") or leg.get("alias_candidate")):
+            E(f"{eid}: legacy_image_index filled but the edition names no legacy book")
+        if offset is None or leg.get("offset") != offset or any(li != p - 1 - offset for p, li, _ in legacy):
+            E(f"{eid}: legacy rows do not all equal pdf_page - 1 - offset (recorded offset {leg.get('offset')!r})")
+        # between-anchor rows only inside stretches of at most max_gap pages
+        max_gap = lev.get("max_gap")
+        anchors = sorted(p for p, _, basis in legacy if basis == "anchor")
+        if max_gap is not None:
+            for p, _, basis in legacy:
+                if basis != "between-anchors":
+                    continue
+                before = max((a for a in anchors if a < p), default=None)
+                after = min((a for a in anchors if a > p), default=None)
+                if before is None or after is None or after - before > max_gap:
+                    E(f"{name}: row {p} filled between anchors more than {max_gap} pages apart")
+                    break
+    elif relation in ("same-bytes", "aligned", "partial"):
+        E(f"{eid}: corpus.relation {relation!r} without any mapped row")
+    if relation == "same-bytes" and (len(legacy) != len(rows) or any(li != p - 1 for p, li, _ in legacy)):
+        E(f"{eid}: same-bytes requires legacy_image_index == pdf_page - 1 on every page")
+    if relation == "aligned":
+        if len(legacy) < 8 or not lev.get("reaches_end") or lev.get("wide_gaps"):
+            E(f"{eid}: aligned requires an accepted mapping that reaches the end without a wide unproven stretch")
+    # --- image-only PDF: nothing can have been read from it ------------------------------------
+    if e["pdf"].get("has_text_layer") is False:
+        if labels:
+            E(f"{eid}: printed labels on a PDF without a text layer")
+        if legacy and relation != "same-bytes":
+            E(f"{eid}: text-anchored legacy rows on a PDF without a text layer")
+
+
+def check_holdings(holdings, by_id: dict, sha_refs: Counter, E) -> None:
+    by_sha = {e["pdf"]["sha256"]: e for e in by_id.values() if e.get("pdf") and e["pdf"].get("sha256")}
+    if isinstance(holdings, dict):
+        stored = set(holdings)
+    else:
+        stored = set()
+        for f in sorted(Path(holdings).glob("*.pdf")):
+            sha = file_hashes(f, ("sha256",))["sha256"]
+            if sha != f.stem:
+                E(f"stored PDF {f.name}: content hashes to {sha[:16]}, not to its name")
+                continue
+            stored.add(sha)
+            ed = by_sha.get(sha)
+            if ed is not None:
+                try:
+                    import pymupdf
+                    with pymupdf.open(str(f)) as doc:
+                        pages = doc.page_count
+                except Exception as exc:  # noqa: BLE001
+                    E(f"stored PDF {sha[:16]}: cannot be opened ({type(exc).__name__})")
+                    continue
+                if pages != ed["pdf"].get("pages"):
+                    E(f"stored PDF {sha[:16]}: {pages} pages, catalog says {ed['pdf'].get('pages')}")
+                if f.stat().st_size != ed["pdf"].get("bytes"):
+                    E(f"stored PDF {sha[:16]}: size differs from the catalog")
+    for sha in sorted(stored):
+        if sha_refs.get(sha, 0) != 1:
+            E(f"stored PDF {sha[:16]} is referenced by {sha_refs.get(sha, 0)} editions")
+    for sha in sorted(sha_refs):
+        if sha not in stored:
+            E(f"referenced PDF {sha[:16]} is not in the store")
+    for e in by_id.values():
+        if (e.get("storage") or {}).get("vps") and e.get("pdf") and e["pdf"]["sha256"] not in stored:
+            E(f"{e['edition_id']}: storage.vps set but the file is not in the store")
+
+
+def validate(release_dir: Path, holdings=None) -> list[str]:
+    errs: list[str] = []
+    E = errs.append
+    for name in ("catalog.json", "downloads.json", "RELEASE.json", "SHA256SUMS"):
+        if not (release_dir / name).is_file():
+            E(f"missing file: {name}")
+    if errs:
+        return errs
+    check_sums(release_dir, E)
     try:
         catalog = read_json(release_dir / "catalog.json")
         downloads = read_json(release_dir / "downloads.json")
@@ -88,6 +266,11 @@ def validate(release_dir: Path, holdings: dict | None = None) -> list[str]:
             E(f"{label}: release_id differs from RELEASE.json")
     if catalog.get("contract") != CONTRACT or release.get("contract") != CONTRACT:
         E("contract is not sun-catalog-v1")
+    for fname in ("catalog.json", "downloads.json"):
+        text = (release_dir / fname).read_text(encoding="utf-8").lower()
+        for w in FORBIDDEN_WORDS:
+            if w in text:
+                E(f"{fname}: contains the word {w!r}; no edition may be called the latest")
 
     # --- editions ---------------------------------------------------------------------------
     editions = catalog.get("editions") or []
@@ -95,6 +278,7 @@ def validate(release_dir: Path, holdings: dict | None = None) -> list[str]:
     sha_refs: Counter = Counter()
     sun_keys: Counter = Counter()
     active_by_work: dict[str, list[dict]] = defaultdict(list)
+    complete: list[dict] = []
     for e in editions:
         eid = e.get("edition_id")
         missing = EDITION_KEYS - set(e)
@@ -104,6 +288,9 @@ def validate(release_dir: Path, holdings: dict | None = None) -> list[str]:
         if eid in by_id:
             E(f"{eid}: duplicate edition_id")
         by_id[eid] = e
+        complete.append(e)
+    for e in complete:
+        eid = e["edition_id"]
         if not edition_id_ok(e):
             E(f"{eid}: edition_id does not follow the identity rule for its source id / content hash")
         if e["status"] not in STATUSES:
@@ -119,7 +306,30 @@ def validate(release_dir: Path, holdings: dict | None = None) -> list[str]:
         if sid is not None and src.get("source_id_basis") not in SOURCE_ID_BASES:
             E(f"{eid}: source id attached without an identifier or byte basis "
               f"({src.get('source_id_basis')!r}) — editions must not be merged by title")
+        if (sid is None) != (src.get("id_basis") is None) or (sid is not None and src.get("id_basis") not in ID_BASES):
+            E(f"{eid}: source.id_basis {src.get('id_basis')!r} does not say how the id was established")
         pdf = e["pdf"]
+        # --- which file the record describes ---------------------------------------------------
+        if not isinstance(e["platform_current"], bool):
+            E(f"{eid}: platform_current must be a boolean")
+        elif pdf is not None and e["platform_current"] != (src.get("platform_current") is True):
+            E(f"{eid}: platform_current differs from source.platform_current")
+        if e["platform_current"] is not True and e["metadata_basis"] == "smartedu-details":
+            E(f"{eid}: title/publisher/edition taken from the platform's current record although this "
+              "edition is not the platform's current file")
+        if src.get("id_basis") == "md5-size-current" and e["platform_current"] is not True:
+            E(f"{eid}: id_basis md5-size-current on a file the platform does not serve")
+        newer, older = e["newer_edition_id"], e["supersedes_edition_id"]
+        if newer is not None:
+            n = by_id.get(newer)
+            if (n is None or n.get("pdf") is not None or n["source"].get("source_id") != sid
+                    or n.get("supersedes_edition_id") != eid or e["platform_current"] or pdf is None):
+                E(f"{eid}: newer_edition_id does not resolve to the pending record of the same source id")
+        if older is not None:
+            o = by_id.get(older)
+            if (o is None or o.get("pdf") is None or o["source"].get("source_id") != sid
+                    or o.get("newer_edition_id") != eid or pdf is not None):
+                E(f"{eid}: supersedes_edition_id does not resolve to a held edition of the same source id")
         if pdf is not None:
             if PDF_KEYS - set(pdf):
                 E(f"{eid}: pdf missing {sorted(PDF_KEYS - set(pdf))}")
@@ -145,13 +355,13 @@ def validate(release_dir: Path, holdings: dict | None = None) -> list[str]:
         cor = e["corpus"] or {}
         if cor.get("relation") not in RELATIONS:
             E(f"{eid}: bad corpus.relation {cor.get('relation')!r}")
+        elif "text_identity" not in cor or cor["text_identity"] != TEXT_IDENTITY[cor["relation"]]:
+            E(f"{eid}: corpus.text_identity {cor.get('text_identity')!r} does not fit relation {cor['relation']!r}")
         if not cor.get("basis"):
             E(f"{eid}: corpus.relation without a basis")
         if pdf is None and cor.get("relation") != "none":
             E(f"{eid}: corpus relation claimed without a PDF")
-        st = e["storage"] or {}
-        if set(st) != {"vps", "drive", "upstream"}:
-            E(f"{eid}: storage must have vps / drive / upstream")
+        check_storage(e, E)
         if e["status"] == "active":
             active_by_work[e["work_id"]].append(e)
     for sha, n in sha_refs.items():
@@ -165,97 +375,129 @@ def validate(release_dir: Path, holdings: dict | None = None) -> list[str]:
             E(f"work {work}: {len(group)} active editions without an explicit coexists_reason "
               f"({', '.join(g['edition_id'] for g in group)})")
     if holdings is not None:
-        for sha in holdings:
-            if sha_refs.get(sha, 0) != 1:
-                E(f"stored PDF {sha[:16]} is referenced by {sha_refs.get(sha, 0)} editions")
-        for sha in sha_refs:
-            if sha not in holdings:
-                E(f"referenced PDF {sha[:16]} is not in the store")
+        check_holdings(holdings, by_id, sha_refs, E)
+
+    # --- reader_books index -----------------------------------------------------------------
+    rb = catalog.get("reader_books")
+    if not isinstance(rb, list):
+        E("catalog: reader_books missing")
+        rb = []
+    rb_keys = Counter(r.get("sun_book_key") for r in rb)
+    for r in rb:
+        key = r.get("sun_book_key")
+        if rb_keys[key] != 1:
+            E(f"reader_books: key listed {rb_keys[key]} times: {key}")
+        if not key or r.get("jc_short_key") != jc_short_key(key or ""):
+            E(f"reader_books: jc_short_key != md5(sun_book_key)[:12] for {key}")
+        ed = by_id.get(r.get("edition_id"))
+        if ed is None or (ed.get("legacy") or {}).get("sun_book_key") != key:
+            E(f"reader_books: edition_id of {r.get('jc_short_key')} is not the edition holding that key")
+        for cid in r.get("candidate_edition_ids") or []:
+            c = by_id.get(cid)
+            if c is None or ((c.get("legacy") or {}).get("alias_candidate") or {}).get("sun_book_key") != key:
+                E(f"reader_books: candidate {cid} of {r.get('jc_short_key')} is not an alias candidate for that book")
+    if set(rb_keys) != set(sun_keys):
+        E("reader_books: keys differ from the sun_book_key values of the editions")
 
     # --- page maps --------------------------------------------------------------------------
     pm_dir = release_dir / "page-maps"
     pm_files = {p.stem: p for p in pm_dir.glob("*.json")} if pm_dir.is_dir() else {}
+    page_maps = {}
     for eid in pm_files:
         if eid not in by_id:
             E(f"page-maps/{eid}.json: no such edition in the catalog")
         elif by_id[eid].get("pdf") is None:
             E(f"page-maps/{eid}.json: edition has no PDF")
-    for eid, e in by_id.items():
-        if e.get("pdf") is None or EDITION_KEYS - set(e):
+    for e in complete:
+        eid = e["edition_id"]
+        if e.get("pdf") is None:
             continue
         if eid not in pm_files:
             E(f"{eid}: edition with a PDF has no page map")
             continue
-        pm = read_json(pm_files[eid])
-        rows = pm.get("pages") or []
-        if pm.get("edition_id") != eid or pm.get("pdf_sha256") != e["pdf"].get("sha256"):
-            E(f"page-maps/{eid}.json: edition id / PDF hash differ from the catalog")
-        if len(rows) != e["pdf"].get("pages") or [r.get("pdf_page") for r in rows] != list(range(1, len(rows) + 1)):
-            E(f"page-maps/{eid}.json: rows are not exactly pdf_page 1..{e['pdf'].get('pages')}")
-            continue
-        verified_book = bool((pm.get("printed") or {}).get("verified"))
-        seen_legacy = []
-        for r in rows:
-            if ROW_KEYS - set(r):
-                E(f"page-maps/{eid}.json: row {r.get('pdf_page')} missing {sorted(ROW_KEYS - set(r))}")
-                break
-            if not verified_book and (r["printed_label"] is not None or r["printed_verified"]):
-                E(f"page-maps/{eid}.json: printed label on page {r['pdf_page']} of a book that failed folio verification")
-                break
-            if r["printed_verified"] and r["printed_label"] is None:
-                E(f"page-maps/{eid}.json: page {r['pdf_page']} verified without a label")
-                break
-            if r["legacy_image_index"] is not None:
-                seen_legacy.append((r["pdf_page"], r["legacy_image_index"]))
-        idx = [li for _, li in seen_legacy]
-        if idx != sorted(set(idx)) or any(i < 0 for i in idx):
-            E(f"page-maps/{eid}.json: legacy_image_index values are not unique, increasing and >= 0")
-        relation = (e.get("corpus") or {}).get("relation")
-        leg = e.get("legacy") or {}
-        accepted = bool(((pm.get("legacy") or {}).get("evidence") or {}).get("accepted"))
-        if seen_legacy:
-            if relation not in ("same-bytes", "aligned", "partial") or not accepted:
-                E(f"{eid}: legacy_image_index filled while corpus.relation is {relation!r} "
-                  f"(mapping accepted: {accepted})")
-            if not (leg.get("sun_book_key") or leg.get("alias_candidate")):
-                E(f"{eid}: legacy_image_index filled but the edition names no legacy book")
-        if relation == "same-bytes" and any(li != p - 1 for p, li in seen_legacy) or \
-                relation == "same-bytes" and len(seen_legacy) != len(rows):
-            E(f"{eid}: same-bytes requires legacy_image_index == pdf_page - 1 on every page")
-        if relation == "aligned" and len(seen_legacy) < 8:
-            E(f"{eid}: aligned requires an accepted mapping")
+        page_maps[eid] = read_json(pm_files[eid])
+        check_page_map(e, page_maps[eid], E)
 
     # --- downloads --------------------------------------------------------------------------
     ids: Counter = Counter()
     for r in downloads.get("rows") or []:
+        sid = r.get("source_id")
         if DOWNLOAD_KEYS - set(r):
-            E(f"downloads: row {r.get('source_id')} missing {sorted(DOWNLOAD_KEYS - set(r))}")
+            E(f"downloads: row {sid} missing {sorted(DOWNLOAD_KEYS - set(r))}")
             continue
-        ids[r["source_id"]] += 1
+        ids[sid] += 1
         eid = r["edition_id"]
         if eid is not None:
             ed = by_id.get(eid)
             if ed is None or ed.get("pdf") is None:
-                E(f"downloads: {r['source_id']} points at {eid}, which is not a held edition")
-            elif (ed.get("source") or {}).get("source_id") != r["source_id"]:
-                E(f"downloads: {r['source_id']} points at an edition of another source id")
+                E(f"downloads: {sid} points at {eid}, which is not a held edition")
+            elif (ed.get("source") or {}).get("source_id") != sid:
+                E(f"downloads: {sid} points at an edition of another source id")
+            elif ed.get("platform_current") is not True:
+                E(f"downloads: {sid} edition_id names a held file that is not the platform's current file")
+        for oid in r["held_other_edition_ids"]:
+            o = by_id.get(oid)
+            if (o is None or o.get("pdf") is None or (o.get("source") or {}).get("source_id") != sid
+                    or o.get("platform_current") is True):
+                E(f"downloads: {sid} held_other_edition_ids entry {oid} is not an older held edition of that id")
+        if r["cover"] is not None and not host_ok(r["cover"]):
+            E(f"downloads: {sid} cover URL host not allowed")
+        for s in r["sources"]:
+            kind, seid = s.get("kind"), s.get("edition_id")
+            sed = by_id.get(seid) if seid is not None else None
+            if seid is not None and (sed is None or (sed.get("source") or {}).get("source_id") != sid):
+                E(f"downloads: {sid} source names edition {seid}, which is not an edition of that id")
+                continue
+            if kind == "upstream":
+                if not host_ok(s.get("url")) or s.get("url") != UPSTREAM_PDF + str(sid):
+                    E(f"downloads: {sid} upstream URL not allowed")
+                if r["upstream_status"] == "OFFLINE":
+                    E(f"downloads: {sid} offers an upstream source although the platform record is OFFLINE")
+                if sed is not None and sed.get("platform_current") is not True:
+                    E(f"downloads: {sid} upstream source is attributed to an edition that is not the "
+                      "platform's current file")
+                if s.get("platform_current") is not True:
+                    E(f"downloads: {sid} upstream source must be marked platform_current")
+            elif kind == "vps":
+                if sed is None or (sed.get("storage") or {}).get("vps") != {"path": s.get("path")}:
+                    E(f"downloads: {sid} vps source does not match a staged edition")
+                elif s.get("platform_current") is not sed.get("platform_current"):
+                    E(f"downloads: {sid} vps source mislabels whether it is the platform's current file")
+            else:
+                E(f"downloads: {sid} unknown source kind {kind!r}")
     for sid, n in ids.items():
         if n != 1:
             E(f"downloads: source_id {sid} listed {n} times")
-    c = (release.get("counts") or {})
-    if c.get("editions") != len(editions) or c.get("editions_with_pdf") != sum(sha_refs.values()):
-        E("RELEASE: edition counts differ from catalog.json")
-    if (c.get("downloads") or {}).get("rows") != len(downloads.get("rows") or []):
-        E("RELEASE: download row count differs from downloads.json")
+
+    # --- RELEASE.json counts: recomputed in full --------------------------------------------
+    if not errs:
+        from build_catalog import counts
+        expect = counts(editions, page_maps, downloads,
+                        {"newer_platform": release.get("newer_platform"),
+                         "indeterminate_platform": release.get("indeterminate_platform")})
+        got = release.get("counts") or {}
+        for k in sorted(set(expect) | set(got)):
+            if expect.get(k) != got.get(k):
+                E(f"RELEASE: counts.{k} differs from the value recomputed from the release files")
+        newer = [e for e in editions if e.get("newer_edition_id")]
+        if len(release.get("newer_platform") or []) != len(newer):
+            E("RELEASE: newer_platform list differs from the editions carrying newer_edition_id")
+    else:
+        c = release.get("counts") or {}
+        if c.get("editions") != len(editions) or (c.get("downloads") or {}).get("rows") != len(downloads.get("rows") or []):
+            E("RELEASE: edition / download counts differ from the release files")
     return errs
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(description=__doc__)
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("release_dir")
-    p.add_argument("--holdings")
+    p.add_argument("--holdings", help="directory of <sha256>.pdf (hashed and opened) or a JSON key list")
     args = p.parse_args(argv)
-    holdings = read_json(args.holdings) if args.holdings else None
+    holdings = None
+    if args.holdings:
+        hp = Path(args.holdings)
+        holdings = hp if hp.is_dir() else read_json(hp)
     errs = validate(Path(args.release_dir), holdings)
     for e in errs:
         print("INVALID " + e)

@@ -224,11 +224,22 @@ def base_record(meta: dict | None, fallback: dict) -> dict:
     return rec
 
 
-def source_block(sid, meta, *, current: bool | None, retrieved_at, retrieved_via, sid_basis) -> dict:
+LOCAL_REUSE = "local-reuse:smartedu-junior-2026-03"   # neutral token; retrieved_at = file mtime
+
+
+def source_block(sid, meta, *, current: bool | None, retrieved_at, retrieved_via, sid_basis,
+                 id_basis=None) -> dict:
     m = meta or {}
     pdf = m.get("pdf") or {}
     return {
         "provider": "smartedu", "source_id": sid, "source_id_basis": sid_basis,
+        # How strongly the id is tied to THIS file today:
+        #   md5-size-current         held bytes equal the platform's current file (MD5 + size)
+        #   downloaded-by-id:md5-equal / :size-only   fetched through this id in this run
+        #   baseline-join-unreproven  SHA-256 join with learn-books made by the baseline; the
+        #                             platform no longer serves these bytes, so it cannot be re-proven
+        #   platform-record          the record describes the platform file itself (not held)
+        "id_basis": id_basis if sid else None,
         "catalog_module": "tch_material" if sid else None,
         # Platform times and file facts describe the file the platform served at `details_retrieved_at`.
         # They are attached to an edition only when that edition IS that file.
@@ -307,14 +318,27 @@ def stage_editions(args) -> int:
         if b["pages"] != row["pdf_pages"]:
             issues.append(f"{b['shortKey']}: JC pages {b['pages']} != local PDF pages {row['pdf_pages']}")
         title_local = Path(row["path"]).stem
-        rec = base_record(meta, {"stage": b["phase"], "subject": b["subject"], "title": title_local,
-                                 "edition_label": None, "basis": "local-download-index"})
+        local_fallback = {"stage": b["phase"], "subject": b["subject"], "title": title_local,
+                          "edition_label": None, "basis": "local-download-index"}
+        if current is True:
+            # The held file IS the platform's current file: the platform record describes it.
+            rec = base_record(meta, local_fallback)
+        else:
+            # The platform record now describes ANOTHER file (replaced or offline). Title, volume,
+            # publisher and edition label of the held file come only from evidence about the held
+            # file: its name in the download index at retrieval time and the reader catalog.
+            rec = base_record(None, local_fallback)
+            if meta and meta.get("title"):
+                # Same logical work as the platform record of this id (shared by its newer file).
+                rec["work_id"] = base_record(meta, local_fallback)["work_id"]
+        id_basis = "md5-size-current" if cmp_ == "same" else "baseline-join-unreproven"
+        newer_id = f"cn-{sid}-pending" if cmp_ == "different" else None
         rec.update({
             "edition_id": f"cn-{sid}-{local['sha256'][:12]}" if sid else f"cn-x-{local['sha256'][:16]}",
+            "platform_current": current is True,
+            "newer_edition_id": newer_id, "supersedes_edition_id": None,
             "source": source_block(sid, meta, current=current, retrieved_at=local["mtime_utc"],
-                                   retrieved_via="local reuse: textbook_ai_migration/tmp/smartedu_junior "
-                                                 "(jks.sh private lineage; retrieved_at = file mtime)",
-                                   sid_basis=sid_basis),
+                                   retrieved_via=LOCAL_REUSE, sid_basis=sid_basis, id_basis=id_basis),
             "pdf": pdf_block(local["sha256"], local["md5"], local["bytes"]),
             "storage": {"vps": None, "drive": None,
                         "upstream": {"available": bool(current), "url": UPSTREAM_PDF + sid if current else None,
@@ -337,20 +361,23 @@ def stage_editions(args) -> int:
             newer = base_record(meta, {})
             newer.update({
                 "edition_id": f"cn-{sid}-pending",
+                "platform_current": True, "newer_edition_id": None,
+                "supersedes_edition_id": rec["edition_id"],
                 "source": source_block(sid, meta, current=True, retrieved_at=None,
-                                       retrieved_via=None, sid_basis=sid_basis),
+                                       retrieved_via=None, sid_basis=sid_basis, id_basis="platform-record"),
                 "pdf": None, "platform_pages": p.get("platform_pages"),
                 "storage": {"vps": None, "drive": None,
-                            "upstream": {"available": True, "url": UPSTREAM_PDF + sid}},
+                            "upstream": {"available": True, "url": UPSTREAM_PDF + sid, "note": None}},
                 "legacy": {"sun_book_key": None, "jc_short_key": None, "jks_slug": None, "basis": None,
                            "in_sun_search": False, "alias_candidate": None},
                 "status": "pending-verification",
                 "provenance": "platform-current-not-acquired",
-                "supersedes_candidate": rec["edition_id"],
                 "legacy_spec": {"mode": "none", "relation": "none", "reason": "not acquired in this run"},
             })
             editions.append(newer)
             newer_platform.append({"source_id": sid, "jc_short_key": b["shortKey"], "title": rec["title"],
+                                   "held_title": rec["title"], "platform_title": newer["title"],
+                                   "held_edition_id": rec["edition_id"], "newer_edition_id": newer["edition_id"],
                                    "held_bytes": local["bytes"], "platform_bytes": p["ti_size"],
                                    "platform_update_time": meta.get("update_time"),
                                    "held_pages": row["pdf_pages"], "platform_pages": p.get("platform_pages")})
@@ -370,8 +397,10 @@ def stage_editions(args) -> int:
             sha = st["sha256"]
             rec["edition_id"] = f"cn-{sid}-{sha[:12]}"
             rec["pdf"] = pdf_block(sha, st["md5"], st["bytes"])
-            rec["source"] = source_block(sid, meta, current=True, retrieved_at=st["retrieved_at"],
-                                         retrieved_via=st["retrieved_via"], sid_basis=t["basis"])
+            rec["source"] = source_block(
+                sid, meta, current=True, retrieved_at=st["retrieved_at"], retrieved_via=st["retrieved_via"],
+                sid_basis=t["basis"],
+                id_basis="downloaded-by-id:" + ("md5-equal" if st.get("md5_check") == "equal" else "size-only"))
             # HTTP validators as received; the raw Content-Disposition stays in the acquisition state
             # (the file name is already recorded, correctly decoded, as storage_filename).
             rec["source"]["http"] = {k: v for k, v in ((st.get("http") or {}).get("headers") or {}).items()
@@ -390,11 +419,13 @@ def stage_editions(args) -> int:
             rec["edition_id"] = f"cn-{sid}-pending"
             rec["pdf"] = None
             rec["source"] = source_block(sid, meta, current=True, retrieved_at=None, retrieved_via=None,
-                                         sid_basis=t["basis"])
+                                         sid_basis=t["basis"], id_basis="platform-record")
             rec["status"] = "pending-verification"
             rec["provenance"] = "acquisition-" + (st.get("state") or "not-attempted")
             spec = {"mode": "none", "relation": "none", "reason": "PDF not acquired: " + (st.get("state") or "not attempted")}
-        rec["storage"] = {"vps": None, "drive": None, "upstream": {"available": True, "url": UPSTREAM_PDF + sid}}
+        rec["storage"] = {"vps": None, "drive": None,
+                          "upstream": {"available": True, "url": UPSTREAM_PDF + sid, "note": None}}
+        rec.update({"platform_current": True, "newer_edition_id": None, "supersedes_edition_id": None})
         if alias:
             rec["legacy"] = {"sun_book_key": None, "jc_short_key": None, "jks_slug": alias["slug"],
                              "basis": None, "in_sun_search": False,
@@ -419,7 +450,9 @@ def stage_editions(args) -> int:
             "edition_id": f"cn-x-legacy-{b['shortKey']}",
             "source": source_block(None, None, current=None, retrieved_at=None, retrieved_via=None, sid_basis=None),
             "pdf": None,
-            "storage": {"vps": None, "drive": None, "upstream": {"available": False, "url": None}},
+            "platform_current": False, "newer_edition_id": None, "supersedes_edition_id": None,
+            "storage": {"vps": None, "drive": None,
+                        "upstream": {"available": False, "url": None, "note": "SmartEdu id unknown"}},
             "legacy": {"sun_book_key": b["id"], "jc_short_key": b["shortKey"], "jks_slug": None,
                        "basis": "identifier:jc-book-key", "in_sun_search": b["id"] in sun_keys,
                        "alias_candidate": None},

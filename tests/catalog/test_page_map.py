@@ -65,6 +65,15 @@ class FolioTests(unittest.TestCase):
         self.assertEqual(res["labels"][49], {"printed_label": "46", "printed_verified": False})
         self.assertEqual(res["labels"][50], {"printed_label": "47", "printed_verified": True})
 
+    def test_page_showing_a_different_number_gets_no_label(self):
+        pages = book(100, 4)
+        pages[49] = rec(50, 77)            # pdf page 50 should print 46 but 77 was read there
+        res = page_map.verify_folios(pages)
+        self.assertTrue(res["verified"])
+        self.assertEqual(res["labels"][49], {"printed_label": None, "printed_verified": False})
+        self.assertEqual(res["labels"][48]["printed_label"], "45")
+        self.assertEqual(res["labels"][50]["printed_label"], "47")
+
     def test_nothing_is_asserted_after_the_last_verified_page(self):
         pages = book(100, 4, skip=lambda p: p > 95)
         res = page_map.verify_folios(pages)
@@ -205,7 +214,7 @@ class LegacyAnchorTests(unittest.TestCase):
         self.assertFalse(m["accepted"])
         self.assertEqual(m["reason"], "contradictory-anchors")
         self.assertEqual(m["rows"], {})
-        self.assertEqual(m["relation"], "partial")
+        self.assertEqual(m["relation"], "different-edition")   # the pagination differs somewhere
 
     def test_two_supported_offsets_mean_a_different_edition(self):
         pairs = [(k, k + 2) for k in (3, 10, 17, 25, 33)] + [(k, k + 5) for k in (48, 61, 77, 90)]
@@ -219,6 +228,46 @@ class LegacyAnchorTests(unittest.TestCase):
         m = page_map.legacy_mapping(page_map.collect_anchors(self.index, self.hits(pairs)), 100, 99)
         self.assertFalse(m["accepted"])
         self.assertEqual(m["split_legacy_pages"], 1)
+
+    def test_gap_of_sixteen_is_filled_and_seventeen_is_not(self):
+        base = [(k, k + 1) for k in (2, 10, 18, 26, 34, 42, 50)]
+        for width, filled in ((16, True), (17, False)):
+            pairs = base + [(50 + width, 51 + width), (90, 91)]
+            m = page_map.legacy_mapping(page_map.collect_anchors(self.index, self.hits(pairs)), 100, 100)
+            self.assertTrue(m["accepted"])
+            self.assertEqual(52 in m["rows"], filled, width)             # first row inside the stretch
+            self.assertEqual(m["rows"][51], (50, "anchor"))
+            self.assertEqual(m["rows"][51 + width], (50 + width, "anchor"))
+            if not filled:
+                self.assertEqual(m["wide_gaps"][0], {"from_pdf_page": 51, "to_pdf_page": 68, "unfilled_rows": 16})
+                self.assertGreaterEqual(m["rows_nulled_by_gap_rule"], 16)
+
+    def test_insertion_and_removal_inside_a_wide_gap_is_not_silently_accepted(self):
+        # A revision adds a page after legacy 45 and drops one after legacy 60: totals are equal and
+        # every anchor outside 45..60 still sits at offset 0. Nothing inside the stretch was compared,
+        # so none of its rows may be filled and the book may not be called aligned.
+        pairs = [(k, k + 1) for k in (4, 10, 16, 22, 28, 34, 40)] + [(k, k + 1) for k in (66, 72, 78, 84, 90, 96)]
+        m = page_map.legacy_mapping(page_map.collect_anchors(self.index, self.hits(pairs)), 100, 100)
+        self.assertTrue(m["accepted"])
+        self.assertTrue(m["reaches_end"])
+        self.assertEqual(m["relation"], "partial")
+        self.assertEqual(m["wide_gaps"], [{"from_pdf_page": 41, "to_pdf_page": 67, "unfilled_rows": 25}])
+        self.assertTrue(all(p not in m["rows"] for p in range(42, 67)))
+        self.assertEqual(m["rows"][41], (40, "anchor"))
+        self.assertEqual(m["rows"][67], (66, "anchor"))
+        self.assertEqual(m["rows"][100], (99, "tail-consistent"))
+
+    def test_head_and_tail_are_filled_only_within_the_gap_limit(self):
+        pairs = [(k, k + 1) for k in range(20, 81, 6)]                     # first anchor at 20, last at 80
+        m = page_map.legacy_mapping(page_map.collect_anchors(self.index, self.hits(pairs)), 100, 100)
+        self.assertTrue(m["accepted"])
+        self.assertNotIn(1, m["rows"])                                    # 20 pages before the first anchor
+        self.assertNotIn(100, m["rows"])                                  # anchors stop before the last 15 %
+        self.assertEqual(m["relation"], "partial")
+
+    def test_too_few_anchors_establish_nothing(self):
+        m = page_map.legacy_mapping(page_map.collect_anchors(self.index, self.hits([(3, 4), (9, 10)])), 100, 100)
+        self.assertEqual((m["accepted"], m["relation"], m["rows"]), (False, "none", {}))
 
     def test_fewer_than_eight_anchors_are_not_enough(self):
         pairs = [(k, k + 2) for k in (3, 10, 17, 25, 33, 48, 61)]
@@ -278,6 +327,25 @@ class InspectTests(unittest.TestCase):
             again, hit2 = inspect_pdf.inspect(path, self.tmp / "cache")
         self.assertTrue(hit2)
         self.assertEqual(again, rec_)
+
+    def test_watermark_only_pages_are_not_text_pages(self):
+        doc = pymupdf.open()
+        pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 40, 40), False)
+        pix.clear_with(180)
+        for kind in ("plate", "empty", "body"):
+            page = doc.new_page(width=420, height=595)
+            page.insert_text((60, 580), "仅供个人学习使用，未经授权不得另做他用", fontname="china-s", fontsize=8)
+            if kind == "plate":
+                page.insert_image(pymupdf.Rect(20, 20, 400, 500), pixmap=pix)
+            if kind == "body":
+                page.insert_text((60, 120), "Real body text on this page, long enough.", fontsize=11)
+        path = self.tmp / "w.pdf"
+        doc.save(str(path))
+        doc.close()
+        rec_, _ = inspect_pdf.inspect(path, self.tmp / "cache")
+        self.assertEqual([p["kind"] for p in rec_["page_texts"]], ["ocr_needed", "blank", "text"])
+        self.assertEqual((rec_["ocr_needed_pages"], rec_["blank_pages"], rec_["text_pages"]), (1, 1, 1))
+        self.assertIn("仅供个人学习使用", rec_["page_texts"][0]["text"])       # the raw text is kept as read
 
     def test_image_only_pages_are_ocr_needed_not_invented(self):
         path = self.make_pdf("b.pdf", n=12, image_only=range(1, 13))
