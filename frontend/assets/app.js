@@ -4,26 +4,15 @@ const API = '';  // same origin
 const PHASE = document.body.dataset.phase || '高中';
 const DISPLAY_PHASE = PHASE;
 window._subjectMeta = {};
-// Canonical external AI gateway for this project: Worker custom domain -> service `apis` / production.
-const AI_API = 'https://ai.bdfz.net/';
-const AI_API_FALLBACK = 'https://apis.bdfz.workers.dev/';
-const AI_CHAT_MODEL = 'gemini-flash-latest';
-const AI_CONTEXT_TIMEOUT_MS = 15000;
-const AI_PRECISION_CONTEXT_TIMEOUT_MS = 30000;
-const AI_SERVER_CHAT_TIMEOUT_MS = 45000;
-const AI_PRECISION_SERVER_CHAT_TIMEOUT_MS = 60000;
-const AI_DIRECT_REQUEST_TIMEOUT_MS = 25000;
-const AI_BROWSER_FALLBACK_DELAY_MS = 8000;
-const AI_PRECISION_BROWSER_FALLBACK_DELAY_MS = 18000;
+// AI runs only on an explicit user action and only through this site's own server
+// (assets/ai-client.js → POST /api/chat). The browser never contacts a model gateway.
 const IMG_CDN = 'https://img.rdfzer.com';
-const DEFAULT_FRONTEND_VERSION = '2026.03.10-r20';
+const DEFAULT_FRONTEND_VERSION = '2026.10.11-r43';
 const FRONTEND_VERSION_FILE = '/assets/version.json';
 const AI_MEMORY_LIMIT = 12;
-const AI_AUTO_TRIGGER_DELAY_MS = 120;
 const DOWNLOADABLE_LIBRARY_BOOKS = 316;
 let latestStats = null;
 let aiProviderLabel = 'Gemini';
-let aiAutoRequestedKey = '';
 
 // ── AI Chat (Memory + Copy) ───────────────────────────────
 const aiPanel = document.getElementById('ai-panel');
@@ -37,6 +26,11 @@ const aiStarters = document.getElementById('ai-starters');
 
 let aiConversation = [];
 let aiRequestPending = false;
+let aiActiveRequest = null;      // { promise, cancel } of the single in-flight request
+let aiConversationEpoch = 0;     // bumped on every reset; answers from an older epoch are dropped
+const AI_BUTTON_LABEL_DEFAULT = 'AI 教材解读';
+const AI_BUTTON_LABEL_PRECISION = '让 AI 结合检索结果解答';
+if (aiFollowupInput) aiFollowupInput.maxLength = 800;
 
 if (aiBtn) aiBtn.addEventListener('click', () => requestAISynthesis());
 if (aiSendBtn) aiSendBtn.addEventListener('click', () => requestAIFollowup());
@@ -54,66 +48,6 @@ function setSearchAIProviderLabel(label) {
     aiProviderLabel = label || 'Gemini';
     const badge = document.querySelector('#ai-result .ai-model');
     if (badge) badge.textContent = aiProviderLabel;
-}
-
-function logClientAIChat({ query, userMessage, summary, provider, success, error }) {
-    fetch(`${API}/api/chat/log`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            query,
-            user_message: userMessage,
-            summary: summary || {},
-            provider: provider || aiProviderLabel,
-            success: Boolean(success),
-            error: error || '',
-            phase: PHASE,
-        }),
-    }).catch(() => {});
-}
-
-async function fetchWithTimeout(url, options = {}, timeoutMs = AI_SERVER_CHAT_TIMEOUT_MS) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-        return await fetch(url, { ...options, signal: controller.signal });
-    } catch (error) {
-        if (error.name === 'AbortError') {
-            throw new Error(`请求超时 (${Math.round(timeoutMs / 1000)}s)`);
-        }
-        throw error;
-    } finally {
-        clearTimeout(timer);
-    }
-}
-
-function delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-async function readJsonLike(response) {
-    const raw = await response.text();
-    if (!raw) return { data: {}, raw: '' };
-    try {
-        return { data: JSON.parse(raw), raw };
-    } catch (_) {
-        return { data: null, raw };
-    }
-}
-
-function responseErrorMessage(response, data, raw, fallbackMessage) {
-    if (data && typeof data === 'object') {
-        if (typeof data.detail === 'string' && data.detail.trim()) return data.detail.trim();
-        if (typeof data.error === 'string' && data.error.trim()) return data.error.trim();
-        if (typeof data.message === 'string' && data.message.trim()) return data.message.trim();
-    }
-
-    const normalizedRaw = String(raw || '').replace(/\s+/g, ' ').trim();
-    if (!normalizedRaw) return `${fallbackMessage} (${response.status})`;
-    if (normalizedRaw.startsWith('<!DOCTYPE') || normalizedRaw.startsWith('<html')) {
-        return `${fallbackMessage} (${response.status})`;
-    }
-    return normalizedRaw.slice(0, 180);
 }
 
 const AI_PRECISION_PATTERNS = [
@@ -293,7 +227,16 @@ function isStructuralFallbackTerm(term, precisionProfile = null) {
     return false;
 }
 
+function updateAIButtonLabel() {
+    if (!aiBtn) return;
+    const profile = currentQuery ? inferAIQueryProfile(currentQuery) : null;
+    const label = profile && profile.mode === 'precision_agent' ? AI_BUTTON_LABEL_PRECISION : AI_BUTTON_LABEL_DEFAULT;
+    const textNode = Array.from(aiBtn.childNodes).find(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
+    if (textNode) textNode.textContent = ` ${label}\n                    `;
+}
+
 function renderAIStarters() {
+    updateAIButtonLabel();
     if (!aiStarters) return;
     if (!currentQuery || !hasSearchResults()) {
         aiStarters.innerHTML = '';
@@ -333,244 +276,6 @@ function renderAIStarters() {
     aiStarters.querySelectorAll('.ai-starter-chip').forEach(btn => {
         btn.addEventListener('click', () => sendAIMessage(btn.dataset.prompt));
     });
-}
-
-async function fetchAIContext(userMessage, history, timeoutMs = AI_CONTEXT_TIMEOUT_MS) {
-    const res = await fetchWithTimeout(`${API}/api/chat/context`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildAIServerPayload(userMessage, history)),
-    }, timeoutMs);
-    const { data, raw } = await readJsonLike(res);
-    if (!res.ok || !data) {
-        throw new Error(responseErrorMessage(res, data, raw, '上下文构建失败'));
-    }
-    return data;
-}
-
-async function requestServerChat(payload, timeoutMs = AI_SERVER_CHAT_TIMEOUT_MS) {
-    const res = await fetchWithTimeout(`${API}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-    }, timeoutMs);
-    const { data, raw } = await readJsonLike(res);
-    if (!res.ok || !data) {
-        throw new Error(responseErrorMessage(res, data, raw, 'AI 对话失败'));
-    }
-    return data;
-}
-
-async function requestDirectChat(prompt, fallbackMessage = 'AI 服务错误') {
-    const endpoints = [AI_API, AI_API_FALLBACK];
-    let lastError = null;
-
-    for (const endpoint of endpoints) {
-        try {
-            const aiRes = await fetchWithTimeout(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    prompt,
-                    model: AI_CHAT_MODEL,
-                    taskType: 'chat',
-                    thinkingLevel: 'low',
-                }),
-            }, AI_DIRECT_REQUEST_TIMEOUT_MS);
-            const { data: aiData, raw: aiRaw } = await readJsonLike(aiRes);
-            if (!aiRes.ok || !aiData?.answer) {
-                throw new Error(responseErrorMessage(aiRes, aiData, aiRaw, fallbackMessage));
-            }
-            return {
-                answer: aiData.answer,
-                providerLabel: endpoint === AI_API ? 'Gemini · 浏览器直连' : 'Gemini · 浏览器备用链路',
-            };
-        } catch (error) {
-            lastError = error;
-        }
-    }
-
-    throw lastError || new Error(fallbackMessage);
-}
-
-function buildClientAIPrompt(userMessage, contextPayload, history) {
-    const historyText = (contextPayload.history_text || '').trim()
-        || history.map(msg => `${msg.role === 'user' ? '用户' : '助手'}: ${msg.content}`).join('\n')
-        || '（无）';
-    const queryProfile = contextPayload.query_profile || inferAIQueryProfile(contextPayload.query || currentQuery, userMessage);
-    const mode = contextPayload.mode || queryProfile.mode;
-
-    if (mode === 'precision_agent') {
-        const rounds = (contextPayload.summary && contextPayload.summary.agent_rounds) || [];
-        const intentLabel = {
-            definition: '定义检索',
-            comparison: '比较检索',
-            example: '例证检索',
-            reason: '因果检索',
-            process: '过程检索',
-        }[queryProfile.intent] || '精准检索';
-        return `你是一位严谨的教材检索助手。当前搜索词是「${contextPayload.query || currentQuery}」，用户当前要解决的是「${queryProfile.target || currentQuery}」的${intentLabel}。
-
-Agent 检索轮次：${rounds.length} 轮
-本轮检索关注词：
-${(contextPayload.search_terms_used || [currentQuery]).join('、')}
-
-检索扩展词：
-${(contextPayload.retrieval_terms_used || contextPayload.search_terms_used || [currentQuery]).join('、')}
-
-术语解析：
-${contextPayload.query_resolution_text || '（无）'}
-
-教材证据：
-${contextPayload.context_text || '（无）'}
-
-历史对话：
-${historyText}
-
-用户本轮问题：
-${userMessage}
-
-请按以下规则回答：
-1. 先直接回答问题本身，不要先空泛铺垫。
-2. 只能根据教材证据作答，每个核心判断尽量附 1 个出处，格式：[学科·书名·p页码]。
-3. 如果用户在问“定义”，先给最短可背诵表述，再补 1-2 个关键特征。
-4. 如果证据不足或检索结果彼此不一致，必须明确写“教材证据不足”。
-5. 忽略低相关结果，不要为了凑字数复述无关内容。
-6. 若用户继续追问，保持连续回答，不重复整段前文。
-7. 总长度尽量控制在 220 字以内。`;
-    }
-
-    return `你是一位资深跨学科教育专家。用户当前搜索词是「${contextPayload.query || currentQuery}」。
-
-本轮检索关注词：
-${(contextPayload.search_terms_used || [currentQuery]).join('、')}
-
-检索扩展词（含别名）：
-${(contextPayload.retrieval_terms_used || contextPayload.search_terms_used || [currentQuery]).join('、')}
-
-概念别名 / 同义表达：
-${contextPayload.alias_text || '（无）'}
-
-概念关系提示：
-${contextPayload.relation_text || '（无）'}
-
-教材证据（多学科原文）：
-${contextPayload.context_text || '（无）'}
-
-${PHASE === '高中' ? '高考证据（如有）' : '考试证据（如有）'}：
-${contextPayload.gaokao_text || '（无）'}
-
-历史对话：
-${historyText}
-
-用户本轮问题：
-${userMessage}
-
-请按以下结构回答：
-【核心结论】先用 1-2 句讲清本质。
-【学科联动】分点说明不同学科如何描述同一概念，尽量标注出处，格式：[学科·书名·p页码]。
-${PHASE === '高中' ? '【高考考法】如果给定证据里有真题，再说明常见考法 / 易错点；没有就写”高考证据不足”。' : '【考点提示】说明常见考法 / 易错点。'}
-【学习建议】给出面向${DISPLAY_PHASE}生的复习顺序或追问方向。
-
-规则：
-1. 只根据给定证据回答，不要编造页码或教材内容。
-2. 如果证据不足，必须明确说“证据不足”。
-3. 若用户追问，保持连续回答，不重复整段前文。
-4. 可以参考“概念别名 / 关系提示”组织答案，但不能把它们当成教材原文引用。
-5. 语言简洁、具体，避免空泛套话。
-6. 总长度尽量控制在 280 字以内。`;
-}
-
-function toPlainText(value) {
-    return String(value || '')
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-function defaultFollowupPrompts() {
-    if (!currentQuery) return [];
-    const profile = inferAIQueryProfile(currentQuery);
-    if (profile.mode === 'precision_agent') {
-        return [
-            `请只根据教材原文，进一步说明「${profile.target}」的关键特征。`,
-            `「${profile.target}」最容易和哪些概念混淆？`,
-            `如果要背「${profile.target}」，最短表述是什么？`,
-        ];
-    }
-    return [
-        `请用一个关键词概括「${currentQuery}」的核心。`,
-        PHASE === '高中' ? `「${currentQuery}」在高考里最常见的考法是什么？` : `「${currentQuery}」在考试中最常见的考法是什么？`,
-        `围绕「${currentQuery}」最容易混淆的概念有哪些？`,
-    ];
-}
-
-function buildFallbackContextPayload(userMessage, history) {
-    const groups = Array.isArray(currentData?.groups) ? currentData.groups : [];
-    const evidence = [];
-    const textbookLines = [];
-    const gaokaoLines = [];
-    const queryProfile = inferAIQueryProfile(currentQuery, userMessage);
-    let textbookCount = 0;
-    let gaokaoCount = 0;
-
-    groups.slice(0, 6).forEach(group => {
-        (group.results || []).slice(0, 2).forEach(result => {
-            const plainSnippet = toPlainText(result.snippet || result.text).slice(0, 180);
-            const title = result.title || group.subject || currentQuery;
-            const line = `${group.subject}｜${title}｜${plainSnippet || '见当前检索结果'}`;
-
-            if (result.source === 'gaokao') {
-                gaokaoCount += 1;
-                gaokaoLines.push(line);
-            } else {
-                textbookCount += 1;
-                textbookLines.push(line);
-            }
-
-            evidence.push({
-                title,
-                subject: group.subject,
-                source: result.source,
-                book_key: result.book_key,
-                page_num: result.page_num,
-                logical_page: result.logical_page,
-                page_url: result.page_url,
-                snippet: plainSnippet,
-                citation: `${group.subject}·${title}`,
-            });
-        });
-    });
-
-    const matchedConcepts = Array.from(new Set(
-        groups.flatMap(group => (group.results || []).flatMap(result => result.matched_concepts || []))
-    )).slice(0, 8);
-    const coverageLine = `覆盖 ${Object.keys(currentData?.subject_counts || {}).length} 个学科，教材命中 ${textbookCount} 条` + (gaokaoCount > 0 ? `，真题例子 ${gaokaoCount} 条` : '');
-
-    return {
-        mode: queryProfile.mode,
-        query: currentQuery,
-        user_message: userMessage,
-        query_profile: queryProfile,
-        search_terms_used: [currentQuery],
-        retrieval_terms_used: [currentQuery],
-        alias_text: '（无）',
-        relation_text: matchedConcepts.length ? `相关概念：${matchedConcepts.join('、')}` : '（无）',
-        context_text: textbookLines.join('\n') || '（无）',
-        gaokao_text: gaokaoLines.join('\n') || '（无）',
-        history_text: history.map(msg => `${msg.role === 'user' ? '用户' : '助手'}: ${msg.content}`).join('\n') || '（无）',
-        summary: {
-            coverage_line: coverageLine,
-            search_terms_used: [currentQuery],
-            retrieval_terms_used: [currentQuery],
-            top_subjects: groups.slice(0, 4).map(group => ({ subject: group.subject, count: group.count || 0 })),
-            relation_hint_count: matchedConcepts.length,
-            query_intent: queryProfile.intent,
-            gaokao_hit_count: gaokaoCount,
-        },
-        suggested_questions: defaultFollowupPrompts().filter(prompt => prompt !== userMessage),
-        evidence: evidence.slice(0, 6),
-    };
 }
 
 function bindOpenPageButtons(root, selector = '.ai-source-chip') {
@@ -658,26 +363,51 @@ function renderAIFollowups(prompts) {
     `;
 }
 
+function renderAICitationNote(check) {
+    if (!check || !check.unverified_count) return '';
+    return `<div class="ai-msg-context"><div class="ai-context-line">回答中有 ${Number(check.unverified_count)} 处页码未能在本次检索证据中核对，请以下方出处为准。</div></div>`;
+}
+
 function renderAIConversation() {
     if (!aiContent) return;
-    if (!aiConversation.length) {
+    if (!aiConversation.length && !aiRequestPending) {
         aiContent.innerHTML = '';
         return;
     }
-    aiContent.innerHTML = aiConversation.map((msg, index) => `
+    const lastIndex = aiConversation.length - 1;
+    const messagesHtml = aiConversation.map((msg, index) => `
         <div class="ai-msg ${msg.role === 'user' ? 'user' : 'assistant'}">
             <div class="ai-msg-role">${msg.role === 'user' ? '你' : 'AI'}</div>
             ${msg.role === 'assistant' ? renderAIContextSummary(msg.contextSummary) : ''}
             <div class="ai-msg-text">${escHtml(msg.content)}</div>
+            ${msg.role === 'assistant' ? renderAICitationNote(msg.citationCheck) : ''}
             ${msg.role === 'assistant' ? renderAISources(msg.sources) : ''}
-            ${msg.role === 'assistant' && index === aiConversation.length - 1 ? renderAIFollowups(msg.followups) : ''}
+            ${msg.isError && msg.retryMessage && index === lastIndex && !aiRequestPending
+                ? '<div class="ai-msg-followups"><button class="ai-followup-chip ai-retry-btn" type="button">重试</button></div>'
+                : ''}
+            ${msg.role === 'assistant' && !msg.isError && index === lastIndex && !aiRequestPending ? renderAIFollowups(msg.followups) : ''}
         </div>
-    `).join('') + `<span class="ai-source">📡 由 ${escHtml(aiProviderLabel)} 生成 · 数据来源：${escHtml(getAISourceLabel())}</span>`;
+    `).join('');
+    const pendingHtml = aiRequestPending ? `
+        <div class="ai-msg assistant">
+            <div class="ai-msg-role">AI</div>
+            <div class="ai-msg-text">正在结合检索结果生成解答…</div>
+            <div class="ai-msg-followups"><button class="ai-followup-chip ai-cancel-btn" type="button">取消</button></div>
+        </div>
+    ` : '';
+    aiContent.innerHTML = messagesHtml + pendingHtml
+        + `<span class="ai-source">📡 由 ${escHtml(aiProviderLabel)} 生成 · 数据来源：${escHtml(getAISourceLabel())}</span>`;
 
+    // The answer above is plain escaped text. Page links exist only on these chips,
+    // which are built from the server's retrieval records (book_key / section), never from model text.
     bindOpenPageButtons(aiContent, '.ai-source-chip');
-    aiContent.querySelectorAll('.ai-followup-chip').forEach(btn => {
+    aiContent.querySelectorAll('.ai-followup-chip[data-prompt]').forEach(btn => {
         btn.addEventListener('click', () => sendAIMessage(btn.dataset.prompt));
     });
+    const cancelBtn = aiContent.querySelector('.ai-cancel-btn');
+    if (cancelBtn) cancelBtn.addEventListener('click', () => cancelAIRequest());
+    const retryBtn = aiContent.querySelector('.ai-retry-btn');
+    if (retryBtn) retryBtn.addEventListener('click', () => retryLastAIMessage());
 }
 
 function setAIBusy(isBusy) {
@@ -690,11 +420,36 @@ function setAIBusy(isBusy) {
     }
     if (aiSendBtn) aiSendBtn.disabled = isBusy;
     if (aiFollowupInput) aiFollowupInput.disabled = isBusy;
+    if (aiStarters) {
+        aiStarters.querySelectorAll('.ai-starter-chip').forEach(btn => { btn.disabled = isBusy; });
+    }
+}
+
+function cancelAIRequest() {
+    if (aiActiveRequest) aiActiveRequest.cancel();
+}
+
+function retryLastAIMessage() {
+    if (aiRequestPending) return;
+    const last = aiConversation[aiConversation.length - 1];
+    if (!last || !last.isError || !last.retryMessage) return;
+    const message = last.retryMessage;
+    aiConversation.pop();
+    const previous = aiConversation[aiConversation.length - 1];
+    if (previous && previous.role === 'user' && previous.content === message) aiConversation.pop();
+    sendAIMessage(message);
 }
 
 function resetAIConversation() {
+    // A new search / subject is a new conversation: abort the in-flight request and
+    // make sure its answer can never be rendered into the new one.
+    aiConversationEpoch += 1;
+    if (aiActiveRequest) {
+        aiActiveRequest.cancel();
+        aiActiveRequest = null;
+    }
+    setAIBusy(false);
     aiConversation = [];
-    aiAutoRequestedKey = '';
     if (aiContent) aiContent.innerHTML = '';
     if (aiResult) aiResult.classList.add('hidden');
     if (aiFollowupInput) aiFollowupInput.value = '';
@@ -702,105 +457,73 @@ function resetAIConversation() {
     renderAIStarters();
 }
 
+function trimAIConversation() {
+    if (aiConversation.length > AI_MEMORY_LIMIT) {
+        aiConversation = aiConversation.slice(-AI_MEMORY_LIMIT);
+    }
+}
+
+// Explicit user action only (button, starter chip, follow-up chip, send, retry).
+// Exactly one server request; no fallback, no race, no automatic retry.
 async function sendAIMessage(userMessage) {
-    if (!currentData || !currentQuery || aiRequestPending) return;
+    if (!currentData || !currentQuery || aiRequestPending || !window.SunAI) return;
     const groups = currentData.groups || [];
     if (!groups.length) return;
     const cleanMessage = (userMessage || '').trim();
     if (!cleanMessage) return;
 
-    const history = aiConversation.slice(-8);
+    const history = window.SunAI.boundedHistory(aiConversation);
+    const epoch = aiConversationEpoch;
+    const executionKey = getAIExecutionKey();
 
     aiConversation.push({ role: 'user', content: cleanMessage });
-    if (aiConversation.length > AI_MEMORY_LIMIT) {
-        aiConversation = aiConversation.slice(-AI_MEMORY_LIMIT);
-    }
+    trimAIConversation();
     if (aiResult) aiResult.classList.remove('hidden');
-    renderAIConversation();
     if (aiCopyBtn) aiCopyBtn.classList.remove('hidden');
     if (aiFollowupInput) aiFollowupInput.value = '';
 
+    const request = window.SunAI.ask(`${API}/api/chat`, buildAIServerPayload(cleanMessage, history));
+    aiActiveRequest = request;
     setAIBusy(true);
+    renderAIConversation();
+
+    let reply = null;
     try {
-        let answer = '';
-        let contextPayload = null;
-        let usedBrowserFallback = false;
-        const queryProfile = inferAIQueryProfile(currentQuery, cleanMessage);
-        const isPrecisionMode = queryProfile.mode === 'precision_agent';
-        const contextTimeoutMs = isPrecisionMode ? AI_PRECISION_CONTEXT_TIMEOUT_MS : AI_CONTEXT_TIMEOUT_MS;
-        const serverTimeoutMs = isPrecisionMode ? AI_PRECISION_SERVER_CHAT_TIMEOUT_MS : AI_SERVER_CHAT_TIMEOUT_MS;
-        const browserFallbackDelayMs = isPrecisionMode ? AI_PRECISION_BROWSER_FALLBACK_DELAY_MS : AI_BROWSER_FALLBACK_DELAY_MS;
-        const contextPromise = fetchAIContext(cleanMessage, history, contextTimeoutMs);
-
-        const payload = buildAIServerPayload(cleanMessage, history);
-
-        const serverPromise = requestServerChat(payload, serverTimeoutMs).then(data => ({
-            channel: 'server',
-            answer: data.answer || '',
-            contextPayload: data.context || {},
-            providerLabel: data.provider || aiProviderLabel,
-        }));
-
-        const browserFallbackRequest = async ({ withDelay = true } = {}) => {
-            if (withDelay) {
-                await delay(browserFallbackDelayMs);
-            }
-            let fullContext = null;
-            try {
-                fullContext = await contextPromise;
-            } catch (_) {
-                fullContext = buildFallbackContextPayload(cleanMessage, history);
-            }
-            const prompt = buildClientAIPrompt(cleanMessage, fullContext, history);
-            const direct = await requestDirectChat(prompt, 'AI 服务错误');
-            return {
-                channel: 'browser',
-                answer: direct.answer,
-                contextPayload: {
-                    summary: fullContext.summary || null,
-                    suggested_questions: fullContext.suggested_questions || [],
-                    evidence: fullContext.evidence || [],
-                },
-                providerLabel: direct.providerLabel,
+        const data = await request.promise;
+        if (epoch !== aiConversationEpoch) return;
+        if (executionKey !== getAIExecutionKey()) {
+            reply = { role: 'assistant', isError: true, content: '检索范围已变化，本次回答未显示。', retryMessage: cleanMessage };
+        } else {
+            const contextPayload = data.context || {};
+            setSearchAIProviderLabel(data.provider || aiProviderLabel);
+            reply = {
+                role: 'assistant',
+                content: String(data.answer || ''),
+                contextSummary: contextPayload.summary || null,
+                citationCheck: data.citation_check || null,
+                followups: (contextPayload.suggested_questions || []).filter(prompt => prompt !== cleanMessage),
+                sources: (contextPayload.evidence || []).map(src => ({
+                    ...src,
+                    total_pages: (window._bookPages && window._bookPages[src.book_key]?.pages) || 0,
+                })),
             };
-        };
-
-        const winner = isPrecisionMode
-            ? await serverPromise.catch(() => browserFallbackRequest({ withDelay: false }))
-            : await Promise.any([serverPromise, browserFallbackRequest()]);
-        answer = winner.answer;
-        contextPayload = winner.contextPayload;
-        usedBrowserFallback = winner.channel === 'browser';
-        setSearchAIProviderLabel(winner.providerLabel);
-
-        if (usedBrowserFallback) {
-            logClientAIChat({
-                query: currentQuery,
-                userMessage: cleanMessage,
-                summary: contextPayload?.summary || {},
-                provider: aiProviderLabel,
-                success: true,
-            });
         }
-
-        aiConversation.push({
-            role: 'assistant',
-            content: answer,
-            contextSummary: contextPayload?.summary || null,
-            followups: (contextPayload?.suggested_questions || []).filter(prompt => prompt !== cleanMessage),
-            sources: (contextPayload?.evidence || []).map(src => ({
-                ...src,
-                total_pages: (window._bookPages && window._bookPages[src.book_key]?.pages) || 0,
-            })),
-        });
     } catch (e) {
-        aiConversation.push({ role: 'assistant', content: `请求失败: ${e.message}` });
+        if (epoch !== aiConversationEpoch) return;
+        reply = {
+            role: 'assistant',
+            isError: true,
+            content: e && e.cancelled ? e.message : `请求失败：${(e && e.message) || '未知错误'}`,
+            retryMessage: cleanMessage,
+        };
     } finally {
-        if (aiConversation.length > AI_MEMORY_LIMIT) {
-            aiConversation = aiConversation.slice(-AI_MEMORY_LIMIT);
+        if (epoch === aiConversationEpoch) {
+            if (aiActiveRequest === request) aiActiveRequest = null;
+            if (reply) aiConversation.push(reply);
+            trimAIConversation();
+            setAIBusy(false);
+            renderAIConversation();
         }
-        renderAIConversation();
-        setAIBusy(false);
     }
 }
 
@@ -819,20 +542,6 @@ async function requestAISynthesis() {
         return;
     }
     await sendAIMessage(`请只根据当前教材结果解释「${currentQuery}」的核心，并给出最相关出处。`);
-}
-
-function maybeAutoTriggerAI() {
-    if (!hasSearchResults() || aiConversation.length || aiRequestPending) return;
-    const profile = inferAIQueryProfile(currentQuery);
-    if (profile.mode !== 'precision_agent') return;
-    const key = getAIExecutionKey();
-    if (aiAutoRequestedKey === key) return;
-    aiAutoRequestedKey = key;
-    setTimeout(() => {
-        if (aiConversation.length || aiRequestPending) return;
-        if (getAIExecutionKey() !== key) return;
-        requestAISynthesis();
-    }, AI_AUTO_TRIGGER_DELAY_MS);
 }
 
 async function requestAIFollowup() {
@@ -1165,11 +874,10 @@ function renderResults(data, filterSubject = null, subjectCountsOverride = null)
 
     const counts = subjectCountsOverride || data.subject_counts || {};
 
-    // AI panel: available for any non-empty result set; precision queries auto-trigger.
+    // AI panel: available for any non-empty result set. Nothing is sent to AI until the user clicks.
     if ((data.groups || []).length > 0) {
         aiPanel.classList.remove('hidden');
         renderAIStarters();
-        maybeAutoTriggerAI();
     } else {
         aiPanel.classList.add('hidden');
         if (aiStarters) {
@@ -1240,7 +948,7 @@ function renderResults(data, filterSubject = null, subjectCountsOverride = null)
                         ${r.source === 'gaokao' ? '<span class="source-badge gaokao">' + (PHASE === '高中' ? '📝 真题' : '📝 考试') + '</span>' : '<span class="source-badge textbook">📚 教材</span>'}
                         ${renderMatchChannelBadge(r)}
                         ${r.image_count > 0 ? `<span class="img-badge">📷 ${r.image_count}</span>` : ''}
-                        ${r.page_url ? `<span class="page-badge" title="第 ${r.page_num} 页 / 共 ${r.total_pages} 页">📄 p${r.logical_page ?? r.page_num}</span>` : ''}
+                        ${r.page_url ? `<span class="page-badge" title="${escAttr(pageRefTitle(r))}">📄 ${escHtml(pageRefLabel(r))}</span>` : ''}
                     </div>
                     ${renderEvidenceTrace(r, g.subject, subjectBreadth, data.query)}
                     <div class="result-snippet">${sanitizeSnippet(r.snippet)}</div>
@@ -1263,6 +971,7 @@ function renderResults(data, filterSubject = null, subjectCountsOverride = null)
     if (typeof renderKaTeX === 'function') {
         renderKaTeX(resultsEl);
     }
+    if (window.SunLibrary) window.SunLibrary.decorateSearchResults(resultsEl, groups); // library-tabs
 }
 
 function getSubjectIcon(s) {
@@ -1353,7 +1062,7 @@ function renderEvidenceTrace(result, subject, subjectBreadth, query) {
     }
 
     if (result.page_url) {
-        evidenceChips.push(`<span class="evidence-chip page">可回原页 p${result.logical_page ?? result.page_num}</span>`);
+        evidenceChips.push(`<span class="evidence-chip page">可回原页 ${escHtml(pageRefLabel(result))}</span>`);
     } else {
         evidenceChips.push('<span class="evidence-chip neutral">仅片段证据</span>');
     }
@@ -1518,6 +1227,20 @@ function renderKaTeX(container) {
 }
 
 // ── Page Image Viewer (Lightbox) ─────────────────────────
+// Page labels: the image is a page of the held PDF. Always "PDF 第 N 页"; the printed page
+// ("书页 p.X") only when the catalog verified it. The legacy image index is never shown.
+function pageRefLabel(item) {
+    const ref = item && (item.pdf_ref || item);
+    if (!ref || !ref.pdf_page) return '页图';
+    return `PDF 第 ${ref.pdf_page} 页` + (ref.printed_label ? ` · 书页 p.${ref.printed_label}` : '');
+}
+
+function pageRefTitle(item) {
+    const ref = item && item.pdf_ref;
+    if (!ref || !ref.pdf_page) return '页图';
+    return `PDF 第 ${ref.pdf_page} 页 / 共 ${ref.pdf_pages} 页` + (ref.printed_label ? ` · 书页 p.${ref.printed_label}（已核对）` : '');
+}
+
 function openPageViewer(bookKey, page, totalPages) {
     // Remove existing viewer
     const existing = document.getElementById('page-viewer');
@@ -1536,7 +1259,7 @@ function openPageViewer(bookKey, page, totalPages) {
         <div class="page-viewer-modal">
             <div class="page-viewer-header">
                 <span class="page-viewer-title">加载中...</span>
-                <span class="page-viewer-page">p${page}</span>
+                <span class="page-viewer-page"></span>
                 <button class="page-viewer-close" onclick="closePageViewer()">✕</button>
             </div>
             <div class="page-viewer-body">
@@ -1590,22 +1313,23 @@ function openPageViewer(bookKey, page, totalPages) {
 
     // Fetch page data from API
     fetch(`${API}/api/page-image?book_key=${encodeURIComponent(bookKey)}&page=${page}&context=${context}`)
-        .then(r => r.json())
+        .then(r => {
+            if (!r.ok) throw new Error(r.status === 404 ? '该页暂无页图' : '加载失败');
+            return r.json();
+        })
         .then(data => {
             window._pageViewerData = data;
-            window._pageViewerIdx = data.pages.findIndex(p => p.current);
+            window._pageViewerIdx = Math.max(0, data.pages.findIndex(p => p.current));
 
             // Update header
             viewer.querySelector('.page-viewer-title').textContent = data.title;
-            viewer.querySelector('.page-viewer-info').textContent =
-                `第 ${page + 1} 页 / 共 ${data.total_pages} 页`;
 
-            // Build thumbnails
+            // Build thumbnails (small renditions; the label is the PDF page)
             const thumbs = viewer.querySelector('.page-viewer-thumbnails');
             thumbs.innerHTML = data.pages.map((p, i) => `
                 <div class="page-thumb ${p.current ? 'active' : ''}" data-idx="${i}" onclick="pageViewerGo(${i})">
-                    <img src="${p.url}" alt="p${p.page}" loading="lazy" />
-                    <span>p${p.page + 1}</span>
+                    <img src="${escAttr(p.thumb_url || p.url)}" alt="PDF 第 ${Number(p.pdf_page) || ''} 页" loading="lazy" />
+                    <span>${Number(p.pdf_page) || ''}</span>
                 </div>
             `).join('');
 
@@ -1613,7 +1337,9 @@ function openPageViewer(bookKey, page, totalPages) {
             showPageViewerImage(window._pageViewerIdx);
         })
         .catch(e => {
-            viewer.querySelector('.page-viewer-title').textContent = '加载失败';
+            viewer.querySelector('.page-viewer-title').textContent = e && e.message ? e.message : '加载失败';
+            const loading = viewer.querySelector('.page-viewer-loading');
+            if (loading) loading.innerHTML = '<span>没有可显示的页图</span>';
         });
 }
 
@@ -1640,15 +1366,43 @@ function showPageViewerImage(idx) {
         img.style.display = 'block';
         requestAnimationFrame(() => { img.style.opacity = '1'; });
     };
+    // The image is rendered on demand the first time; when the renderer is busy (503/429)
+    // try again a few times before giving up.
+    let attempts = 0;
     img.onerror = () => {
+        if (window._pageViewerIdx !== idx || !document.getElementById('page-viewer')) return;
+        attempts += 1;
+        if (attempts <= 3) {
+            setTimeout(() => {
+                if (window._pageViewerIdx === idx) img.src = page.url + (page.url.includes('?') ? '&' : '?') + 'retry=' + attempts;
+            }, 2500 * attempts);
+            return;
+        }
         if (loading) loading.innerHTML = '<span>图片加载失败</span>';
     };
     img.src = page.url;
-    img.alt = `第 ${page.page + 1} 页`;
+    img.alt = pageRefLabel(page);
 
-    viewer.querySelector('.page-viewer-page').textContent = `p${page.page + 1}`;
-    viewer.querySelector('.page-viewer-info').textContent =
-        `第 ${page.page + 1} 页 / 共 ${data.total_pages} 页`;
+    viewer.querySelector('.page-viewer-page').textContent = pageRefLabel(page);
+    const info = viewer.querySelector('.page-viewer-info');
+    info.textContent = `${pageRefLabel(page)} / 共 ${data.pdf_total_pages} 页`
+        + (page.legacy_content_revised ? ' · 此页位置对应，现行版内容已修订' : '')
+        + (data.text_identity === 'page-aligned-other-printing' ? ' · 检索文字来自较早印次，以 PDF 为准' : '');
+    if (page.viewer_url) {
+        const link = document.createElement('a');
+        link.className = 'page-viewer-open-pdf';
+        link.href = page.viewer_url;
+        link.textContent = '📕 在 PDF 中打开';
+        link.addEventListener('click', event => {
+            if (!window.SunLibrary || event.metaKey || event.ctrlKey || event.shiftKey || event.button) return;
+            const samePage = new URL(link.href, location.href).pathname === location.pathname;
+            if (!samePage) return;
+            event.preventDefault();
+            closePageViewer();
+            window.SunLibrary.openEdition(page.edition_id || data.edition_id, page.pdf_page, '', 'search');
+        });
+        info.append(' · ', link);
+    }
 
     // Update thumbnail active state
     viewer.querySelectorAll('.page-thumb').forEach((t, i) => {
@@ -2094,7 +1848,7 @@ function applyLiveStatsToUI(data) {
         const faissPart = data.faiss_enabled
             ? `FAISS 已启用（${(data.faiss_vectors || 0).toLocaleString()} 条教材向量）`
             : 'FAISS 当前未启用';
-        aboutAiText.textContent = `AI 对话入口统一走 ai.bdfz.net；模型侧显示为 ${data.ai_model || aiProviderLabel}。检索底座为 SQLite FTS5 + ${faissPart}。`;
+        aboutAiText.textContent = `AI 对话只在你点击后经本站服务器发起，浏览器不直连模型服务；模型侧显示为 ${data.ai_model || aiProviderLabel}。检索底座为 SQLite FTS5 + ${faissPart}。`;
     }
 
     const aboutPrecomputeText = document.getElementById('about-precompute-text');
@@ -2357,12 +2111,6 @@ async function findTextbookLinks(questionId) {
     }
 }
 
-function buildGaokaoSourceContext(items, limit = 3) {
-    return (items || []).slice(0, limit).map(item =>
-        `[${item.subject}·${item.title}·§${item.section}] ${item.summary || (item.text || '').slice(0, 320)}`
-    ).join('\n\n');
-}
-
 function renderGaokaoAISources(items) {
     if (!items || !items.length) return '';
     return `
@@ -2379,94 +2127,58 @@ function renderGaokaoAISources(items) {
     `;
 }
 
+// Explicit click only. The browser sends just the question id; the server builds the
+// prompt from its own retrieval and makes the single model call.
 async function requestGaokaoAI(questionId, btn) {
     const resultEl = document.getElementById(`gk-ai-${questionId}`);
-    if (resultEl.innerHTML) {
+    if (!resultEl || !window.SunAI) return;
+    if (resultEl.dataset.aiState === 'pending') return;
+    if (resultEl.dataset.aiState === 'done') {
         resultEl.classList.toggle('hidden');
         return;
     }
 
+    resultEl.dataset.aiState = 'pending';
     btn.disabled = true;
     btn.textContent = '✨ 分析中…';
-    resultEl.innerHTML = '<div class="loading">✨ AI 正在分析真题与教材的关联…</div>';
+    resultEl.innerHTML = '<div class="loading">✨ AI 正在分析真题与教材的关联… <button class="ai-followup-chip gk-ai-cancel" type="button">取消</button></div>';
     resultEl.classList.remove('hidden');
 
+    const request = window.SunAI.ask(`${API}/api/gaokao/chat`, { question_id: Number(questionId), phase: PHASE });
+    const cancelBtn = resultEl.querySelector('.gk-ai-cancel');
+    if (cancelBtn) cancelBtn.addEventListener('click', event => { event.stopPropagation(); request.cancel(); });
+
     try {
-        // First get the question and linked textbook content
-        const linkRes = await fetch(`${API}/api/gaokao/link?question_id=${questionId}&limit=5`);
-        if (!linkRes.ok) {
-            throw new Error(`教材关联加载失败 (${linkRes.status})`);
-        }
-        const linkData = await linkRes.json();
-
-        // Get question text from the card
-        const card = document.querySelector(`.gaokao-card[data-id="${questionId}"]`);
-        const questionText = card ? card.querySelector('.gk-question')?.textContent?.slice(0, 600) : '';
-        const matchedConcepts = (linkData.matched_concepts || []).map(item => item.concept).join('、') || '（未识别）';
-        const precomputedSummary = linkData.precomputed_analysis?.summary || '（无）';
-        const precomputedKnowledgePoints = (linkData.precomputed_analysis?.knowledge_points || []).join('、') || '（无）';
-        const precomputedRefs = (linkData.precomputed_analysis?.textbook_refs || []).join('；') || '（无）';
-        const sameSubjectContext = buildGaokaoSourceContext(linkData.links, 3);
-        const crossSubjectContext = buildGaokaoSourceContext(linkData.cross_links, 3);
-        const sourceItems = [...(linkData.links || []).slice(0, 3), ...(linkData.cross_links || []).slice(0, 2)];
-
-        const prompt = `你是一位${PHASE === '高中' ? '高考' : '中考'}命题研究专家。请分析以下${PHASE === '高中' ? '高考' : '中考'}真题与教材内容之间的关系。
-
-【真题元数据】
-标题：${linkData.question_title || ''}
-学科：${linkData.question_subject || ''}
-年份：${linkData.question_year || '未知'}
-卷种：${linkData.question_category || '未知'}
-题型：${linkData.question_type === 'objective' ? '客观题' : linkData.question_type === 'subjective' ? '主观题' : '未知'}
-匹配概念：${matchedConcepts}
-预计算知识点：${precomputedKnowledgePoints}
-预计算结论：${precomputedSummary}
-预计算教材锚点：${precomputedRefs}
-
-【题干】
-${questionText}
-
-【同学科教材证据】
-${sameSubjectContext || '（未找到直接同学科教材）'}
-
-【跨学科教材证据】
-${crossSubjectContext || '（未找到直接跨学科教材）'}
-
-请严格按以下小标题输出：
-显性关联：
-隐性关联：
-跨学科迁移：
-易错提醒：
-
-要求：
-1. 220 字以内，语言简洁，面向${DISPLAY_PHASE}生。
-2. 只根据给定证据回答，不要编造教材内容。
-3. 如果跨学科证据不足，必须明确写“跨学科证据不足”。`;
-
-        const direct = await requestDirectChat(prompt, 'AI 服务错误');
-
-        if (direct.answer) {
-            resultEl.innerHTML = `
-                <div class="gk-ai-answer">
-                    <div class="gk-ai-header">✨ AI 关联分析 <span class="ai-model">Gemini</span></div>
-                    <div class="gk-ai-meta">
-                        <span class="gk-ai-meta-chip">${escHtml(linkData.question_subject || '未知学科')}</span>
-                        <span class="gk-ai-meta-chip">${escHtml(String(linkData.question_year || '未知年份'))}</span>
-                        ${linkData.question_category ? `<span class="gk-ai-meta-chip">${escHtml(linkData.question_category)}</span>` : ''}
-                        <span class="gk-ai-meta-chip">同学科 ${linkData.links?.length || 0}</span>
-                        <span class="gk-ai-meta-chip">跨学科 ${linkData.cross_links?.length || 0}</span>
-                    </div>
-                    <div class="gk-ai-text">${escHtml(direct.answer)}</div>
-                    ${renderGaokaoAISources(sourceItems)}
+        const data = await request.promise;
+        const question = data.question || {};
+        resultEl.innerHTML = `
+            <div class="gk-ai-answer">
+                <div class="gk-ai-header">✨ AI 关联分析 <span class="ai-model">${escHtml(data.provider || 'Gemini')}</span></div>
+                <div class="gk-ai-meta">
+                    <span class="gk-ai-meta-chip">${escHtml(question.subject || '未知学科')}</span>
+                    <span class="gk-ai-meta-chip">${escHtml(String(question.year || '未知年份'))}</span>
+                    ${question.category ? `<span class="gk-ai-meta-chip">${escHtml(question.category)}</span>` : ''}
+                    <span class="gk-ai-meta-chip">同学科 ${Number(question.link_count) || 0}</span>
+                    <span class="gk-ai-meta-chip">跨学科 ${Number(question.cross_link_count) || 0}</span>
                 </div>
-            `;
-            bindOpenPageButtons(resultEl, '.gk-ai-source-chip');
-            renderMath(resultEl);
-        } else {
-            resultEl.innerHTML = `<div class="loading">AI 服务暂时不可用</div>`;
-        }
+                <div class="gk-ai-text">${escHtml(String(data.answer || ''))}</div>
+                ${renderGaokaoAISources(data.sources || [])}
+            </div>
+        `;
+        resultEl.dataset.aiState = 'done';
+        bindOpenPageButtons(resultEl, '.gk-ai-source-chip');
+        renderMath(resultEl);
     } catch (e) {
-        resultEl.innerHTML = `<div class="loading">请求失败: ${e.message}</div>`;
+        resultEl.dataset.aiState = 'error';
+        const message = e && e.cancelled ? e.message : `请求失败：${(e && e.message) || '未知错误'}`;
+        resultEl.innerHTML = `<div class="loading">${escHtml(message)} <button class="ai-followup-chip gk-ai-retry" type="button">重试</button></div>`;
+        const retryBtn = resultEl.querySelector('.gk-ai-retry');
+        if (retryBtn) {
+            retryBtn.addEventListener('click', event => {
+                event.stopPropagation();
+                requestGaokaoAI(questionId, btn);
+            });
+        }
     } finally {
         btn.disabled = false;
         btn.textContent = '✨ AI 关联分析';

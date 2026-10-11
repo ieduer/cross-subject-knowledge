@@ -84,7 +84,7 @@ Common runtime facts shared by both states:
 Current textbook search is no longer lexical-only. Runtime query handling now has two public-facing paths:
 
 - `/api/search`: primary list search, using `lexical + dense + supplemental + rerank` for textbook queries
-- `/api/chat`: AI explanation path, where precision queries prefer the server-side precision-agent flow before any browser fallback
+- `/api/chat`: AI explanation path. Explicit user action only, server-side only, guarded by `backend/ai_guard.py` (admission, caps, dedup, concurrency, daily budget); there is no browser fallback. See [AI_GUARD.md](./AI_GUARD.md)
 
 For textbook precision queries such as definition / distinction / process lookups, the retrieval chain is:
 

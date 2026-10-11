@@ -1,0 +1,207 @@
+# nginx additions for the SUN library tabs (PDF 预览 / 教材下载).
+# EXAMPLE ONLY — not installed by any script. Review, adapt and `nginx -t` before use.
+# See docs/LIBRARY_TABS.md §4.
+#
+# Preconditions
+#   * PDFs live in /srv/sun-textbooks/pdf/<sha256>.pdf, readable by the nginx
+#     worker user (www-data). nginx cannot read /root, so the files must not be
+#     placed under /root/cross-subject-knowledge.
+#   * The app runs with PDF_SERVE_MODE=accel (the default) and answers
+#     /files/pdf/... with `X-Accel-Redirect: /_protected_pdf/<sha256>.pdf`.
+
+# ── http { } context ─────────────────────────────────────────────────────────
+# Outer per-address limits. The app has its own token buckets as well
+# (LIBRARY_RATE_*); these protect the single uvicorn worker from floods.
+# A whole classroom can share one address, so the PDF zone is generous: PDF.js
+# issues several 64 KiB Range requests per page.
+limit_req_zone $binary_remote_addr zone=sun_library_api:10m rate=10r/s;
+limit_req_zone $binary_remote_addr zone=sun_library_pdf:10m rate=60r/s;
+limit_req_status 429;
+# Requests are not bytes: one `Range: bytes=0-` is one request but can be a whole
+# 330 MB book. Cap simultaneous PDF transfers per address as well.
+limit_conn_zone $binary_remote_addr zone=sun_library_pdf_conn:10m;
+limit_conn_status 429;
+# Accept-Ranges for Range answers of the protected PDF location: nginx sets it on 200 only, and a
+# browser that cached 206 chunks answers a later HEAD from that entry. Keyed on the request because
+# $status is not final when add_header runs; an empty value adds no header.
+map $http_range $sun_accept_ranges_206 { "" ""; default bytes; }
+# Page images made from the PDFs (/files/page/, /files/cover/, /files/legacy-page/).
+# Cache hits are cheap (one small app round trip + a static file); misses are rendered one
+# at a time by the app, which has its own, smaller, per-client budget for them.
+limit_req_zone $binary_remote_addr zone=sun_library_img:10m rate=30r/s;
+
+# ── server { } for sun.bdfz.net (443) — add next to the existing `location /` ─
+
+    # Internal only: reachable solely through X-Accel-Redirect from the app,
+    # which signs off each request against the loaded catalog release.
+    location /_protected_pdf/ {
+        internal;
+        alias /srv/sun-textbooks/pdf/;
+        # nginx adds Accept-Ranges to 200 only; browsers that cached 206 chunks then answer HEAD
+        # from the cache without it. Send it on every answer.
+        add_header Accept-Ranges $sun_accept_ranges_206 always;
+        types { application/pdf pdf; }
+        default_type application/pdf;
+        sendfile on;
+        tcp_nopush on;
+        # Range, Content-Length, Last-Modified and ETag are produced here.
+        # Content-Type, Content-Disposition and Cache-Control come from the app
+        # response and are kept by nginx across the internal redirect.
+        add_header X-Content-Type-Options nosniff always;
+        # Optional bandwidth shaping for whole-file readers; page-sized Range reads stay
+        # below the threshold and are not slowed.
+        # limit_rate_after 8m;
+        # limit_rate 2m;
+    }
+
+    location /files/pdf/ {
+        limit_req zone=sun_library_pdf burst=600 nodelay;
+        # The internal redirect to /_protected_pdf/ stays in this request, so the
+        # connection is counted here for as long as nginx is sending the file.
+        # PDF.js opens up to 6 parallel Range reads per tab; a classroom may share one
+        # address. Start at 48 and tune from the access log.
+        limit_conn sun_library_pdf_conn 48;
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 15s;
+    }
+
+    # Page-image cache: internal only, reached solely through X-Accel-Redirect from the app
+    # after it has checked the edition, the hash and the page against the loaded catalog.
+    # HOST path of the read-write cache mount (scripts/deploy_vps.sh: SUN_PAGE_CACHE_DIR).
+    # It is under /srv on purpose: nginx cannot read the app's state directory in /root.
+    location /_protected_page/ {
+        internal;
+        alias /srv/sun-textbooks/page-cache/;
+        types { image/webp webp; }
+        default_type image/webp;
+        sendfile on;
+        disable_symlinks on;
+        # The long lifetime is set HERE, without `always`: nginx then adds it to successful
+        # answers only (200/206/304). The app deliberately sends no Cache-Control with its
+        # X-Accel-Redirect, so if a file was evicted between the app's check and this
+        # location, the 404 carries no cache lifetime and the next request re-renders.
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        add_header X-Content-Type-Options nosniff always;
+        error_page 404 = @page_image_gone;
+    }
+
+    location @page_image_gone {
+        add_header Cache-Control "no-store" always;
+        return 404;
+    }
+
+    location /files/page/ {
+        limit_req zone=sun_library_img burst=120 nodelay;
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # a miss waits for its turn in the single render slot (app default: up to 25 s)
+        proxy_read_timeout 40s;
+    }
+
+    location /files/cover/ {
+        limit_req zone=sun_library_img burst=120 nodelay;
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 15s;
+    }
+
+    # Drop-in replacement for https://img.rdfzer.com/pages/<key>/p<N>.webp used by other sites:
+    # answers 302 to /files/page/…  No CORS header is needed for <img>.
+    location /files/legacy-page/ {
+        limit_req zone=sun_library_img burst=120 nodelay;
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 15s;
+    }
+
+    location /api/library/ {
+        limit_req zone=sun_library_api burst=60 nodelay;
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 15s;
+    }
+
+    # Vendored PDF.js is versioned by query string (?v=<version>).
+    location /vendor/pdfjs/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # no `always`: an error answer must not be cached for a week
+        add_header Cache-Control "public, max-age=604800";
+    }
+
+    # Every proxied location of this server block (including the existing `location /`
+    # and any AI locations, see docs/AI_GUARD.md) must carry
+    #     proxy_set_header X-Real-IP $remote_addr;
+    # The app trusts that header only from loopback or from LIBRARY_TRUSTED_PROXIES /
+    # AI_TRUSTED_PROXIES, and only $remote_addr (never a client-supplied value) may be
+    # written into it.
+
+# ── optional: security headers (server { } level) ────────────────────────────
+# Not required by the library tabs. Enable deliberately and test all four pages
+# (/, /chuzhong.html, /dict.html, /chuzhong-dict.html) plus both new tabs afterwards.
+# Note: an `add_header` inside a location replaces the server-level set for that
+# location, so repeat the block (or use an include) where a location has its own.
+#
+#     add_header X-Content-Type-Options nosniff always;
+#     add_header Referrer-Policy strict-origin-when-cross-origin always;
+#     add_header X-Frame-Options SAMEORIGIN always;
+#     add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+#     add_header Strict-Transport-Security "max-age=15552000" always;   # only once every sub-resource is https
+#
+# Content-Security-Policy that matches what the pages load TODAY. It is honest rather
+# than strict: the existing pages need third-party hosts and inline handlers.
+#   script-src   unpkg.com (KaTeX 0.16.9), d3js.org (d3 v7), nav.bdfz.net (site nav widget);
+#                'unsafe-inline' because app.js still renders inline onclick= handlers
+#                (9 places) — library.js and the vendored PDF.js need none of this;
+#                'wasm-unsafe-eval' for PDF.js image decoders (JPX/JBIG2). No 'unsafe-eval':
+#                PDF.js runs with isEvalSupported:false.
+#   worker-src   'self' (PDF.js module worker, same origin); blob: is not needed.
+#   style-src    fonts.googleapis.com, unpkg.com (katex.min.css); 'unsafe-inline' for the
+#                style= attributes the existing views and the PDF.js text layer set.
+#   font-src     fonts.gstatic.com, unpkg.com (KaTeX fonts), mx.bdfz.net (HuWenMingChao).
+#   img-src      img.rdfzer.com (page images), img.bdfz.net, jks-ai.bdfz.net (covers),
+#                data: and blob: (canvas / KaTeX).
+#   connect-src  'self' only for this app. The nav widget calls my.bdfz.net and
+#                nav.bdfz.net; list them or its sign-in state stops working.
+# Roll out with Content-Security-Policy-Report-Only first.
+#
+#     add_header Content-Security-Policy-Report-Only "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://unpkg.com https://d3js.org https://nav.bdfz.net; worker-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://unpkg.com; font-src 'self' https://fonts.gstatic.com https://unpkg.com https://mx.bdfz.net; img-src 'self' data: blob: https://img.rdfzer.com https://img.bdfz.net https://jks-ai.bdfz.net; connect-src 'self' https://my.bdfz.net https://nav.bdfz.net; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'" always;
+
+# ── checks after reload ──────────────────────────────────────────────────────
+#   curl -sI https://sun.bdfz.net/_protected_pdf/<sha256>.pdf            -> 404 (internal)
+#   curl -sI "https://sun.bdfz.net/files/pdf/<edition_id>/<sha12>/x.pdf" -> 200, application/pdf, Accept-Ranges: bytes
+#   curl -s -o /dev/null -w '%{http_code} %{size_download}\n' -H 'Range: bytes=0-1023' \
+#        "https://sun.bdfz.net/files/pdf/<edition_id>/<sha12>/x.pdf"     -> 206 1024
+#   curl -sI "https://sun.bdfz.net/files/pdf/<edition_id>/000000000000/x.pdf" -> 404
+#   curl -sI https://sun.bdfz.net/_protected_page/r1/<sha256>/1-960.webp  -> 404 (internal)
+#   curl -s -o /dev/null -w '%{http_code} %{content_type} %{size_download}\n' \
+#        "https://sun.bdfz.net/files/page/<edition_id>/<sha12>/1.webp?w=240"  -> 200 image/webp <bytes>   (twice: 2nd is a cache hit)
+#   curl -sI "https://sun.bdfz.net/files/legacy-page/<jc_short_key>/p0.webp" -> 302, Location: /files/page/…
+#   ls -l /srv/sun-textbooks/page-cache/r1/                               -> directories 0755, files 0644 (readable by www-data)
+#   curl -s -o /dev/null -w '%{http_code}\n' --max-time 5 http://<public address>:8080/api/health
+#                                                                         -> no connection (loopback bind)

@@ -26,8 +26,12 @@ RELEASE_FILES = (
     "Dockerfile",
     "release_manifest.json",
     "requirements.runtime.txt",
+    "backend/ai_guard.py",
     "backend/entrypoint.sh",
+    "backend/library.py",
     "backend/main.py",
+    "backend/page_images.py",
+    "backend/page_render_worker.py",
     "backend/preflight.py",
     "backend/supplemental_textbook_pages.jsonl.gz",
     "backend/supplemental_textbook_pages.manifest.json",
@@ -40,10 +44,14 @@ RELEASE_FILES = (
     "frontend/dict.html",
     "frontend/chuzhong.html",
     "frontend/chuzhong-dict.html",
+    "frontend/assets/ai-client.js",
     "frontend/assets/app.js",
     "frontend/assets/style.css",
+    "frontend/assets/background-mx.jpg",
     "frontend/assets/dict.js",
     "frontend/assets/dict.css",
+    "frontend/assets/library.css",
+    "frontend/assets/library.js",
     "frontend/assets/version.json",
     "frontend/assets/pages/book_map.json",
     "scripts/build_release_manifest.py",
@@ -51,6 +59,65 @@ RELEASE_FILES = (
     "scripts/verify_release_manifest.py",
     "scripts/stage_clean_release.py",
 )
+
+# Whole directories that ship as-is.  Every file below them is staged; the vendored
+# PDF.js tree is additionally checked file-by-file against its own VENDOR.json.
+RELEASE_TREES = (
+    "frontend/vendor/pdfjs",
+)
+VENDOR_MANIFESTS = (
+    "frontend/vendor/pdfjs/VENDOR.json",
+)
+
+
+def tree_files(relative_dir: str, root: Path | None = None) -> list[str]:
+    base = (root or REPO_ROOT) / relative_dir
+    if not base.is_dir():
+        raise FileNotFoundError(f"Missing required release directory: {base}")
+    found = []
+    for path in sorted(base.rglob("*")):
+        if path.is_symlink():
+            raise RuntimeError(f"Symlink is not allowed in a release tree: {path}")
+        if path.is_file():
+            if path.name.startswith(".") or path.suffix == ".pyc":
+                raise RuntimeError(f"Unexpected file in a release tree: {path}")
+            found.append(path.relative_to(root or REPO_ROOT).as_posix())
+    if not found:
+        raise FileNotFoundError(f"Release directory is empty: {base}")
+    return found
+
+
+def release_files(root: Path | None = None) -> list[str]:
+    """The complete, ordered list of files that make up a release."""
+    files = list(RELEASE_FILES)
+    for relative_dir in RELEASE_TREES:
+        for item in tree_files(relative_dir, root):
+            if item not in files:
+                files.append(item)
+    return files
+
+
+def verify_vendor_tree(root: Path | None = None) -> None:
+    """Fail if a vendored tree differs from its recorded manifest in any way."""
+    base_root = root or REPO_ROOT
+    for manifest_rel in VENDOR_MANIFESTS:
+        manifest_path = base_root / manifest_rel
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        listed = payload.get("files") or {}
+        base = manifest_path.parent
+        on_disk = {
+            path.relative_to(base).as_posix()
+            for path in base.rglob("*")
+            if path.is_file() and path != manifest_path
+        }
+        if on_disk != set(listed):
+            raise RuntimeError(
+                f"{manifest_rel}: files on disk differ from the manifest "
+                f"(extra={sorted(on_disk - set(listed))[:5]}, missing={sorted(set(listed) - on_disk)[:5]})"
+            )
+        for name, meta in listed.items():
+            if sha256_file(base / name) != meta.get("sha256"):
+                raise RuntimeError(f"{manifest_rel}: sha256 mismatch for {name}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -183,8 +250,9 @@ def main() -> None:
     ensure_clean_path(output_dir, args.overwrite)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    verify_vendor_tree()
     staged_files: list[dict[str, object]] = []
-    for relative_path in RELEASE_FILES:
+    for relative_path in release_files():
         staged_files.append(stage_file(relative_path, output_dir))
 
     manifest_path = build_manifest(staged_files, output_dir)

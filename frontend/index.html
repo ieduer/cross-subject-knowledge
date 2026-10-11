@@ -24,6 +24,7 @@
     <script src="https://d3js.org/d3.v7.min.js"></script>
 
     <link rel="stylesheet" href="assets/style.css?v=20260507a">
+    <link rel="stylesheet" href="assets/library.css?v=20261011e"> <!-- library-tabs -->
 </head>
 
 <body data-phase="高中">
@@ -40,6 +41,8 @@
                     <button class="nav-btn" data-view="gaokao">📝 真题</button>
                     <button class="nav-btn" data-view="insights">📊 数据</button>
                     <button class="nav-btn" data-view="graph">知识图谱</button>
+                    <button class="nav-btn" data-view="pdf">PDF 预览</button> <!-- library-tabs -->
+                    <button class="nav-btn" data-view="downloads">教材下载</button> <!-- library-tabs -->
                     <a href="/dict.html" class="nav-btn">实虚词典</a>
                     <a href="/chuzhong.html" class="nav-btn">初中版</a>
                 </nav>
@@ -180,8 +183,8 @@
 
             <!-- Textbook Download Link -->
             <div class="gk-download-link">
-                <a href="https://jks.bdfz.net/" target="_blank" class="download-btn">
-                    📥 教材 PDF 下载 · jks.bdfz.net
+                <a href="?view=downloads" data-lib-view="downloads" class="download-btn">
+                    📥 教材 PDF 下载
                 </a>
             </div>
 
@@ -262,6 +265,9 @@
             <div id="graph-container" class="graph-container"></div>
         </main>
 
+        <main id="view-pdf" class="view lib-view"></main> <!-- library-tabs -->
+        <main id="view-downloads" class="view lib-view"></main> <!-- library-tabs -->
+
         <footer class="footer">
             <p id="footer-version-line">重构版本加载中…</p>
             <div class="footer-meta">
@@ -275,7 +281,9 @@
             </div>
         </footer>
     </div>
-    <script src="assets/app.js?v=20260507a"></script>
+    <script src="assets/ai-client.js?v=20261010a"></script>
+    <script src="assets/app.js?v=20261011e"></script>
+    <script src="assets/library.js?v=20261011e"></script> <!-- library-tabs -->
     <script src="https://nav.bdfz.net/bdfz-nav.js" async></script>
 </body>
 

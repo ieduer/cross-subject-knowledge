@@ -1,0 +1,459 @@
+/* ── SUN library tabs: 「PDF 预览」 + 「教材下载」 ──────────────────────────
+   Uses SUN's existing variables (--bg-card, --border, --text, --accent,
+   --radius…) and existing components (.gaokao-hero, .gaokao-filters,
+   .filter-group, .subject-tab, .gk-search-btn, .view-page-btn).  Every rule
+   here is scoped to .lib-* / #view-pdf / #view-downloads, except the two
+   clearly marked nav rules needed to fit two more tabs.
+
+   New colours (contrast measured against the page #fbfaf5 / card #ffffff):
+     --lib-strong #4a6462  6.11 / 6.38 ; white text on it 6.38
+     --lib-soft   #6b625d  5.69 / 5.95
+     --lib-ok     #3d6b4f  5.89 / 6.15 ; on its tint #e6f0e8 5.29
+     --lib-warn   #7b5330  6.44 / 6.73 ; on its tint #fbf1cf 5.92
+     --lib-err    #9a3b32  6.60 / 6.90 ; on its tint #f9e7e4 5.82
+   Body text uses SUN's --text #5d5551 (6.97 / 7.28).                        */
+
+:root {
+    --lib-strong: #4a6462;
+    --lib-strong-hover: #3d5553;
+    --lib-soft: #6b625d;
+    --lib-ok: #3d6b4f;
+    --lib-ok-bg: #e6f0e8;
+    --lib-warn: #7b5330;
+    --lib-warn-bg: #fbf1cf;
+    --lib-err: #9a3b32;
+    --lib-err-bg: #f9e7e4;
+    --lib-chip-bg: #f1efe9;
+}
+
+/* nav: room for two more tabs between the phone breakpoint and wide screens */
+@media (min-width: 641px) and (max-width: 1080px) {
+    .nav { overflow-x: auto; scrollbar-width: none; }
+    .nav::-webkit-scrollbar { display: none; }
+    .nav-btn { padding: 8px 10px; white-space: nowrap; flex: 0 0 auto; }
+}
+
+.lib-view { padding-bottom: 32px; }
+.lib-hero { padding: 44px 0 22px; }
+.lib-hero .gaokao-hero-sub { color: var(--lib-soft); }
+
+.lib-filters { margin-bottom: 14px; }
+.lib-filters .filter-group label { color: var(--lib-soft); }
+.lib-grow { flex: 2 1 220px; }
+
+.lib-input {
+    width: 100%;
+    background: rgba(255, 255, 255, 0.82);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    font: inherit;
+    font-size: 14px;
+}
+
+.lib-input:focus,
+.lib-page-input:focus {
+    outline: none;
+    border-color: var(--lib-strong);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.lib-input:disabled { opacity: 0.7; cursor: not-allowed; }
+
+.lib-chips { margin-bottom: 12px; }
+.lib-chips .subject-tab { font-family: inherit; color: var(--text); }
+.lib-chips .subject-tab.active { color: var(--lib-strong); border-color: var(--lib-strong); font-weight: 600; }
+.lib-chips .tab-count { color: var(--lib-soft); }
+
+.lib-status { color: var(--lib-soft); font-size: 13px; margin: 6px 2px 12px; min-height: 20px; }
+.lib-muted { color: var(--lib-soft); font-size: 13px; }
+.lib-ok { color: var(--lib-ok); }
+.lib-err { color: var(--lib-err); }
+
+/* ── buttons / links ─────────────────────────────────────── */
+.lib-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 36px;
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.86);
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+    text-decoration: none;
+    transition: var(--transition);
+    white-space: nowrap;
+}
+
+.lib-btn:hover:not(:disabled) { border-color: var(--lib-strong); color: var(--lib-strong); }
+.lib-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.lib-btn:focus-visible,
+.lib-link:focus-visible,
+.lib-card:focus-visible,
+.lib-outline-item:focus-visible,
+.lib-hit:focus-visible,
+.lib-side-tab:focus-visible {
+    outline: 2px solid var(--lib-strong);
+    outline-offset: 2px;
+}
+
+.lib-btn-primary {
+    background: var(--lib-strong);
+    border-color: var(--lib-strong);
+    color: #fff;
+    font-weight: 600;
+}
+
+.lib-btn-primary:hover:not(:disabled) { background: var(--lib-strong-hover); border-color: var(--lib-strong-hover); color: #fff; }
+.lib-btn-primary small { font-weight: 400; font-size: 12px; opacity: 0.92; }
+
+.lib-link { color: var(--lib-strong); font-size: 14px; text-decoration: underline; text-underline-offset: 3px; }
+.lib-link:hover { color: var(--lib-strong-hover); }
+
+/* 「在 PDF 中打开」 inside SUN's page-image viewer footer */
+.page-viewer-open-pdf { color: var(--lib-strong); text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+
+/* extra link inside existing search-result cards */
+.view-page-btn.lib-open-pdf { display: inline-flex; align-items: center; color: var(--lib-strong); text-decoration: none; }
+
+/* notes about a different printing / a different edition */
+.lib-open-note, .lib-hit-note { display: block; font-size: 12px; line-height: 1.5; color: var(--lib-warn); }
+.lib-open-note { flex-basis: 100%; }
+.result-actions:has(.lib-open-note) { flex-wrap: wrap; }
+.lib-hit-note { margin: 0 0 8px; padding: 6px 8px; background: var(--lib-warn-bg); border-radius: 6px; }
+.lib-hit-kind { font-size: 11px; color: var(--lib-soft); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-right: 4px; white-space: nowrap; }
+.lib-dl-edition-note { color: var(--lib-warn); }
+.lib-dl-body > .lib-badges { margin: 2px 0; }
+
+/* ── notices ─────────────────────────────────────────────── */
+.lib-notices:empty { display: none; }
+.lib-notice {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    margin: 0 0 10px;
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    border: 1px solid transparent;
+}
+
+.lib-notice-text { flex: 1 1 240px; }
+.lib-notice-info { background: var(--lib-chip-bg); color: var(--text); border-color: var(--border); }
+.lib-notice-warn { background: var(--lib-warn-bg); color: var(--lib-warn); border-color: rgba(123, 83, 48, 0.25); }
+.lib-notice-error { background: var(--lib-err-bg); color: var(--lib-err); border-color: rgba(154, 59, 50, 0.25); }
+
+/* ── badges ──────────────────────────────────────────────── */
+.lib-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.lib-badge {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    line-height: 1.6;
+    background: var(--lib-chip-bg);
+    color: var(--lib-soft);
+}
+
+.lib-badge-ok { background: var(--lib-ok-bg); color: var(--lib-ok); }
+.lib-badge-warn { background: var(--lib-warn-bg); color: var(--lib-warn); }
+
+/* ── PDF grid ────────────────────────────────────────────── */
+.lib-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+    gap: 12px;
+}
+
+.lib-card {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    color: var(--text);
+    text-decoration: none;
+    transition: var(--transition);
+}
+
+.lib-card-text { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-width: 0; align-self: stretch; }
+.lib-card .lib-cover { flex: 0 0 60px; width: 60px; height: 84px; font-size: 13px; }
+.lib-card:hover { border-color: var(--lib-strong); transform: translateY(-1px); }
+.lib-card-subject { font-size: 12px; color: var(--lib-strong); font-weight: 600; }
+.lib-card-title { font-size: 15px; font-weight: 600; line-height: 1.45; }
+.lib-card-meta { font-size: 13px; color: var(--lib-soft); }
+.lib-card .lib-badges { margin-top: auto; padding-top: 4px; }
+.lib-card-cell { display: flex; flex-direction: column; gap: 6px; }
+.lib-card-cell .lib-card { flex: 1 1 auto; }
+.lib-card-other { font-size: 13px; padding: 0 4px 2px; }
+.lib-more { text-align: center; margin: 18px 0; }
+
+/* ── PDF viewer ──────────────────────────────────────────── */
+.lib-viewer { padding-top: 18px; }
+.lib-viewer-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+.lib-viewer-title { flex: 1 1 260px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.lib-viewer-name { font-size: 18px; font-weight: 600; line-height: 1.4; }
+.lib-viewer-meta { font-size: 13px; color: var(--lib-soft); }
+.lib-viewer-download { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.lib-download-main { min-height: 42px; padding: 8px 18px; font-size: 15px; }
+.lib-source-list { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.lib-source-list .lib-link { font-size: 13px; }
+
+.lib-no-doc .lib-toolbar, .lib-no-doc .lib-side, .lib-no-doc .lib-pagebar { display: none; }
+.lib-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+.lib-book-search { display: flex; gap: 6px; flex: 1 1 240px; }
+.lib-zoom { display: flex; align-items: center; gap: 6px; }
+.lib-zoom-label { min-width: 64px; text-align: center; font-size: 13px; color: var(--lib-soft); }
+
+.lib-viewer-body { display: flex; gap: 12px; align-items: flex-start; }
+.lib-side {
+    display: none;
+    flex: 0 0 280px;
+    max-height: 78vh;
+    overflow: auto;
+    position: sticky;
+    top: 72px;
+    padding: 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+
+.lib-side-open .lib-side { display: block; }
+.lib-side-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.lib-side-tab {
+    flex: 1;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--lib-soft);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.lib-side-tab.active { color: var(--lib-strong); border-color: var(--lib-strong); font-weight: 600; background: rgba(255, 255, 255, 0.8); }
+
+.lib-outline-list, .lib-hit-list { list-style: none; margin: 0; padding: 0; }
+.lib-outline-list .lib-outline-list { padding-left: 14px; }
+.lib-outline-item, .lib-hit {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.5;
+    cursor: pointer;
+}
+
+.lib-outline-item:hover, button.lib-hit:hover { background: rgba(120, 149, 148, 0.14); }
+.lib-hit { border-bottom: 1px solid var(--border); border-radius: 0; padding: 8px; }
+.lib-hit-off { cursor: default; }
+.lib-hit-page { display: block; font-weight: 600; color: var(--lib-strong); font-size: 12px; }
+.lib-hit-off .lib-hit-page { color: var(--lib-soft); font-weight: 400; }
+.lib-hit-snippet { display: block; }
+
+.lib-stage { flex: 1 1 auto; min-width: 0; overflow: auto; }
+.lib-stage-status { font-size: 13px; color: var(--lib-soft); min-height: 22px; margin-bottom: 6px; }
+.lib-stage-status .lib-notice { margin: 0; }
+.lib-page-wrap {
+    position: relative;
+    margin: 0 auto;
+    background: #fff;
+    box-shadow: 0 2px 14px rgba(93, 85, 81, 0.18);
+    transition: opacity 0.15s;
+}
+
+.lib-page-wrap:empty { box-shadow: none; background: transparent; }
+.lib-page-stale { opacity: 0.55; }
+.lib-canvas { display: block; }
+
+/* PDF.js text layer (minimal rules from pdfjs-dist web/pdf_viewer.css, Apache-2.0) */
+.lib-text-layer {
+    position: absolute;
+    text-align: initial;
+    inset: 0;
+    overflow: clip;
+    opacity: 1;
+    line-height: 1;
+    -webkit-text-size-adjust: none;
+    text-size-adjust: none;
+    forced-color-adjust: none;
+    transform-origin: 0 0;
+    z-index: 1;
+}
+
+.lib-text-layer :is(span, br) {
+    color: transparent;
+    position: absolute;
+    white-space: pre;
+    cursor: text;
+    transform-origin: 0% 0%;
+}
+
+.lib-text-layer span.markedContent { top: 0; height: 0; }
+.lib-text-layer ::selection { background: rgba(74, 100, 98, 0.3); }
+.lib-text-layer mark.lib-hl {
+    color: transparent;
+    background: rgba(255, 196, 0, 0.42);
+    outline: 1px solid rgba(160, 110, 0, 0.55);
+    border-radius: 2px;
+    padding: 0;
+}
+
+.lib-pagebar {
+    position: sticky;
+    bottom: 0;
+    z-index: 50;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 8px 12px;
+    margin-top: 12px;
+    padding: 8px 12px;
+    background: rgba(251, 250, 245, 0.96);
+    border: 1px solid var(--border);
+    border-radius: var(--radius) var(--radius) 0 0;
+    font-size: 14px;
+}
+
+.lib-page-jump, .lib-printed-jump { display: inline-flex; align-items: center; gap: 6px; }
+.lib-page-input {
+    width: 58px;
+    padding: 5px 6px;
+    text-align: center;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+}
+
+.lib-printed { color: var(--lib-ok); background: var(--lib-ok-bg); padding: 2px 10px; border-radius: 10px; font-size: 13px; }
+.lib-printed-jump-label { font-size: 13px; color: var(--lib-soft); }
+.lib-pagebar-msg { flex-basis: 100%; text-align: center; color: var(--lib-warn); font-size: 13px; }
+.lib-pagebar-msg:empty { display: none; }
+
+/* ── downloads ───────────────────────────────────────────── */
+.lib-dl-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 12px;
+}
+
+.lib-dl-card {
+    display: flex;
+    gap: 14px;
+    padding: 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+}
+
+.lib-cover {
+    position: relative;
+    flex: 0 0 84px;
+    width: 84px;
+    height: 116px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--lib-chip-bg);
+    border: 1px solid var(--border);
+    color: var(--lib-soft);
+    font-size: 15px;
+}
+
+.lib-cover[data-cover-state="loading"] span::after { content: '…'; }
+.lib-cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.lib-dl-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.lib-dl-title { font-size: 15px; font-weight: 600; line-height: 1.45; color: var(--text); }
+.lib-dl-meta { font-size: 13px; color: var(--lib-soft); }
+.lib-dl-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 6px; }
+.lib-dl-source { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; flex-basis: 100%; }
+.lib-dl-source-facts { font-size: 12px; color: var(--lib-soft); }
+.lib-dl-btn { min-height: 42px; padding: 8px 20px; font-size: 15px; }
+.lib-dl-state { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; color: var(--lib-soft); min-height: 18px; margin-top: 2px; }
+.lib-progress { flex: 1 1 120px; height: 8px; accent-color: var(--lib-strong); }
+.lib-progress-text { font-variant-numeric: tabular-nums; }
+
+.lib-menu { position: relative; }
+.lib-menu > summary { list-style: none; }
+.lib-menu > summary::-webkit-details-marker { display: none; }
+.lib-menu > summary::after { content: '▾'; font-size: 11px; }
+.lib-menu-list {
+    position: absolute;
+    z-index: 20;
+    top: calc(100% + 4px);
+    left: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 170px;
+    padding: 8px;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow);
+}
+
+.lib-pager { display: flex; align-items: center; justify-content: center; gap: 14px; margin: 20px 0 8px; }
+.lib-pager-info { font-size: 14px; color: var(--text); }
+
+/* ── responsive ──────────────────────────────────────────── */
+@media (max-width: 900px) {
+    .lib-viewer-body { display: block; }
+    .lib-side { position: static; max-height: 46vh; margin-bottom: 10px; flex: none; }
+    .lib-viewer-download, .lib-source-list { align-items: flex-start; }
+}
+
+@media (max-width: 640px) {
+    .lib-view { padding-left: 12px; padding-right: 12px; }
+    .lib-hero { padding: 26px 0 14px; }
+    .lib-grid, .lib-dl-list { grid-template-columns: 1fr; }
+    .lib-viewer-download { width: 100%; }
+    .lib-download-main { width: 100%; }
+    .lib-zoom { width: 100%; justify-content: space-between; }
+    .lib-cover { flex-basis: 66px; width: 66px; height: 92px; }
+    .lib-btn { min-height: 40px; }
+    /* stays above SUN's fixed bottom tab bar */
+    .lib-pagebar {
+        bottom: calc(54px + env(safe-area-inset-bottom, 0px));
+        border-radius: var(--radius-sm);
+        padding: 6px 8px;
+        gap: 6px 8px;
+    }
+    .lib-pagebar .lib-btn { padding: 6px 10px; }
+    .lib-nav-prev { order: 1; }
+    .lib-page-jump { order: 2; }
+    .lib-nav-next { order: 3; }
+    .lib-printed { order: 4; }
+    .lib-printed-jump { order: 5; }
+    .lib-pagebar-msg { order: 6; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .lib-card, .lib-btn, .lib-page-wrap { transition: none; }
+}

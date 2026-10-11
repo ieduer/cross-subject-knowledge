@@ -34,6 +34,17 @@ SUPPLEMENTAL_VECTOR_MANIFEST_DST="${RUNTIME_ROOT}/data/index/supplemental_textbo
 BOOK_MAP_SRC="${SOURCE_ROOT}/frontend/assets/pages/book_map.json"
 FRONTEND_VERSION_SRC="${SOURCE_ROOT}/frontend/assets/version.json"
 RELEASE_MANIFEST_PATH="${SOURCE_ROOT}/release_manifest.json"
+# The app is reachable only through nginx on this host: publish on loopback, never 0.0.0.0/[::].
+PUBLISH_ADDR="${PUBLISH_ADDR:-127.0.0.1}"
+# Optional runtime configuration (AI_*, LIBRARY_*, PDF_SERVE_MODE, CORS_*). The file lives
+# OUTSIDE the repository, is owned by root and unreadable by anyone else. Its contents are
+# never printed by this script. Variable NAMES are documented in docs/LIBRARY_TABS.md §5
+# and docs/AI_GUARD.md. Without the file the container starts with the code defaults:
+# AI off, library defaults.
+SUN_ENV_FILE="${SUN_ENV_FILE:-/etc/sun/sun.env}"
+# Textbook PDFs served by nginx (X-Accel-Redirect). Mounted read-only when present so the
+# app can confirm a file exists before redirecting; not required.
+SUN_TEXTBOOK_ROOT="${SUN_TEXTBOOK_ROOT:-/srv/sun-textbooks}"
 
 cd "$SOURCE_ROOT"
 
@@ -78,6 +89,74 @@ fi
 if [ ! -s "${RELEASE_MANIFEST_PATH}" ]; then
   echo "ERROR: missing or empty release manifest ${RELEASE_MANIFEST_PATH}"
   exit 1
+fi
+
+case "${PUBLISH_ADDR}" in
+  127.0.0.1) ;;
+  *)
+    echo "ERROR: PUBLISH_ADDR must be 127.0.0.1 (nginx proxies to 127.0.0.1:8080)"
+    echo "Per-address limits and proxy trust are only sound when nginx is the sole way in."
+    exit 1
+    ;;
+esac
+
+runtime_env_args=()
+if [ -e "${SUN_ENV_FILE}" ]; then
+  if [ ! -f "${SUN_ENV_FILE}" ] || [ -L "${SUN_ENV_FILE}" ]; then
+    echo "ERROR: ${SUN_ENV_FILE} must be a regular file"
+    exit 1
+  fi
+  env_file_owner="$(stat -c '%u' "${SUN_ENV_FILE}")"
+  env_file_mode="$(stat -c '%a' "${SUN_ENV_FILE}")"
+  case "${env_file_mode}" in
+    600|400) ;;
+    *)
+      echo "ERROR: ${SUN_ENV_FILE} must have mode 600 or 400 (found ${env_file_mode})"
+      exit 1
+      ;;
+  esac
+  if [ "${env_file_owner}" != "0" ]; then
+    echo "ERROR: ${SUN_ENV_FILE} must be owned by root"
+    exit 1
+  fi
+  case "${SUN_ENV_FILE}" in
+    "${SOURCE_ROOT}"/*|"${RUNTIME_ROOT}"/*)
+      echo "ERROR: ${SUN_ENV_FILE} must live outside the repository and the runtime data directory"
+      exit 1
+      ;;
+  esac
+  runtime_env_args=(--env-file "${SUN_ENV_FILE}")
+  echo "runtime env file: ${SUN_ENV_FILE} (present; contents not shown)"
+else
+  echo "runtime env file: ${SUN_ENV_FILE} not present -> code defaults (AI off, library defaults)"
+fi
+
+# Page-image cache (backend/page_images.py). The textbook root stays read-only; only this one
+# subdirectory is mounted read-write, on top of it. It must live under /srv (not under the
+# state directory in /root) because nginx serves cache hits from it via X-Accel-Redirect.
+# Files in it are derived data: safe to delete at any time.
+SUN_PAGE_CACHE_DIR="${SUN_PAGE_CACHE_DIR:-${SUN_TEXTBOOK_ROOT}/page-cache}"
+runtime_mount_args=()
+if [ -d "${SUN_TEXTBOOK_ROOT}" ]; then
+  case "${SUN_PAGE_CACHE_DIR}" in
+    "${SUN_TEXTBOOK_ROOT}"/*) ;;
+    *)
+      echo "ERROR: SUN_PAGE_CACHE_DIR must be a subdirectory of ${SUN_TEXTBOOK_ROOT}"
+      exit 1
+      ;;
+  esac
+  if [ -L "${SUN_PAGE_CACHE_DIR}" ] || { [ -e "${SUN_PAGE_CACHE_DIR}" ] && [ ! -d "${SUN_PAGE_CACHE_DIR}" ]; }; then
+    echo "ERROR: ${SUN_PAGE_CACHE_DIR} must be a real directory (not a symlink or a file)"
+    exit 1
+  fi
+  install -d -m 0755 -o root -g root "${SUN_PAGE_CACHE_DIR}"
+  # The app is told the same path (-e wins over the env file), so it can never try to
+  # write its cache into the read-only part of the mount.
+  runtime_mount_args=(
+    -v "${SUN_TEXTBOOK_ROOT}:${SUN_TEXTBOOK_ROOT}:ro"
+    -v "${SUN_PAGE_CACHE_DIR}:${SUN_PAGE_CACHE_DIR}:rw"
+    -e "LIBRARY_PAGE_CACHE_ROOT=${SUN_PAGE_CACHE_DIR}"
+  )
 fi
 
 if [ "${RUNTIME_DB_SYNC_MODE}" != "disabled" ]; then
@@ -127,14 +206,59 @@ env_true() {
 }
 
 verify_built_image_release_assets() {
+  # Runs inside the CANDIDATE image, before the running container is touched.
+  # 1. every frontend file the pages load is present;
+  # 2. the vendored PDF.js tree matches its own VENDOR.json byte for byte;
+  # 3. the two new backend modules import (main.py imports both at startup).
   docker run --rm --entrypoint sh "${build_tag}" -lc '
-    test -s /app/frontend/assets/pages/book_map.json &&
-    test -s /app/frontend/assets/version.json &&
-    test -s /app/frontend/index.html &&
-    test -s /app/frontend/dict.html &&
-    test -s /app/frontend/chuzhong.html &&
-    test -s /app/frontend/chuzhong-dict.html
-  ' >/dev/null
+    set -e
+    for f in \
+      assets/pages/book_map.json assets/version.json \
+      index.html dict.html chuzhong.html chuzhong-dict.html \
+      assets/app.js assets/dict.js assets/ai-client.js assets/library.js \
+      assets/style.css assets/dict.css assets/library.css assets/background-mx.jpg \
+      vendor/pdfjs/VENDOR.json vendor/pdfjs/LICENSE \
+      vendor/pdfjs/legacy/build/pdf.min.mjs vendor/pdfjs/legacy/build/pdf.worker.min.mjs
+    do
+      test -s "/app/frontend/$f" || { echo "missing in image: frontend/$f" >&2; exit 1; }
+    done
+    test -s /app/backend/ai_guard.py && test -s /app/backend/library.py
+    test -s /app/backend/page_images.py && test -s /app/backend/page_render_worker.py
+    cd /app/backend
+    python - <<"PY"
+import hashlib, json, pathlib, sys
+base = pathlib.Path("/app/frontend/vendor/pdfjs")
+listed = json.loads((base / "VENDOR.json").read_text(encoding="utf-8"))["files"]
+on_disk = {p.relative_to(base).as_posix() for p in base.rglob("*") if p.is_file()} - {"VENDOR.json"}
+if on_disk != set(listed):
+    sys.exit("vendored pdfjs tree differs from VENDOR.json")
+for name, meta in listed.items():
+    if hashlib.sha256((base / name).read_bytes()).hexdigest() != meta["sha256"]:
+        sys.exit("vendored pdfjs sha256 mismatch: " + name)
+import ai_guard, library, page_images  # noqa: F401  (ModuleNotFoundError here must stop the deploy)
+# The page renderer: both libraries import, WebP can be written, and one real page goes through
+# the same child process the application starts.
+import subprocess, tempfile
+import pymupdf
+from PIL import features
+if pymupdf.__version__ != "1.28.2":
+    sys.exit("unexpected pymupdf version: " + pymupdf.__version__)
+if not features.check("webp"):
+    sys.exit("Pillow in this image cannot write WebP")
+with tempfile.TemporaryDirectory() as tmp:
+    sample = pathlib.Path(tmp) / "sample.pdf"
+    document = pymupdf.open()
+    document.new_page(width=420, height=595).insert_text((60, 90), "render check", fontsize=20)
+    document.save(str(sample))
+    document.close()
+    out = pathlib.Path(tmp) / "out.webp"
+    done = subprocess.run([sys.executable, "-I", "/app/backend/page_render_worker.py", str(sample), "1", "240",
+                           str(out), str(page_images.MAX_OUTPUT_PIXELS), "80", "1536"], capture_output=True, timeout=60)
+    if done.returncode != 0 or out.read_bytes()[8:12] != b"WEBP":
+        sys.exit("page render check failed (exit %s): %s" % (done.returncode, done.stderr[-300:]))
+print("image check ok: frontend files, pdfjs tree (%d files), ai_guard + library + page_images import, page render" % len(listed))
+PY
+  '
 }
 
 verify_release_manifest_alignment() {
@@ -199,12 +323,55 @@ sys.exit(0 if ok else 1)
 PY
 }
 
+library_page_smoke() {
+  # One real page image through the new container: catalog -> allow-list -> render child ->
+  # cache write. Skipped only when no catalog release with held files is loaded.
+  python3 - "${SUN_PAGE_CACHE_DIR}" <<'PY'
+import json, os, sys, urllib.request
+
+BASE = "http://127.0.0.1:8080"
+
+
+def get(path, timeout):
+    with urllib.request.urlopen(BASE + path, timeout=timeout) as response:
+        return response.status, {k.lower(): v for k, v in response.headers.items()}, response.read()
+
+
+try:
+    release = json.loads(get("/api/library/release", 15)[2])
+    if not release.get("available") or not (release.get("counts") or {}).get("previewable"):
+        print("page image smoke test: skipped (no catalog release with held files is loaded)")
+        sys.exit(0)
+    edition = json.loads(get("/api/library/editions?limit=1", 15)[2])["editions"][0]["edition_id"]
+    status, headers, body = get(f"/files/page/{edition}/{edition[-12:]}/1.webp?w=240", 60)
+    if status != 200 or not headers.get("content-type", "").startswith("image/webp"):
+        sys.exit(f"page image smoke test: status {status}, type {headers.get('content-type')}")
+    accel = headers.get("x-accel-redirect")
+    if accel:
+        # nginx serves the body: the rendered file must now exist, non-empty, in the cache mount
+        cached = os.path.join(sys.argv[1], *accel.strip("/").split("/")[-3:])
+        if not (os.path.isfile(cached) and os.path.getsize(cached) > 0):
+            sys.exit("page image smoke test: rendered file is not in the page cache: " + cached)
+    elif not (body[:4] == b"RIFF" and body[8:12] == b"WEBP"):
+        sys.exit("page image smoke test: the body is not a WebP image")
+    print("page image smoke test ok:", edition)
+except SystemExit:
+    raise
+except Exception as error:  # 503 unwritable cache, 404 missing file, connection refused, ...
+    sys.exit(f"page image smoke test failed: {type(error).__name__}: {error}")
+PY
+}
+
 warm_precision_agent() {
-  curl -sf --max-time 120 \
-    -H 'Content-Type: application/json' \
-    -X POST \
-    -d '{"query":"晶体的定义","user_message":"请只根据教材原文说明「晶体」的定义，并给出最相关出处。","history":[]}' \
-    http://127.0.0.1:8080/api/chat/context >/tmp/textbook_precision_warmup.json
+  # /api/chat/context is retired (docs/AI_GUARD.md). Warm retrieval through the public,
+  # model-free search route instead; the reranker itself is preloaded at startup
+  # (RERANKER_PRELOAD) and still gated by HEALTH_REQUIRE_RERANKER below.
+  # The "health-check" marker makes main.py treat the query as synthetic: it is not written
+  # to search_logs and never shows up in 热门.
+  curl -sf --max-time 120 -G \
+    --data-urlencode 'q=health-check 晶体的定义' \
+    --data-urlencode 'limit=3' \
+    http://127.0.0.1:8080/api/search >/tmp/textbook_precision_warmup.json
 }
 
 echo "=== deploy start $(date -u '+%Y-%m-%d %H:%M:%S UTC') commit=${commit_sha} ==="
@@ -258,7 +425,8 @@ export DOCKER_BUILDKIT=1
 docker build --pull -t "${build_tag}" -t "${REPO_NAME}:latest" .
 
 if ! verify_built_image_release_assets; then
-  echo "ERROR: built image is missing required frontend release assets"
+  echo "ERROR: candidate image failed the pre-cutover check (missing release file or module import error)"
+  echo "The running container has NOT been stopped."
   exit 1
 fi
 
@@ -301,7 +469,9 @@ docker rm "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 docker run -d \
   --name "${CONTAINER_NAME}" \
   --restart unless-stopped \
-  -p 8080:8080 \
+  --log-opt max-size=20m --log-opt max-file=5 \
+  -p "${PUBLISH_ADDR}:8080:8080" \
+  ${runtime_env_args[@]+"${runtime_env_args[@]}"} \
   -e PROJECT_ROOT=/app \
   -e DATA_ROOT=/data \
   -e STATE_ROOT=/state \
@@ -316,6 +486,7 @@ docker run -d \
   -e TRANSFORMERS_CACHE="${CONTAINER_HF_HUB_CACHE}" \
   -v "${RUNTIME_ROOT}/data:/data" \
   -v "${RUNTIME_ROOT}/state:/state" \
+  ${runtime_mount_args[@]+"${runtime_mount_args[@]}"} \
   "${build_tag}" >/dev/null
 
 healthy="false"
@@ -343,6 +514,11 @@ for _ in $(seq 1 24); do
   sleep 5
 done
 
+if [ "${healthy}" = "true" ] && ! library_page_smoke; then
+  echo "ERROR: new container cannot produce a page image (see above); treating as unhealthy"
+  healthy="false"
+fi
+
 if [ "${healthy}" != "true" ]; then
   echo "ERROR: new container failed health checks"
   docker logs --tail 200 "${CONTAINER_NAME}" || true
@@ -353,7 +529,9 @@ if [ "${healthy}" != "true" ]; then
     docker run -d \
       --name "${CONTAINER_NAME}" \
       --restart unless-stopped \
-      -p 8080:8080 \
+      --log-opt max-size=20m --log-opt max-file=5 \
+      -p "${PUBLISH_ADDR}:8080:8080" \
+      ${runtime_env_args[@]+"${runtime_env_args[@]}"} \
       -e PROJECT_ROOT=/app \
       -e DATA_ROOT=/data \
       -e STATE_ROOT=/state \
@@ -368,10 +546,20 @@ if [ "${healthy}" != "true" ]; then
       -e TRANSFORMERS_CACHE="${CONTAINER_HF_HUB_CACHE}" \
       -v "${RUNTIME_ROOT}/data:/data" \
       -v "${RUNTIME_ROOT}/state:/state" \
+      ${runtime_mount_args[@]+"${runtime_mount_args[@]}"} \
       "${rollback_image}" >/dev/null
   fi
   exit 1
 fi
+
+published="$(docker port "${CONTAINER_NAME}" 8080/tcp 2>/dev/null || true)"
+case "${published}" in
+  *0.0.0.0*|*"[::]"*|*":::"*)
+    echo "ERROR: container port 8080 is published on a non-loopback address: ${published}"
+    exit 1
+    ;;
+esac
+echo "published: ${published}"
 
 echo "=== health ==="
 cat /tmp/textbook_health.json

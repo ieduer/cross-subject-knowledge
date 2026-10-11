@@ -1,7 +1,37 @@
 {
-  "frontend_refactor_version": "2026.05.07-r37",
-  "updated_at": "2026-05-07",
+  "frontend_refactor_version": "2026.10.11-r43",
+  "updated_at": "2026-10-11",
   "history": [
+    {
+      "date": "2026-10-11",
+      "version": "2026.10.11-r43",
+      "summary": "PDF 预览: a book that had been opened before no longer reports 服务器不支持分段读取 — the Range probe is never answered from the browser cache and the viewer reads the file under its own cache key; asset cache key 20261011e for library.js"
+    },
+    {
+      "version": "2026.10.11-r42",
+      "date": "2026-10-11",
+      "summary": "owner-confirmed legacy pages: two legacy pages that now share one PDF page both resolve exactly; a page whose position matches but whose text was revised in the current edition is marked 此页位置对应，现行版内容已修订; asset cache key 20261011d for app.js, library.js, library.css"
+    },
+    {
+      "version": "2026.10.11-r41",
+      "date": "2026-10-11",
+      "summary": "page-image hardening: requests waiting for a render are bounded so other routes stay responsive; legacy-page image URLs answer 404 for unmapped pages unless nearest=1 is asked for; the page viewer opens each neighbour in its own edition; asset cache key 20261011c for app.js, library.js, library.css"
+    },
+    {
+      "version": "2026.10.11-r40",
+      "date": "2026-10-11",
+      "summary": "textbook page images now come from the held PDFs (bounded on-demand rendering with a disk cache) instead of the legacy page-image set: search hits, the page viewer (labels are PDF 第 N 页 plus the printed page only when verified, with 在 PDF 中打开) and covers in PDF 预览 / 教材下载; legacy-page compatibility URLs for other sites; reassembled legacy editions and nearest-page notices for unmapped old links; asset cache key 20261011b for app.js, library.js, library.css"
+    },
+    {
+      "version": "2026.10.11-r39",
+      "date": "2026-10-11",
+      "summary": "PDF 预览 shows one card per book (the preview-default file) and names any other held file of the same book; the viewer says which file is open (平台现行文件 / 较早取得 with its date) and switches to the other from page 1; old links and search links resolve through the catalog's reader-book list and page-map rows only; 教材下载 gives each file held on this site its own labelled button; the 真题 page's textbook link opens the in-site 教材下载 tab; asset cache key 20261011a for app.js, library.js, library.css"
+    },
+    {
+      "version": "2026.10.10-r38",
+      "date": "2026-10-10",
+      "summary": "added two tabs to 高中 / 初中 pages — PDF 预览 (vendored PDF.js 4.10.38, pages read on demand by HTTP Range, PDF page / verified printed page labels, in-book search, 在 PDF 中打开 from search hits, old JC / JKS links) and 教材下载 (full catalog with per-edition sources); ?view= links now select the view; AI requests go through the server-side guard only (no browser fallback, no automatic trigger); asset cache key 20261010a"
+    },
     {
       "version": "2026.05.07-r37",
       "date": "2026-05-07",
@@ -155,7 +185,7 @@
     {
       "version": "2026.03.06-r7",
       "date": "2026-03-06",
-        "summary": "AI chat now uses precomputed gaokao analysis and textbook summaries; gaokao link panels prioritize precomputed refs before live retrieval"
+      "summary": "AI chat now uses precomputed gaokao analysis and textbook summaries; gaokao link panels prioritize precomputed refs before live retrieval"
     },
     {
       "version": "2026.03.06-r6",

@@ -1,0 +1,15 @@
+{
+ "schema": "sun-catalog-v1/owner-confirmed-rows",
+ "version": 1,
+ "note": "Legacy page-image index -> PDF page pairs confirmed by the owner. Applied by build_catalog.py after the automatic mapping. A pair is bound to one PDF by hash; it never replaces an automatic row. `shares_pdf_page_with` must name the legacy index that already holds the PDF page when two legacy pages were merged onto one page.",
+ "rows": [
+  {"jc_short_key": "0433798ca156", "pdf_sha256": "efe51d7a6773", "legacy_image_index": 22, "pdf_page": 24, "decision": "DECISIONS.md Y2", "date": "2026-10-11", "note": "spans two pages after re-layout; start page taken"},
+  {"jc_short_key": "0433798ca156", "pdf_sha256": "efe51d7a6773", "legacy_image_index": 23, "pdf_page": 25, "decision": "DECISIONS.md Y2", "date": "2026-10-11"},
+  {"jc_short_key": "0433798ca156", "pdf_sha256": "efe51d7a6773", "legacy_image_index": 24, "pdf_page": 26, "decision": "DECISIONS.md Y2", "date": "2026-10-11", "note": "spans two pages after re-layout; start page taken"},
+  {"jc_short_key": "0433798ca156", "pdf_sha256": "efe51d7a6773", "legacy_image_index": 26, "pdf_page": 27, "decision": "DECISIONS.md Y2", "date": "2026-10-11", "shares_pdf_page_with": 25, "note": "the end of the text (legacy 25) and its 学习提示 (legacy 26) are on one page now"},
+  {"jc_short_key": "0433798ca156", "pdf_sha256": "efe51d7a6773", "legacy_image_index": 33, "pdf_page": 38, "decision": "DECISIONS.md Y2", "date": "2026-10-11", "shares_pdf_page_with": 38, "content_revised": true, "note": "same position (学习提示); text revised: the paired lesson changed from 《怜悯是人的天性》 to 《人应当坚持正义》"},
+  {"jc_short_key": "822b23a796e3", "pdf_sha256": "7da9104e683d", "legacy_image_index": 85, "pdf_page": 88, "decision": "DECISIONS.md Y3", "date": "2026-10-11", "note": "first page of 《种树郭橐驼传》, confirmed by image comparison"},
+  {"jc_short_key": "822b23a796e3", "pdf_sha256": "7da9104e683d", "legacy_image_index": 86, "pdf_page": 89, "decision": "DECISIONS.md Y3", "date": "2026-10-11", "note": "spans two pages after re-layout; start page taken"},
+  {"jc_short_key": "822b23a796e3", "pdf_sha256": "7da9104e683d", "legacy_image_index": 87, "pdf_page": 91, "decision": "DECISIONS.md Y3", "date": "2026-10-11"}
+ ]
+}
