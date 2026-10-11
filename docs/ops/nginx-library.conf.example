@@ -21,6 +21,10 @@ limit_req_status 429;
 # 330 MB book. Cap simultaneous PDF transfers per address as well.
 limit_conn_zone $binary_remote_addr zone=sun_library_pdf_conn:10m;
 limit_conn_status 429;
+# Accept-Ranges for Range answers of the protected PDF location: nginx sets it on 200 only, and a
+# browser that cached 206 chunks answers a later HEAD from that entry. Keyed on the request because
+# $status is not final when add_header runs; an empty value adds no header.
+map $http_range $sun_accept_ranges_206 { "" ""; default bytes; }
 # Page images made from the PDFs (/files/page/, /files/cover/, /files/legacy-page/).
 # Cache hits are cheap (one small app round trip + a static file); misses are rendered one
 # at a time by the app, which has its own, smaller, per-client budget for them.
@@ -35,7 +39,7 @@ limit_req_zone $binary_remote_addr zone=sun_library_img:10m rate=30r/s;
         alias /srv/sun-textbooks/pdf/;
         # nginx adds Accept-Ranges to 200 only; browsers that cached 206 chunks then answer HEAD
         # from the cache without it. Send it on every answer.
-        add_header Accept-Ranges bytes always;
+        add_header Accept-Ranges $sun_accept_ranges_206 always;
         types { application/pdf pdf; }
         default_type application/pdf;
         sendfile on;
