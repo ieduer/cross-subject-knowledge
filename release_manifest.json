@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-10-11T08:04:51.177982+00:00",
-  "git_head": "f9abb60357b7dfb4d55bb0c4e8bfc98c0195d5ba",
+  "generated_at": "2026-10-11T08:05:30.501294+00:00",
+  "git_head": "a1aed391fc77d42ae4ad1946144eadbbc3a03996",
   "frontend_version": "2026.10.11-r43",
   "source_of_truth": {
     "local_workspace": "authoritative",
@@ -146,7 +146,7 @@
       "kind": "source",
       "logical_path": "frontend/assets/app.js",
       "size": 117165,
-      "sha256": "4df698c681e1cf148c4c7b32cbc0f8c49539424ed765b3756c88cae85ea4dabe"
+      "sha256": "1a68e86b9671235b76a117f5e5458fb91c5b272ecfc7074cf0ea97534112b0cd"
     },
     {
       "kind": "source",
@@ -1494,8 +1494,8 @@
     }
   ],
   "runtime_assets_carried_from": {
-    "generated_at": "2026-10-11T03:49:41.981535+00:00",
-    "git_head": "c665e1166fae043eabd6c4ebb0a23c27cc20e9f0",
+    "generated_at": "2026-10-11T08:04:51.177982+00:00",
+    "git_head": "f9abb60357b7dfb4d55bb0c4e8bfc98c0195d5ba",
     "note": "runtime half not re-measured in this build; deploy_vps.sh verifies it on the VPS"
   },
   "page_mapping": {

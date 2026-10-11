@@ -307,7 +307,7 @@ python scripts/dev_library_server.py --release-dir <…/releases/<id>> --pdf-dir
 - `scripts/stage_clean_release.py` 的 `RELEASE_FILES`＋`RELEASE_TREES`（整棵 `frontend/vendor/pdfjs`，逐档对照 `VENDOR.json`）与 `scripts/build_release_manifest.py` 的 `SOURCE_ASSETS`＋`SOURCE_TREES` 是发布内容的两份清单；`tests/library/test_release_bundle.py` 把清单原样铺到临时目录后在子进程 `import main`，并检查四个页面、样式表、脚本（含 `library.js` 拼出的 PDF.js 路径）引用的每个本地文件都在里面，也检查 `backend/`、`frontend/` 下每个受版本控制的文件都在清单内。新增运行期文件而没加进清单，测试会红。
 - `release_manifest.json` 必须在最后一次改动代码之后重新生成。持有运行期数据（`data/index`）的机器照旧执行 `python scripts/build_release_manifest.py`；只改了代码、手边没有运行期数据时用 `python scripts/build_release_manifest.py --reuse-runtime-from release_manifest.json`：重算全部源码条目，运行期条目原样沿用并在档内注明（`runtime_assets_carried_from`），`deploy_vps.sh` 仍会在 VPS 上逐项核对。运行期数据有变动时不得用这个参数。
 - `deploy_vps.sh` 在停掉现行容器之前，会在候选映像内确认前端文件齐全、PDF.js 目录与 `VENDOR.json` 逐档相符、`import ai_guard, library` 成功。
-- 页脚版本：`frontend/assets/version.json` 为 `2026.10.11-r42`，`app.js` 的后备值 `DEFAULT_FRONTEND_VERSION` 同步。资源缓存键：`app.js`、`library.js`、`library.css` 为 `?v=20261011d`（`index.html`、`chuzhong.html`）；未改动的 `ai-client.js`、`dict.js` 仍是 `20261010a`。之后再改这三个文件须同时更换页面里的缓存键（`tests/library/test_release_bundle.py` 会检查三者同键、且与版本档一致）。
+- 页脚版本：`frontend/assets/version.json` 为 `2026.10.11-r43`，`app.js` 的后备值 `DEFAULT_FRONTEND_VERSION` 同步。资源缓存键：`app.js`、`library.js`、`library.css` 为 `?v=20261011d`（`index.html`、`chuzhong.html`）；未改动的 `ai-client.js`、`dict.js` 仍是 `20261010a`。之后再改这三个文件须同时更换页面里的缓存键（`tests/library/test_release_bundle.py` 会检查三者同键、且与版本档一致）。
 - `--reuse-runtime-from` 会把上一份清单里 `runtime_assets_*` 的说明（例如 `runtime_assets_measured_from`，含主机上实读的哈希）连同运行期条目一起带过来。
 
 ## 11. 排错
