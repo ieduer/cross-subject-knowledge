@@ -253,6 +253,14 @@ class PageMap:
     # legacy index without a row -> (nearest mapped legacy index, its pdf page, distance).  A hint for
     # degrading an old link ("the nearest page we can show"), never a mapping.
     nearest: Mapping[int, tuple] = field(default_factory=dict)
+    # legacy index -> (basis, content_revised) for every mapped index, including the extra
+    # indexes a page carries in `legacy_also` (revision 5: two legacy pages on one PDF page).
+    legacy_meta: Mapping[int, tuple] = field(default_factory=dict)
+    also: Mapping[int, tuple] = field(default_factory=dict)      # pdf_page -> extra legacy indexes
+
+    def legacy_info(self, legacy_index: int) -> dict:
+        basis, revised = self.legacy_meta.get(legacy_index, (None, False))
+        return {"legacy_basis": basis, "legacy_content_revised": bool(revised)}
 
     def row(self, pdf_page: int) -> dict:
         printed, verified, legacy, ocr, jks = self.rows[pdf_page - 1]
@@ -263,6 +271,8 @@ class PageMap:
             "printed_verified": bool(verified),
             "legacy_image_index": legacy,
             "legacy_basis": (self.bases[pdf_page - 1] if self.bases and legacy is not None else None),
+            "legacy_content_revised": bool(self.legacy_meta.get(legacy, (None, False))[1]) if legacy is not None else False,
+            "legacy_also": [{"legacy_image_index": index, **self.legacy_info(index)} for index in self.also.get(pdf_page, ())],
             "ocr_page": ocr,
         }
         return out
@@ -408,6 +418,8 @@ def _parse_page_map(raw: Any, edition_id: str, pages: int, sha256: str) -> PageM
     if not isinstance(rows_raw, list) or len(rows_raw) != pages:
         raise ReleaseError(f"page map length does not equal PDF page count: {edition_id}")
     rows = []
+    legacy_meta: dict[int, tuple] = {}
+    also: dict[int, list] = {}
     bases: list = []
     by_legacy: dict[int, int] = {}
     by_jks: dict[int, int] = {}
@@ -428,6 +440,21 @@ def _parse_page_map(raw: Any, edition_id: str, pages: int, sha256: str) -> PageM
             if legacy in by_legacy:
                 raise ReleaseError(f"duplicate legacy_image_index: {edition_id}")
             by_legacy[legacy] = position
+            legacy_meta[legacy] = (_opt_str(item.get("legacy_basis"), 40), item.get("legacy_content_revised") is True)
+        extras = item.get("legacy_also")
+        if extras is not None:
+            # Other legacy pages that are on this same PDF page now.  They are exact mappings too.
+            if not isinstance(extras, list) or len(extras) > 8:
+                raise ReleaseError(f"bad legacy_also: {edition_id}")
+            for extra in extras:
+                index = extra.get("legacy_image_index") if isinstance(extra, dict) else None
+                if not _is_int(index) or index < 0 or index > MAX_PAGE_NUMBER:
+                    raise ReleaseError(f"bad legacy_also: {edition_id}")
+                if index in by_legacy:
+                    raise ReleaseError(f"duplicate legacy_image_index: {edition_id}")
+                by_legacy[index] = position
+                legacy_meta[index] = (_opt_str(extra.get("legacy_basis"), 40), extra.get("legacy_content_revised") is True)
+                also.setdefault(position, []).append(index)
         ocr = item.get("ocr_page")
         if ocr is not None and (not _is_int(ocr) or ocr < 0 or ocr > MAX_PAGE_NUMBER):
             raise ReleaseError(f"bad ocr_page: {edition_id}")
@@ -449,6 +476,8 @@ def _parse_page_map(raw: Any, edition_id: str, pages: int, sha256: str) -> PageM
         legacy_mapped_pages=len(by_legacy),
         bases=tuple(bases),
         nearest=_nearest_hints(raw, by_legacy, pages),
+        legacy_meta=legacy_meta,
+        also={page: tuple(indexes) for page, indexes in also.items()},
     )
 
 
@@ -1331,8 +1360,10 @@ class Library:
             ids = release.by_sun_key.get(book_key, ())
             outcome = self._resolve_one(release, ids, number)
             approximate = None
+            info = {"legacy_basis": None, "legacy_content_revised": False}
             if outcome.get("available"):
                 edition, pdf_page = release.editions[outcome["edition_id"]], outcome["pdf_page"]
+                info = {key: outcome[key] for key in info}
             elif nearest and outcome.get("reason") == "page-not-mapped" and self._nearest(release, ids, number):
                 edition, pdf_page, distance, near_index = self._nearest(release, ids, number)
                 approximate = {"kind": "nearest", "distance": distance, "legacy_image_index": near_index}
@@ -1347,7 +1378,7 @@ class Library:
                 "viewer_url": page_images.viewer_url(edition.stage, edition.edition_id, pdf_page),
                 "text_identity": edition.record["corpus"]["text_identity"],
                 "provenance": edition.record["provenance"],
-                "approximate": approximate, **self._which(edition),
+                "approximate": approximate, **self._which(edition), **info,
             }
         except Exception:
             return None
@@ -1410,7 +1441,8 @@ class Library:
         if len(hits) == 1:
             edition, pdf_page = hits[0]
             return {"available": True, "edition_id": edition.edition_id, "pdf_page": pdf_page,
-                    "text_identity": edition.record["corpus"]["text_identity"], **self._which(edition)}
+                    "text_identity": edition.record["corpus"]["text_identity"], **self._which(edition),
+                    **edition.page_map.legacy_info(section)}
         if len(hits) > 1:
             return {"available": False, "reason": "ambiguous"}
         return {"available": False, "reason": "page-not-mapped"}
@@ -1535,7 +1567,8 @@ class Library:
             last = min(last, edition.pages)
             if edition.page_map is None:
                 rows = [{"pdf_page": n, "printed_label": None, "printed_verified": False,
-                         "legacy_image_index": None, "legacy_basis": None, "ocr_page": None}
+                         "legacy_image_index": None, "legacy_basis": None, "legacy_content_revised": False,
+                         "legacy_also": [], "ocr_page": None}
                         for n in range(first, last + 1)]
             else:
                 rows = [edition.page_map.row(n) for n in range(first, last + 1)]
@@ -1577,6 +1610,7 @@ class Library:
                 for part in parts:
                     pdf_page = edition.page_map.by_legacy.get(int(part)) if usable else None
                     results.append({"section": int(part), "available": pdf_page is not None, "pdf_page": pdf_page,
+                                    **(edition.page_map.legacy_info(int(part)) if pdf_page is not None else {}),
                                     **({} if pdf_page is not None else {"reason": "page-not-mapped"})})
                 return lib._json({"edition_id": edition.edition_id, "results": results}, release)
             if book_key is None or not book_key.strip() or len(book_key) > MAX_BOOK_KEY_CHARS:
@@ -1615,6 +1649,7 @@ class Library:
             candidates = lib._candidates(release, ids)
             if not candidates:
                 return lib._json({"available": False, "exact": False, "kind": kind, "reason": "no-preview"}, release)
+            legacy_info = {"legacy_basis": None, "legacy_content_revised": False}
             if number is not None:
                 hits = []
                 for edition in candidates:
@@ -1622,6 +1657,8 @@ class Library:
                     if kind == "jc":
                         if edition.page_map is not None and edition.corpus_relation in SEARCHABLE_RELATIONS:
                             pdf_page = edition.page_map.by_legacy.get(number)
+                            if pdf_page is not None:
+                                legacy_info = edition.page_map.legacy_info(number)
                     else:
                         if edition.page_map is not None and edition.page_map.by_jks:
                             pdf_page = edition.page_map.by_jks.get(number)
@@ -1633,7 +1670,7 @@ class Library:
                     edition, pdf_page = hits[0]
                     return lib._json({"available": True, "exact": True, "kind": kind,
                                       "edition_id": edition.edition_id, "pdf_page": pdf_page,
-                                      "title": edition.title, **lib._which(edition)}, release)
+                                      "title": edition.title, **lib._which(edition), **legacy_info}, release)
             if kind == "jc" and number is not None:
                 near = lib._nearest(release, ids, number)
                 if near is not None:      # the release's own hint: the nearest page that is mapped

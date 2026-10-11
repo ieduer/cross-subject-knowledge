@@ -65,7 +65,7 @@ def build_app(catalog_root: Path, pdf_dir: Path, upstream: str | None, max_searc
                 item["page_url"] = ref["image_url"] if ref else None
                 item["pdf_ref"] = ({key: ref[key] for key in (
                     "edition_id", "pdf_page", "pdf_pages", "printed_label", "viewer_url", "text_identity",
-                    "preview_default", "default_edition_id")} if ref else None)
+                    "preview_default", "default_edition_id", "legacy_content_revised")} if ref else None)
         return payload
 
     @app.get("/api/page-image", include_in_schema=False)
@@ -86,7 +86,8 @@ def build_app(catalog_root: Path, pdf_dir: Path, upstream: str | None, max_searc
                 current = ref
             pages.append({"page": index, "url": ref["image_url"], "thumb_url": ref["thumb_url"], "pdf_page": ref["pdf_page"],
                           "printed_label": ref["printed_label"], "viewer_url": ref["viewer_url"],
-                          "edition_id": ref["edition_id"], "current": index == page})
+                          "edition_id": ref["edition_id"], "legacy_basis": ref["legacy_basis"],
+                          "legacy_content_revised": ref["legacy_content_revised"], "current": index == page})
         if current is None:
             return JSONResponse({"detail": "该页在现有 PDF 中没有对应页图"}, status_code=404)
         return {"book_key": book_key, "short_key": info.get("key"), "title": info.get("title") or "", "current_page": page,

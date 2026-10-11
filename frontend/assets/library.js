@@ -1665,10 +1665,14 @@
                 event.stopPropagation();
                 if (event.metaKey || event.ctrlKey || event.shiftKey || event.button) return;
                 event.preventDefault();
-                openEdition(result.edition_id, result.pdf_page, { push: true, query, via: 'search' });
+                openEdition(result.edition_id, result.pdf_page, {
+                    push: true, query, via: 'search',
+                    notice: result.legacy_content_revised ? '此页位置对应，现行版内容已修订。' : null,
+                });
             },
         }));
         if (otherPrinting) actions.append(el('span', { class: 'lib-open-note', text: OTHER_PRINTING_NOTE }));
+        if (result.legacy_content_revised) actions.append(el('span', { class: 'lib-open-note', text: '此页位置对应，现行版内容已修订' }));
     }
 
     let decorateCtl = null;
@@ -1729,7 +1733,11 @@
         try {
             const data = await api('/api/library/legacy', { kind, ref, page });
             if (data.available && data.exact) {
-                openEdition(data.edition_id, data.pdf_page, { via: 'legacy' });
+                openEdition(data.edition_id, data.pdf_page, {
+                    via: 'legacy',
+                    // same place in the book, but the current edition's text there was revised
+                    notice: data.legacy_content_revised ? '此页位置对应，现行版内容已修订。' : null,
+                });
             } else if (data.available && data.reason === 'nearest' && data.approximate) {
                 openEdition(data.edition_id, data.pdf_page, {
                     via: 'legacy',

@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.10.11-r41",
+  "frontend_refactor_version": "2026.10.11-r42",
   "updated_at": "2026-10-11",
   "history": [
+    {
+      "version": "2026.10.11-r42",
+      "date": "2026-10-11",
+      "summary": "owner-confirmed legacy pages: two legacy pages that now share one PDF page both resolve exactly; a page whose position matches but whose text was revised in the current edition is marked 此页位置对应，现行版内容已修订; asset cache key 20261011d for app.js, library.js, library.css"
+    },
     {
       "version": "2026.10.11-r41",
       "date": "2026-10-11",

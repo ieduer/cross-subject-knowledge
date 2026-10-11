@@ -244,6 +244,10 @@ python scripts/dev_library_server.py --release-dir <…/releases/<id>> --pdf-dir
 
 旧的教材页图集（144 册，`https://img.rdfzer.com/pages/<jc_short_key>/p<N>.webp`）将在全部使用方迁移后删除。SUN 自己已不再输出这类网址；其他站点改用下列端点。辞书页图（`pages/dict_xuci`、`pages/dict_changyong`）、行内插图（`orig/`）、试题图（`gaokao/`）**不在此列**，原样不动。
 
+### 修订 5：站长确认的对应行
+
+页对应行可带 `legacy_also: [{legacy_image_index, legacy_basis, legacy_content_revised}]`：另一个旧页如今也在这同一 PDF 页上（两页并成一页）。这些与行本身的 `legacy_image_index` 一样是**确切对应**，不是「最近页」；同一册内序号仍不得重复。`legacy_basis`（如 `owner-confirmed`）与 `legacy_content_revised` 会出现在 `/api/library/resolve`、`/api/library/legacy`、`/api/library/legacy-page`、`/api/page-image` 的每页、检索结果的 `pdf_ref` 与 `/pages` 的行里。`legacy_content_revised: true` 表示位置对应、但现行版该页内容已修订：图片转址照常 `302`，另带 `X-Sun-Legacy-Content-Revised: 1`；SUN 的页图检视器、旧链接打开的阅读器与检索结果链接旁显示「此页位置对应，现行版内容已修订」。
+
 ### 端点
 
 | 端点 | 行为 |
@@ -303,7 +307,7 @@ python scripts/dev_library_server.py --release-dir <…/releases/<id>> --pdf-dir
 - `scripts/stage_clean_release.py` 的 `RELEASE_FILES`＋`RELEASE_TREES`（整棵 `frontend/vendor/pdfjs`，逐档对照 `VENDOR.json`）与 `scripts/build_release_manifest.py` 的 `SOURCE_ASSETS`＋`SOURCE_TREES` 是发布内容的两份清单；`tests/library/test_release_bundle.py` 把清单原样铺到临时目录后在子进程 `import main`，并检查四个页面、样式表、脚本（含 `library.js` 拼出的 PDF.js 路径）引用的每个本地文件都在里面，也检查 `backend/`、`frontend/` 下每个受版本控制的文件都在清单内。新增运行期文件而没加进清单，测试会红。
 - `release_manifest.json` 必须在最后一次改动代码之后重新生成。持有运行期数据（`data/index`）的机器照旧执行 `python scripts/build_release_manifest.py`；只改了代码、手边没有运行期数据时用 `python scripts/build_release_manifest.py --reuse-runtime-from release_manifest.json`：重算全部源码条目，运行期条目原样沿用并在档内注明（`runtime_assets_carried_from`），`deploy_vps.sh` 仍会在 VPS 上逐项核对。运行期数据有变动时不得用这个参数。
 - `deploy_vps.sh` 在停掉现行容器之前，会在候选映像内确认前端文件齐全、PDF.js 目录与 `VENDOR.json` 逐档相符、`import ai_guard, library` 成功。
-- 页脚版本：`frontend/assets/version.json` 为 `2026.10.11-r41`，`app.js` 的后备值 `DEFAULT_FRONTEND_VERSION` 同步。资源缓存键：`app.js`、`library.js`、`library.css` 为 `?v=20261011c`（`index.html`、`chuzhong.html`）；未改动的 `ai-client.js`、`dict.js` 仍是 `20261010a`。之后再改这三个文件须同时更换页面里的缓存键（`tests/library/test_release_bundle.py` 会检查三者同键、且与版本档一致）。
+- 页脚版本：`frontend/assets/version.json` 为 `2026.10.11-r42`，`app.js` 的后备值 `DEFAULT_FRONTEND_VERSION` 同步。资源缓存键：`app.js`、`library.js`、`library.css` 为 `?v=20261011d`（`index.html`、`chuzhong.html`）；未改动的 `ai-client.js`、`dict.js` 仍是 `20261010a`。之后再改这三个文件须同时更换页面里的缓存键（`tests/library/test_release_bundle.py` 会检查三者同键、且与版本档一致）。
 - `--reuse-runtime-from` 会把上一份清单里 `runtime_assets_*` 的说明（例如 `runtime_assets_measured_from`，含主机上实读的哈希）连同运行期条目一起带过来。
 
 ## 11. 排错

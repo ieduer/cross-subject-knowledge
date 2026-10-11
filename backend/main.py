@@ -6878,7 +6878,7 @@ def search(
                 # the PDF page behind page_url (edition, PDF page, verified printed label)
                 "pdf_ref": ({key: page_ref[key] for key in (
                     "edition_id", "pdf_page", "pdf_pages", "printed_label", "viewer_url", "text_identity",
-                    "preview_default", "default_edition_id")} if page_ref else None),
+                    "preview_default", "default_edition_id", "legacy_content_revised")} if page_ref else None),
             }
             if (r["source"] or "mineru") != "gaokao":
                 result_item = _apply_book_runtime_meta(
@@ -9305,6 +9305,8 @@ def page_image(
             "pdf_page": ref["pdf_page"],
             "printed_label": ref["printed_label"],
             "viewer_url": ref["viewer_url"],
+            "legacy_basis": ref["legacy_basis"],
+            "legacy_content_revised": ref["legacy_content_revised"],
             "current": p == page,
         })
     if current_ref is None:

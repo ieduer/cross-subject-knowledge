@@ -137,6 +137,12 @@ class Base(unittest.TestCase):
 
         # main: legacy 0,1 -> pages 1,2; legacy 2,3 have no row; legacy 4..11 -> pages 5..12 (printed verified from page 5)
         main_rows = [row(1, 0), row(2, 1), row(3), row(4)] + [row(n, n - 1, str(n - 4), True) for n in range(5, 13)]
+        # revision 5: owner-confirmed rows; two more legacy pages share PDF pages 6 and 7
+        main_rows[4]["legacy_basis"] = "owner-confirmed"
+        main_rows[4]["legacy_content_revised"] = False
+        main_rows[5]["legacy_also"] = [{"legacy_image_index": 15, "legacy_basis": "owner-confirmed", "legacy_content_revised": True,
+                                        "legacy_confirmation": {"decision": "Y2", "date": "2026-10-11", "note": "text revised"}}]
+        main_rows[6]["legacy_also"] = [{"legacy_image_index": 16, "legacy_basis": "owner-confirmed", "legacy_content_revised": False}]
         maps = {
             cls.ids["main"]: {"edition_id": cls.ids["main"], "pdf_sha256": pdf1["sha256"], "pages": main_rows, "legacy_unmapped": [
                 {"legacy_image_index": 2, "nearest_mapped": {"legacy_image_index": 1, "pdf_page": 2, "distance": 1}},
@@ -762,6 +768,87 @@ class RevisionFourFieldTests(Base):
             self.assertIsNone(self.lib.legacy_page_ref(*bad))
 
 
+class RevisionFiveTests(Base):
+    """`legacy_also`: a second legacy page on a PDF page that already has its own row."""
+
+    def setUp(self):
+        self.key = library.short_key_for(synthetic.REAL_SUN_KEY)
+        self.main = self.ids["main"]
+
+    def test_extra_legacy_pages_resolve_exactly_everywhere(self):
+        for index, page, revised in ((15, 6, True), (16, 7, False)):
+            single = self.client.get("/api/library/resolve", params={"book_key": synthetic.REAL_SUN_KEY, "section": str(index)}).json()
+            self.assertEqual((single["available"], single["edition_id"], single["pdf_page"]), (True, self.main, page))
+            self.assertEqual((single["legacy_basis"], single["legacy_content_revised"]), ("owner-confirmed", revised))
+            batch = self.client.get("/api/library/resolve", params={"items": f"{self.key}.{index}"}).json()["results"][0]
+            self.assertEqual((batch["available"], batch["pdf_page"], batch["legacy_content_revised"]), (True, page, revised))
+            in_book = self.client.get("/api/library/resolve", params={"edition_id": self.main, "sections": str(index)}).json()["results"][0]
+            self.assertEqual((in_book["available"], in_book["pdf_page"], in_book["legacy_content_revised"]), (True, page, revised))
+            old_link = self.client.get("/api/library/legacy", params={"kind": "jc", "ref": synthetic.REAL_SUN_KEY, "page": str(index)}).json()
+            self.assertEqual((old_link["exact"], old_link["pdf_page"], old_link["legacy_content_revised"], old_link.get("reason")),
+                             (True, page, revised, None))
+            self.assertNotIn("approximate", old_link)
+            info = self.client.get("/api/library/legacy-page", params={"jc": self.key, "index": str(index)}).json()
+            self.assertEqual((info["exact"], info["pdf_page"], info["legacy_basis"], info["legacy_content_revised"]),
+                             (True, page, "owner-confirmed", revised))
+            self.assertNotIn("approximate", info)
+            image = self.client.get(f"/files/legacy-page/{self.key}/p{index}.webp", follow_redirects=False)   # no ?nearest needed
+            self.assertEqual(image.status_code, 302)
+            self.assertEqual(image.headers["location"], f"/files/page/{self.main}/{self.main[-12:]}/{page}.webp?w=960")
+            self.assertNotIn("x-sun-legacy-approximate", image.headers)
+            self.assertEqual(image.headers.get("x-sun-legacy-content-revised"), "1" if revised else None)
+            ref = self.lib.legacy_page_ref(synthetic.REAL_SUN_KEY, index)
+            self.assertEqual((ref["pdf_page"], ref["approximate"], ref["legacy_basis"], ref["legacy_content_revised"]),
+                             (page, None, "owner-confirmed", revised))
+
+    def test_the_page_own_row_is_untouched(self):
+        own = self.client.get("/api/library/legacy-page", params={"jc": self.key, "index": "5"}).json()       # page 6's own row
+        self.assertEqual((own["exact"], own["pdf_page"], own["legacy_basis"], own["legacy_content_revised"]), (True, 6, "image+text", False))
+        confirmed = self.client.get("/api/library/legacy-page", params={"jc": self.key, "index": "4"}).json()
+        self.assertEqual((confirmed["pdf_page"], confirmed["legacy_basis"], confirmed["legacy_content_revised"]), (5, "owner-confirmed", False))
+        image = self.client.get(f"/files/legacy-page/{self.key}/p5.webp", follow_redirects=False)
+        self.assertNotIn("x-sun-legacy-content-revised", image.headers)
+        rows = self.client.get(f"/api/library/editions/{self.main}/pages").json()["rows"]
+        self.assertEqual(rows[5]["legacy_also"], [{"legacy_image_index": 15, "legacy_basis": "owner-confirmed", "legacy_content_revised": True}])
+        self.assertEqual((rows[5]["legacy_image_index"], rows[5]["legacy_content_revised"], rows[0]["legacy_also"]), (5, False, []))
+        self.assertNotIn("legacy_confirmation", json.dumps(rows))
+        detail = self.client.get(f"/api/library/editions/{self.main}").json()["edition"]
+        self.assertEqual(detail["page_map"]["legacy_mapped_pages"], 12)     # 10 rows + 2 extra indexes
+
+    def test_bad_legacy_also_rejects_the_release(self):
+        base = json.loads((self.catalog_root / "releases" / "r4-fixture" / f"page-maps/{self.main}.json").read_text(encoding="utf-8"))
+        cases = {"duplicate legacy_image_index": [{"legacy_image_index": 5}],      # already page 6's own index
+                 "bad legacy_also": [{"legacy_image_index": -1}]}
+        for expected, extras in cases.items():
+            raw = json.loads(json.dumps(base))
+            raw["pages"][8]["legacy_also"] = extras
+            with self.assertRaises(library.ReleaseError) as caught:
+                library._parse_page_map(raw, self.main, 12, self.seed["e1"]["pdf"]["sha256"])
+            self.assertIn(expected, str(caught.exception))
+        raw = json.loads(json.dumps(base))
+        raw["pages"][8]["legacy_also"] = "x"
+        with self.assertRaises(library.ReleaseError):
+            library._parse_page_map(raw, self.main, 12, self.seed["e1"]["pdf"]["sha256"])
+
+    @unittest.skipUnless((R3_REAL_DIR.parent / "20261011T015939Z-24b58ca8" / "catalog.json").is_file(), "the revision-5 release is not on this machine")
+    def test_real_revision_five_release(self):
+        real = R3_REAL_DIR.parent / "20261011T015939Z-24b58ca8"
+        root = self.tmp / "r5" / "catalog"
+        (root / "releases").mkdir(parents=True)
+        (root / "releases" / real.name).symlink_to(real, target_is_directory=True)
+        (root / "CURRENT").write_text(real.name + "\n", encoding="utf-8")
+        settings = library.Settings.from_env(self.tmp, {"LIBRARY_CATALOG_ROOT": str(root)})
+        release = library.load_release(root, settings)
+        edition = next(e for e in release.editions.values() if e.edition_id.endswith("-efe51d7a6773"))     # 语文选择性必修 中册
+        self.assertEqual((edition.page_map.by_legacy[26], edition.page_map.by_legacy[25]), (27, 27))
+        self.assertEqual((edition.page_map.by_legacy[33], edition.page_map.by_legacy[38]), (38, 38))
+        self.assertEqual(edition.page_map.legacy_info(33), {"legacy_basis": "owner-confirmed", "legacy_content_revised": True})
+        self.assertEqual(edition.page_map.legacy_info(26), {"legacy_basis": "owner-confirmed", "legacy_content_revised": False})
+        self.assertEqual(edition.page_map.legacy_info(22)["legacy_basis"], "owner-confirmed")
+        self.assertEqual(edition.page_map.legacy_mapped_pages, 134)
+        self.assertEqual(sum(1 for e in release.editions.values() if e.page_map and e.page_map.also), 1)
+
+
 # ── SUN itself no longer emits legacy page-image URLs ────────────────────────
 
 class SunEmitsNoLegacyImageUrlTests(Base):
@@ -794,6 +881,7 @@ for key in sample:
                 assert isinstance(page["pdf_page"], int) and page["pdf_page"] >= 1
                 assert page["edition_id"] and ("/" + page["edition_id"] + "/") in page["url"], page
                 assert "approximate" not in page
+                assert page["legacy_content_revised"] in (True, False), page
         except HTTPException as error:
             assert error.status_code == 404, error.status_code
             out["viewer_404"] += 1

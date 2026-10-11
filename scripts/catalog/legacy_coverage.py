@@ -32,7 +32,11 @@ def ranges(xs: list[int]) -> list[list[int]]:
 
 def edition_rows(release: Path, edition_id: str) -> dict[int, dict]:
     pm = read_json(release / "page-maps" / f"{edition_id}.json")
-    return {r["legacy_image_index"]: r for r in pm["pages"] if r["legacy_image_index"] is not None}
+    rows = {r["legacy_image_index"]: r for r in pm["pages"] if r["legacy_image_index"] is not None}
+    for r in pm["pages"]:                       # legacy pages that share a PDF page with another row
+        for a in r.get("legacy_also") or []:
+            rows[a["legacy_image_index"]] = {**a, "pdf_page": r["pdf_page"]}
+    return rows
 
 
 def blank_legacy(images: Path | None, short: str, sha: str | None) -> set[int]:

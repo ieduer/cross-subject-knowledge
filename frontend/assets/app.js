@@ -7,7 +7,7 @@ window._subjectMeta = {};
 // AI runs only on an explicit user action and only through this site's own server
 // (assets/ai-client.js → POST /api/chat). The browser never contacts a model gateway.
 const IMG_CDN = 'https://img.rdfzer.com';
-const DEFAULT_FRONTEND_VERSION = '2026.10.11-r41';
+const DEFAULT_FRONTEND_VERSION = '2026.10.11-r42';
 const FRONTEND_VERSION_FILE = '/assets/version.json';
 const AI_MEMORY_LIMIT = 12;
 const DOWNLOADABLE_LIBRARY_BOOKS = 316;
@@ -1386,6 +1386,7 @@ function showPageViewerImage(idx) {
     viewer.querySelector('.page-viewer-page').textContent = pageRefLabel(page);
     const info = viewer.querySelector('.page-viewer-info');
     info.textContent = `${pageRefLabel(page)} / 共 ${data.pdf_total_pages} 页`
+        + (page.legacy_content_revised ? ' · 此页位置对应，现行版内容已修订' : '')
         + (data.text_identity === 'page-aligned-other-printing' ? ' · 检索文字来自较早印次，以 PDF 为准' : '');
     if (page.viewer_url) {
         const link = document.createElement('a');

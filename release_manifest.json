@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-10-11T03:18:52.049990+00:00",
-  "git_head": "572fca2a16f2d630a2a5cb7ee70c53ad915786f5",
-  "frontend_version": "2026.10.11-r41",
+  "generated_at": "2026-10-11T03:49:41.981535+00:00",
+  "git_head": "c665e1166fae043eabd6c4ebb0a23c27cc20e9f0",
+  "frontend_version": "2026.10.11-r42",
   "source_of_truth": {
     "local_workspace": "authoritative",
     "github": "authoritative_for_code_only_after_push",
@@ -31,8 +31,8 @@
     {
       "kind": "source",
       "logical_path": "backend/main.py",
-      "size": 367792,
-      "sha256": "9be7b21e7c4108132465f7c8bcd14dc1bc4979b024fbcdae8128fe6a84bbf59f"
+      "size": 367936,
+      "sha256": "db247a47eb76f077150e0d74575bdc1315b2a0bc6ef7a04447a829e45787f019"
     },
     {
       "kind": "source",
@@ -43,14 +43,14 @@
     {
       "kind": "source",
       "logical_path": "backend/library.py",
-      "size": 91332,
-      "sha256": "31d20f36e1cae3a92cb93bd3a97d13d222a4d4bb2ebeca4ca0116b794f573ff6"
+      "size": 94001,
+      "sha256": "43a70a8bcdfcbe22944fe12966cbd4b03361134190c5a7ae6e9f0dcb1f7eb354"
     },
     {
       "kind": "source",
       "logical_path": "backend/page_images.py",
-      "size": 30932,
-      "sha256": "de88b9f07f5aa777ea70eb6a96f80e5e6baefce61c0ff627cdd904076b82344f"
+      "size": 31361,
+      "sha256": "74df04bbbea1a5468fd65a997e80d4269aa944845f673142f34197423d68777f"
     },
     {
       "kind": "source",
@@ -116,7 +116,7 @@
       "kind": "source",
       "logical_path": "frontend/index.html",
       "size": 14505,
-      "sha256": "22f5a84c6f9809c0ec92282dc57097c5b3763bb199cc7a34e1362ff32c40c3ee"
+      "sha256": "b22e3ad564adbfc3c13d4cf53bf8128fea154b70e038442a8af8fe4f676a54ce"
     },
     {
       "kind": "source",
@@ -128,7 +128,7 @@
       "kind": "source",
       "logical_path": "frontend/chuzhong.html",
       "size": 11136,
-      "sha256": "f42625561a02fd98233133680b5b95d9bab0a29acaa4673e42c57523d294bc46"
+      "sha256": "6cc7a6f97418aa4978082e313b2604fc6e1eb7674ad67a792a53b1cb5718474e"
     },
     {
       "kind": "source",
@@ -145,8 +145,8 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/app.js",
-      "size": 117066,
-      "sha256": "a906b5cfb5c4026b886c6d8f1832976004c9cfbaa6fa981d2287dc245746f857"
+      "size": 117165,
+      "sha256": "4df698c681e1cf148c4c7b32cbc0f8c49539424ed765b3756c88cae85ea4dabe"
     },
     {
       "kind": "source",
@@ -181,14 +181,14 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/library.js",
-      "size": 99964,
-      "sha256": "beffc0ce5968f2d06b1fbcb8851c4502364e48cc90a88c1924c27640305b6554"
+      "size": 100524,
+      "sha256": "8eee027384216270f88bbf2b6b7b51425a4b0ef03c1c00086c73180436ecff22"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/version.json",
-      "size": 12540,
-      "sha256": "6efece2399695284e0a37ba9568ef0aa930a0659844046c8b356585dab4d064d"
+      "size": 12931,
+      "sha256": "1330aecd76d6982f038df604febb43dc8df8b6715de779cc157e88a48fe5db9d"
     },
     {
       "kind": "source",
@@ -1494,8 +1494,8 @@
     }
   ],
   "runtime_assets_carried_from": {
-    "generated_at": "2026-10-11T03:07:48.250352+00:00",
-    "git_head": "07e72e856ad3bca5c6fd6a12f77da0aa60664d19",
+    "generated_at": "2026-10-11T03:48:19.372320+00:00",
+    "git_head": "c665e1166fae043eabd6c4ebb0a23c27cc20e9f0",
     "note": "runtime half not re-measured in this build; deploy_vps.sh verifies it on the VPS"
   },
   "page_mapping": {

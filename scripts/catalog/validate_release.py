@@ -31,6 +31,12 @@ TEXT_IDENTITY = {"same-bytes": ("same-file",),
                  "partial": ("page-aligned-other-printing",), "different-edition": (None,), "none": (None,),
                  "legacy-image-source": ("legacy-images",)}
 PROVEN_BASES = ("anchor", "text-anchor", "image-match", "image+text")
+OWNER_BASIS = "owner-confirmed"
+
+
+def legacy_also(rows: list[dict]) -> list[tuple[int, int]]:
+    """(pdf_page, legacy index) of the extra legacy pages that share a PDF page with its own row."""
+    return [(r["pdf_page"], a.get("legacy_image_index")) for r in rows for a in r.get("legacy_also") or []]
 TEXT_BASES = ("anchor", "text-anchor", "image+text")
 STATUSES = {"active", "superseded", "pending-verification"}
 LEGACY_BASES = {"identifier:jc-content-id", "identifier:jc-book-key", "bytes:source-pdf",
@@ -174,6 +180,7 @@ def check_unmapped(e: dict, pm: dict, E) -> None:
     eid, name = e["edition_id"], f"page-maps/{e['edition_id']}.json"
     legacy_pages = ((pm.get("legacy") or {}).get("evidence") or {}).get("legacy_pages")
     mapped = {r["legacy_image_index"]: r["pdf_page"] for r in pm.get("pages") or [] if r.get("legacy_image_index") is not None}
+    mapped.update({li: p for p, li in legacy_also(pm.get("pages") or [])})
     um = pm.get("legacy_unmapped")
     owner = bool((e.get("legacy") or {}).get("sun_book_key"))
     if um is None:
@@ -282,8 +289,30 @@ def check_page_map(e: dict, pm: dict, E) -> None:
         E(f"{name}: legacy_image_index values are not unique, increasing and >= 0")
     if legacy_pages is not None and any(i >= legacy_pages for i in idx):
         E(f"{name}: legacy_image_index beyond the image set ({legacy_pages} pages)")
-    if leg.get("mapped_pages") != len(legacy) or (pm.get("legacy") or {}).get("mapped_pages") != len(legacy):
+    also = legacy_also(rows)
+    n_mapped = len(legacy) + len(also)
+    if leg.get("mapped_pages") != n_mapped or (pm.get("legacy") or {}).get("mapped_pages") != n_mapped:
         E(f"{eid}: legacy.mapped_pages differs from the rows in the page map")
+    # --- owner-confirmed rows: explicit, dated, never a second row for a legacy index ------------
+    if len({li for _, li in also} | set(idx)) != n_mapped:
+        E(f"{name}: a legacy index has more than one row")
+    for r in rows:
+        own = [r] if r.get("legacy_basis") == OWNER_BASIS else []
+        extra = r.get("legacy_also") or []
+        if extra and r["legacy_image_index"] is None:
+            E(f"{name}: legacy_also on pdf page {r['pdf_page']} without a row of its own")
+        for x in own + extra:
+            c = x.get("legacy_confirmation") or {}
+            if (x.get("legacy_basis") != OWNER_BASIS or not c.get("decision") or not c.get("date")
+                    or not isinstance(x.get("legacy_content_revised"), bool)
+                    or not isinstance(x.get("legacy_image_index"), int)
+                    or (legacy_pages is not None and not 0 <= x["legacy_image_index"] < legacy_pages)):
+                E(f"{name}: owner-confirmed row on pdf page {r['pdf_page']} needs basis, decision, date and "
+                  "legacy_content_revised")
+        if r.get("legacy_basis") != OWNER_BASIS and r.get("legacy_content_revised"):
+            E(f"{name}: legacy_content_revised on a row that was not confirmed by the owner")
+    if (also or any(r.get("legacy_basis") == OWNER_BASIS for r in rows)) and relation not in ("aligned", "partial"):
+        E(f"{eid}: owner-confirmed rows on an edition whose relation is {relation!r}")
     if relation != lev.get("relation"):
         E(f"{eid}: corpus.relation {relation!r} differs from the page-map evidence {lev.get('relation')!r}")
     if legacy:
@@ -317,7 +346,7 @@ def check_page_map(e: dict, pm: dict, E) -> None:
         E(f"{eid}: same-bytes requires legacy_image_index == pdf_page - 1 on every page")
     if relation == "aligned":
         if lev.get("method") == "content":
-            if legacy_pages is None or len(legacy) != legacy_pages:
+            if legacy_pages is None or n_mapped != legacy_pages:
                 E(f"{eid}: aligned requires every legacy page to be mapped")
         elif len(legacy) < 8 or not lev.get("reaches_end") or lev.get("wide_gaps"):
             E(f"{eid}: aligned requires an accepted mapping that reaches the end without a wide unproven stretch")

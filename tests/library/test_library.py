@@ -360,7 +360,8 @@ class PageTests(Base):
         body = self.get(f"/api/library/editions/{self.eid('e1')}/pages").json()
         self.assertEqual((body["from"], body["to"], body["pages"]), (1, 12, 12))
         self.assertEqual(body["rows"][0], {"pdf_page": 1, "printed_label": None, "printed_verified": False,
-                                           "legacy_image_index": 0, "legacy_basis": None, "ocr_page": 1})
+                                           "legacy_image_index": 0, "legacy_basis": None, "legacy_content_revised": False,
+                                           "legacy_also": [], "ocr_page": 1})
         self.assertEqual(body["rows"][2]["printed_label"], "1")
         self.assertTrue(body["rows"][2]["printed_verified"])
 
@@ -374,9 +375,9 @@ class PageTests(Base):
         self.assertFalse(body["page_map_available"])
         self.assertEqual(body["rows"], [
             {"pdf_page": 2, "printed_label": None, "printed_verified": False, "legacy_image_index": None,
-             "legacy_basis": None, "ocr_page": None},
+             "legacy_basis": None, "legacy_content_revised": False, "legacy_also": [], "ocr_page": None},
             {"pdf_page": 3, "printed_label": None, "printed_verified": False, "legacy_image_index": None,
-             "legacy_basis": None, "ocr_page": None}])
+             "legacy_basis": None, "legacy_content_revised": False, "legacy_also": [], "ocr_page": None}])
 
     def test_caps(self):
         url = f"/api/library/editions/{self.eid('e1')}/pages"
@@ -430,7 +431,8 @@ class ResolveTests(Base):
         body = self.get("/api/library/resolve", params={"items": f"{key}.0,{key}.99,{other}.2,ffffffffffff.3"}).json()
         self.assertEqual(body["results"], [
             {"item": f"{key}.0", "available": True, "edition_id": self.eid("e1"), "pdf_page": 1,
-             "text_identity": "page-aligned-other-printing", "preview_default": None, "default_edition_id": None},
+             "text_identity": "page-aligned-other-printing", "preview_default": None, "default_edition_id": None,
+             "legacy_basis": None, "legacy_content_revised": False},
             {"item": f"{key}.99", "available": False, "reason": "page-not-mapped"},
             {"item": f"{other}.2", "available": False, "reason": "ambiguous"},
             {"item": "ffffffffffff.3", "available": False, "reason": "unknown-book"}])
@@ -445,9 +447,9 @@ class ResolveTests(Base):
     def test_in_book_sections(self):
         body = self.get("/api/library/resolve", params={"edition_id": self.eid("e3"), "sections": "1,3,5"}).json()
         self.assertEqual(body["results"], [
-            {"section": 1, "available": True, "pdf_page": 2},
+            {"section": 1, "available": True, "pdf_page": 2, "legacy_basis": None, "legacy_content_revised": False},
             {"section": 3, "available": False, "pdf_page": None, "reason": "page-not-mapped"},
-            {"section": 5, "available": True, "pdf_page": 4}])
+            {"section": 5, "available": True, "pdf_page": 4, "legacy_basis": None, "legacy_content_revised": False}])
         # an edition with no proven relation never maps
         body = self.get("/api/library/resolve", params={"edition_id": self.eid("e2"), "sections": "1"}).json()
         self.assertFalse(body["results"][0]["available"])

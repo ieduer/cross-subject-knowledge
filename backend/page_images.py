@@ -553,6 +553,9 @@ def build_router(lib: Any, images: ImageSettings, service: RenderService, image_
                    "X-Content-Type-Options": "nosniff"}
         if not found["exact"]:
             headers["X-Sun-Legacy-Approximate"] = f"nearest; distance={found['distance']}"
+        elif found["outcome"].get("legacy_content_revised"):
+            # same position in the book, but the current edition's text on that page was revised
+            headers["X-Sun-Legacy-Content-Revised"] = "1"
         return Response(status_code=302, headers=headers)
 
     @router.get("/api/library/legacy-page")
@@ -579,6 +582,8 @@ def build_router(lib: Any, images: ImageSettings, service: RenderService, image_
                 "preview_default": found["outcome"].get("preview_default"),
                 "default_edition_id": found["outcome"].get("default_edition_id"),
                 "provenance": edition.record.get("provenance"),
+                "legacy_basis": found["outcome"].get("legacy_basis") if found["exact"] else None,
+                "legacy_content_revised": bool(found["exact"] and found["outcome"].get("legacy_content_revised")),
             }
             if not found["exact"]:
                 payload["approximate"] = {"kind": "nearest", "distance": found["distance"],

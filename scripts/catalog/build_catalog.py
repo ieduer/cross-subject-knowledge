@@ -143,7 +143,9 @@ def finalize_edition(ed: dict, pm: dict | None, staged: set[str], covers: dict |
                           "offset": pe["segments"][0]["offset"] if pm["printed"]["verified"] else None,
                           "restarts": pe.get("restarts"), "reason": pe.get("reason")}
         rec["legacy"]["mapped_pages"] = pm["legacy"]["mapped_pages"]
-        rec["legacy"]["offset"] = pm["legacy"]["evidence"].get("offset")
+        offsets = {r["pdf_page"] - 1 - r["legacy_image_index"] for r in pm["pages"] if r["legacy_image_index"] is not None}
+        # one offset for the whole book, or null when rows differ (never compute a page from it)
+        rec["legacy"]["offset"] = next(iter(offsets)) if len(offsets) == 1 else None
         rec["legacy"]["legacy_pages"] = pm["legacy"]["evidence"].get("legacy_pages")
     else:
         rec["printed"] = None
@@ -151,6 +153,61 @@ def finalize_edition(ed: dict, pm: dict | None, staged: set[str], covers: dict |
         rec["legacy"]["offset"] = None
         rec["legacy"]["legacy_pages"] = (ed.get("legacy_spec") or {}).get("legacy_pages")
     return rec
+
+
+OWNER_BASIS = "owner-confirmed"
+
+
+def apply_owner_rows(doc: dict, owners: dict[str, dict], page_maps: dict[str, dict]) -> dict:
+    """Add owner-confirmed legacy -> PDF pairs to the page maps of the editions they were confirmed on.
+
+    Never overrides: the build stops when the legacy index already has a row, when the PDF page already
+    holds another legacy index that the entry does not name in `shares_pdf_page_with`, or when the
+    reader book's owner edition is not the PDF the pair was confirmed on. A pair whose PDF page is free
+    becomes that page's row; a pair that shares a page with an automatic row is listed in the page's
+    `legacy_also` (two legacy pages on one PDF page). Returns {edition_id: rows added}.
+    """
+    from page_map import legacy_unmapped
+
+    added: dict[str, int] = {}
+    for r in doc.get("rows") or []:
+        ed = owners.get(r["jc_short_key"])
+        where = f"owner-confirmed row {r['jc_short_key']} legacy {r['legacy_image_index']} -> pdf {r['pdf_page']}"
+        if ed is None or not ed.get("pdf") or not ed["pdf"]["sha256"].startswith(r["pdf_sha256"]):
+            raise SystemExit(f"{where}: the reader book's owner edition is not the PDF this pair was confirmed on")
+        pm = page_maps[ed["edition_id"]]
+        li, p = r["legacy_image_index"], r["pdf_page"]
+        legacy_pages = pm["legacy"]["evidence"].get("legacy_pages")
+        if not 1 <= p <= len(pm["pages"]) or not 0 <= li < (legacy_pages or 0):
+            raise SystemExit(f"{where}: outside the PDF or the legacy image set")
+        row = pm["pages"][p - 1]
+        mapped = {x["legacy_image_index"] for x in pm["pages"] if x["legacy_image_index"] is not None}
+        mapped |= {a["legacy_image_index"] for x in pm["pages"] for a in x.get("legacy_also") or []}
+        if li in mapped:
+            raise SystemExit(f"{where}: legacy index {li} already has a row; an existing row is never overridden")
+        info = {"legacy_basis": OWNER_BASIS, "legacy_content_revised": bool(r.get("content_revised")),
+                "legacy_confirmation": {"decision": r["decision"], "date": r["date"], "note": r.get("note")}}
+        if row["legacy_image_index"] is None:
+            if r.get("shares_pdf_page_with") is not None:
+                raise SystemExit(f"{where}: shares_pdf_page_with is set but the PDF page holds no row")
+            row.update({"legacy_image_index": li, "legacy_score": None, **info})
+        elif row["legacy_image_index"] == r.get("shares_pdf_page_with"):
+            row.setdefault("legacy_also", []).append({"legacy_image_index": li, **info})
+            row["legacy_also"].sort(key=lambda a: a["legacy_image_index"])
+        else:
+            raise SystemExit(f"{where}: PDF page {p} already holds legacy index {row['legacy_image_index']}; "
+                             "name it in shares_pdf_page_with if both legacy pages are on that page")
+        added[ed["edition_id"]] = added.get(ed["edition_id"], 0) + 1
+    for eid in added:
+        pm = page_maps[eid]
+        mapping = {x["legacy_image_index"]: x["pdf_page"] for x in pm["pages"] if x["legacy_image_index"] is not None}
+        mapping.update({a["legacy_image_index"]: x["pdf_page"] for x in pm["pages"] for a in x.get("legacy_also") or []})
+        legacy_pages = pm["legacy"]["evidence"]["legacy_pages"]
+        pm["legacy"]["mapped_pages"] = len(mapping)
+        pm["legacy"]["coverage"] = round(len(mapping) / legacy_pages, 4)
+        pm["legacy"]["owner_confirmed_rows"] = added[eid]
+        pm["legacy_unmapped"] = legacy_unmapped(mapping, legacy_pages)
+    return added
 
 
 def resolve_content_claims(plan_editions: list[dict], page_maps: dict[str, dict]) -> tuple[list[dict], dict]:
@@ -333,6 +390,8 @@ def counts(editions: list[dict], page_maps: dict[str, dict], downloads: dict, pl
         "covers": sum(1 for e in editions if e.get("cover")),
         "cover_bytes": sum(sum(e["cover"]["bytes"].values()) for e in editions if e.get("cover")),
         "reassembled_editions": sum(1 for e in editions if e.get("reassembly")),
+        "owner_confirmed_rows": sum(pm["legacy"].get("owner_confirmed_rows") or 0 for pm in page_maps.values()),
+        "legacy_also_rows": sum(len(r.get("legacy_also") or []) for pm in page_maps.values() for r in pm["pages"]),
         "legacy_unmapped_with_nearest_hint": sum(len(pm.get("legacy_unmapped") or []) for pm in page_maps.values()),
         "storage_learn": sum(1 for e in editions if e["storage"].get("learn")),
         "learn_only_editions": sum(1 for e in editions if e.get("holding") == "learn-only"),
@@ -427,10 +486,17 @@ def build(args) -> int:
     if staged_digest:
         inputs["vps-holdings/*"] = staged_digest
     stamp = latest_timestamp(plan, dl_dir)
+    owner_rows = Path(args.owner_rows) if args.owner_rows else None
+    if owner_rows:
+        inputs["owner-confirmed-rows"] = file_hashes(owner_rows, ("sha256",))["sha256"]
     input_hash = sha256_text(dumps({"inputs": inputs, "tools": tools}))
     release_id = stamp.replace("-", "").replace(":", "") + "-" + input_hash[:8]
 
     plan_editions, decisions = resolve_content_claims(plan["editions"], page_maps)
+    if owner_rows:
+        apply_owner_rows(
+            read_json(owner_rows),
+            {e["legacy"]["jc_short_key"]: e for e in plan_editions if e["legacy"].get("sun_book_key")}, page_maps)
     covers = load_covers(Path(args.covers)) if args.covers else {}
     if covers:
         inputs["covers/*"] = sha256_text("\n".join(f"{s}:{w}:{v[w]['sha256']}" for s, v in sorted(covers.items())
@@ -538,6 +604,8 @@ def main(argv=None) -> int:
     p.add_argument("--details", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--stats", action="append", help="acquire-state.json / _ledger.json files to summarise")
+    p.add_argument("--owner-rows", help="owner_confirmed_rows.json: confirmed legacy -> PDF pairs, applied after "
+                                        "the automatic mapping; the build fails on any conflict")
     p.add_argument("--covers", help="directory of <pdf sha256>-<width>.webp made by covers.py")
     p.add_argument("--reassembly", help="directory of <pdf sha256>.json written by reassemble.py")
     p.add_argument("--vps-holdings", help="directory of <sha256>.pdf staged for the server; storage.vps is set "
