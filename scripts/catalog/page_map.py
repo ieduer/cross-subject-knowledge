@@ -358,6 +358,163 @@ def legacy_mapping(anchor_info: dict, pdf_pages: int, legacy_pages: int | None) 
     return out
 
 
+# --- legacy image index by per-page content proof (corpus database + page images) -------------
+
+PROVEN_BASES = ("text-anchor", "image-match", "image+text")
+CONTENT_MIN_PROVEN = 8
+
+
+def corpus_page_texts(db_path, book_key: str) -> dict[int, str]:
+    """Corpus text of every legacy page of a book: {section (= legacy image index): text}."""
+    import sqlite3
+
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        out: dict[int, list[str]] = defaultdict(list)
+        for section, text in con.execute(
+                "SELECT section, text FROM chunks WHERE book_key = ? AND source = 'mineru' "
+                "AND section IS NOT NULL AND text IS NOT NULL ORDER BY section, id", (book_key,)):
+            out[int(section)].append(text)
+        return {k: "\n".join(v) for k, v in out.items()}
+    finally:
+        con.close()
+
+
+def text_rows(index: dict[str, set[int]], page_texts: dict[int, str]) -> dict[int, set[int]]:
+    """legacy_index -> admissible PDF pages, for corpus pages located unambiguously."""
+    out = {}
+    for li, text in sorted(page_texts.items()):
+        loc = locate_text(index, text)
+        if loc["pdf_page"] is not None:
+            out[li] = {loc["pdf_page"]} | ({loc["alt_page"]} if loc["alt_page"] else set())
+    return out
+
+
+def _longest_increasing(pairs: list[tuple[int, int]]) -> set[int]:
+    """Legacy indexes of the longest chain that is strictly increasing in both coordinates."""
+    best_len, prev = [], []
+    for i, (_, p) in enumerate(pairs):
+        bl, bp = 1, -1
+        for j in range(i):
+            if pairs[j][1] < p and best_len[j] + 1 > bl:
+                bl, bp = best_len[j] + 1, j
+        best_len.append(bl)
+        prev.append(bp)
+    if not pairs:
+        return set()
+    i = max(range(len(pairs)), key=lambda k: (best_len[k], -k))
+    keep = set()
+    while i >= 0:
+        keep.add(pairs[i][0])
+        i = prev[i]
+    return keep
+
+
+def content_mapping(text: dict[int, set[int]] | None, image: dict[int, dict] | None,
+                    pdf_pages: int, legacy_pages: int, informative: int | None = None,
+                    same_threshold: float | None = None) -> dict:
+    """Per-page proof of legacy_index -> pdf_page; the offset may differ between parts of a book.
+
+    A legacy page is PROVEN when its page image matches one PDF page (calibrated test) and/or its
+    corpus text is located on exactly one PDF page, and the two do not disagree. Proven rows must
+    form one increasing sequence. Unproven rows are filled only between two proven rows that are
+    at most LEGACY_MAX_GAP apart and have the same offset, before the first proven row at offset 0
+    within that distance, and after the last when both sequences end together within it.
+    """
+    text, image = text or {}, image or {}
+    proven: dict[int, tuple[int, str, float | None]] = {}
+    conflicts = []
+    for li in sorted(set(text) | set(image)):
+        if not 0 <= li < legacy_pages:
+            continue
+        img, txt = image.get(li), text.get(li)
+        if img and txt:
+            if img["pdf_page"] in txt:
+                proven[li] = (img["pdf_page"], "image+text", img["score"])
+            else:
+                conflicts.append({"legacy_index": li, "image": img["pdf_page"], "text": sorted(txt)})
+        elif img:
+            proven[li] = (img["pdf_page"], "image-match", img["score"])
+        elif len(txt) == 1:
+            proven[li] = (next(iter(txt)), "text-anchor", None)
+    keep = _longest_increasing([(li, proven[li][0]) for li in sorted(proven)])
+    dropped = sorted(set(proven) - keep)
+    proven = {li: v for li, v in proven.items() if li in keep and 1 <= v[0] <= pdf_pages}
+    out = {
+        "method": "content", "pdf_pages": pdf_pages, "legacy_pages": legacy_pages,
+        "text_located_pages": len(text), "image_matched_pages": len(image),
+        "informative_image_pages": informative,
+        "proven_pages": len(proven),
+        "proven_by_basis": dict(sorted(Counter(v[1] for v in proven.values()).items())),
+        "image_text_conflicts": conflicts[:20], "image_text_conflict_count": len(conflicts),
+        "non_monotone_dropped": dropped[:20], "non_monotone_dropped_count": len(dropped),
+        "max_gap": LEGACY_MAX_GAP, "accepted": False, "offset": None, "rows": {},
+    }
+    if len(proven) < CONTENT_MIN_PROVEN:
+        out["reason"] = "too-few-proven-pages"
+        compared = max(len(text) + len(conflicts), informative or 0)
+        out["relation"] = "different-edition" if compared >= 20 else "none"
+        return out
+    order = sorted(proven)
+    rows: dict[int, tuple[int, str, float | None]] = {proven[li][0]: (li, proven[li][1], proven[li][2]) for li in order}
+    wide_gaps, offset_changes = [], []
+    for la, lb in zip(order, order[1:]):
+        pa, pb = proven[la][0], proven[lb][0]
+        if lb - la == 1:
+            if pb - pa != 1:
+                offset_changes.append({"after_legacy_index": la, "offset_before": pa - 1 - la, "offset_after": pb - 1 - lb})
+            continue
+        if pb - pa != lb - la:
+            offset_changes.append({"after_legacy_index": la, "offset_before": pa - 1 - la, "offset_after": pb - 1 - lb,
+                                   "unfilled_rows": lb - la - 1})
+        elif lb - la <= LEGACY_MAX_GAP:
+            for k in range(1, lb - la):
+                rows[pa + k] = (la + k, "between-anchors", None)
+        else:
+            wide_gaps.append({"from_legacy_index": la, "to_legacy_index": lb, "unfilled_rows": lb - la - 1})
+    l0, lz = order[0], order[-1]
+    p0, pz = proven[l0][0], proven[lz][0]
+    if 0 < l0 <= LEGACY_MAX_GAP and p0 - 1 == l0:
+        for k in range(l0):
+            rows[k + 1] = (k, "head-consistent", None)
+    tail = legacy_pages - 1 - lz
+    if 0 < tail <= LEGACY_MAX_GAP and pdf_pages - pz == tail:
+        for k in range(1, tail + 1):
+            rows[pz + k] = (lz + k, "tail-consistent", None)
+    hist = Counter(p - 1 - li for p, (li, _, _) in rows.items())
+    mapped = len(rows)
+    scores = [v[2] for v in proven.values() if v[2] is not None]
+    same_rendering = bool(
+        same_threshold is not None and informative and pdf_pages == legacy_pages and set(hist) == {0}
+        and mapped == legacy_pages and len(scores) >= informative and min(scores) >= same_threshold)
+    out.update({
+        "accepted": True, "rows": rows, "offset": next(iter(hist)) if len(hist) == 1 else None,
+        "offset_histogram": {str(k): v for k, v in sorted(hist.items())},
+        "offset_changes": offset_changes, "wide_gaps": wide_gaps,
+        "rows_nulled_by_gap_rule": sum(g["unfilled_rows"] for g in wide_gaps),
+        "unmapped_legacy_pages": legacy_pages - mapped,
+        "image_score_min": min(scores) if scores else None,
+        "same_rendering": same_rendering,
+        "relation": "aligned" if mapped == legacy_pages else "partial",
+    })
+    return out
+
+
+def image_check_same_bytes(score_rows: list[dict], cal: dict) -> dict:
+    """Independent re-proof of a same-bytes pairing from the page images: at least 95 % of the
+    informative legacy images must match the PDF page at the same position under the calibrated
+    rule, and none may match a page at another position."""
+    informative = [r for r in score_rows if not r.get("blank") and r.get("score") is not None]
+    passing = [r for r in informative
+               if r["score"] >= cal["match_threshold"] and r["score"] - r["second"] >= cal["margin"]]
+    ok = [r for r in passing if r["pdf_page"] == r["legacy_index"] + 1]
+    elsewhere = len(passing) - len(ok)
+    return {"informative_pages": len(informative), "matched_at_same_position": len(ok),
+            "matched_elsewhere": elsewhere, "blank_pages": sum(1 for r in score_rows if r.get("blank")),
+            "min_score": min((r["score"] for r in ok), default=None),
+            "confirmed": len(informative) >= 5 and elsewhere == 0 and len(ok) >= 0.95 * len(informative)}
+
+
 # --- assembly -------------------------------------------------------------------------------
 
 def build_page_map(edition_id: str, sha256: str, text_rec: dict, legacy: dict) -> dict:
@@ -374,7 +531,17 @@ def build_page_map(edition_id: str, sha256: str, text_rec: dict, legacy: dict) -
             raise ValueError(f"{edition_id}: same-bytes claimed but pages differ ({n} != {legacy_pages})")
         rows_legacy = {p: (p - 1, "same-bytes") for p in range(1, n + 1)}
         legacy_ev = {"method": "same-bytes", "accepted": True, "offset": 0, "relation": "same-bytes",
-                     "pdf_pages": n, "legacy_pages": legacy_pages}
+                     "pdf_pages": n, "legacy_pages": legacy_pages,
+                     "image_check": legacy.get("image_check")}
+    elif mode == "content":
+        index = build_shingle_index([p.get("text") or "" for p in page_recs])
+        corpus = legacy.get("corpus_texts") or {}
+        legacy_ev = content_mapping(text_rows(index, corpus) if corpus else None, legacy.get("image_rows"),
+                                    n, legacy_pages, legacy.get("informative"), legacy.get("same_threshold"))
+        rows_legacy = legacy_ev.pop("rows")
+        legacy_ev["corpus_pages"] = len(corpus)
+        legacy_ev["corpus_source"] = legacy.get("corpus_source")
+        legacy_ev["image_source"] = legacy.get("image_source")
     elif mode == "anchors":
         info = collect_anchors(build_shingle_index([p.get("text") or "" for p in page_recs]),
                                legacy.get("hits") or [])
@@ -396,6 +563,7 @@ def build_page_map(edition_id: str, sha256: str, text_rec: dict, legacy: dict) -
             "printed_verified": labels[i]["printed_verified"],
             "legacy_image_index": li[0] if li else None,
             "legacy_basis": li[1] if li else None,
+            "legacy_score": li[2] if li and len(li) > 2 else None,
             "ocr_page": None,
             "text_layer": rec.get("kind"),
         })
@@ -427,24 +595,45 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--plan", required=True, help="editions plan JSON (from plan.py)")
     p.add_argument("--text-cache", required=True)
-    p.add_argument("--sun-cache", required=True, help="directory of cached SUN search results")
+    p.add_argument("--sun-cache", help="directory of cached SUN search results (mode anchors only)")
+    p.add_argument("--corpus-db", help="read-only snapshot of the corpus database (mode content)")
+    p.add_argument("--images", help="page_images.py cache directory with scores/ and calibration.json")
     p.add_argument("--out", required=True, help="directory for <edition_id>.json")
     args = p.parse_args(argv)
     from inspect_pdf import cache_path
-    from sun_search import load_hits
 
     plan = read_json(args.plan)
     out_dir = Path(args.out)
+    images = Path(args.images) if args.images else None
+    cal = read_json(images / "calibration.json") if images and (images / "calibration.json").exists() else None
     done = 0
     for ed in plan["editions"]:
-        if not ed.get("pdf"):
-            continue
-        text_rec = read_json(cache_path(Path(args.text_cache), ed["pdf"]["sha256"]))
+        if not ed.get("pdf") or ed.get("holding", "sun") != "sun":
+            continue          # no page map for a record without bytes held here
+        sha = ed["pdf"]["sha256"]
+        text_rec = read_json(cache_path(Path(args.text_cache), sha))
         spec = dict(ed["legacy_spec"])
+        scores = None
+        if images and spec.get("jc_short_key"):
+            sp = images / "scores" / f"{spec['jc_short_key']}__{sha[:16]}.json"
+            scores = read_json(sp)["rows"] if sp.exists() else None
         if spec.get("mode") == "anchors":
-            hits, searches = load_hits(Path(args.sun_cache), ed["legacy_spec"]["sun_book_key"])
+            from sun_search import load_hits
+            hits, searches = load_hits(Path(args.sun_cache), spec["sun_book_key"])
             spec["hits"], spec["searches"] = hits, searches
-        doc = build_page_map(ed["edition_id"], ed["pdf"]["sha256"], text_rec, spec)
+        elif spec.get("mode") == "content":
+            from page_images import image_matches
+            if args.corpus_db:
+                spec["corpus_texts"] = corpus_page_texts(args.corpus_db, spec["sun_book_key"])
+                spec["corpus_source"] = "offline snapshot of the corpus database (chunks, source=mineru)"
+            if scores is not None and cal:
+                spec["image_rows"] = image_matches(scores, cal)
+                spec["informative"] = sum(1 for r in scores if not r.get("blank") and r.get("score") is not None)
+                spec["same_threshold"] = cal["same_threshold"]
+                spec["image_source"] = cal.get("legacy_source")
+        elif spec.get("mode") == "same-bytes" and scores is not None and cal:
+            spec["image_check"] = image_check_same_bytes(scores, cal)
+        doc = build_page_map(ed["edition_id"], sha, text_rec, spec)
         write_json(out_dir / f"{ed['edition_id']}.json", doc)
         done += 1
     print(f"page maps written: {done}")

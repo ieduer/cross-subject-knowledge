@@ -47,12 +47,14 @@ def edition(eid, sid, sha, key, *, basis, sid_basis, stage, subject, title, stat
                    "retrieved_at": "2026-10-10T11:00:00Z" if sha else None, "retrieved_via": "test" if sha else None},
         "pdf": {"sha256": sha, "md5": "0" * 32, "bytes": 1000, "pages": pages, "has_text_layer": True,
                 "producer": None, "text_pages": pages, "ocr_needed_pages": 0, "blank_pages": 0} if sha else None,
-        "storage": {"vps": None, "drive": None,
+        "holding": "sun" if sha else None,
+        "storage": {"vps": None, "drive": None, "learn": None,
                     "upstream": {"available": bool(sid and current),
                                  "url": f"https://jks-ai.bdfz.net/pdf/{sid}" if (sid and current) else None,
                                  "note": None}},
         "legacy": {"sun_book_key": key, "jc_short_key": jc_short_key(key) if key else None, "jks_slug": None,
-                   "basis": basis, "in_sun_search": True, "alias_candidate": None},
+                   "basis": basis, "in_sun_search": True, "alias_candidate": None,
+                   "learn_asset_id": None, "learn_source_sha256": None},
         "status": status,
     }
 
@@ -249,10 +251,11 @@ class BuildValidateTests(unittest.TestCase):
         self.assertViolation(errs, "active editions without an explicit coexists_reason")
 
         def mark(doc):
-            for e in doc["editions"]:
-                if e["pdf"]:
-                    e["coexists_reason"] = "two publishers' printings kept on purpose"
-        self.assertEqual(self.mutate(mark), [])
+            held = [e for e in doc["editions"] if e["pdf"]]
+            for e in held:
+                e["coexists_reason"] = "two publishers' printings kept on purpose"
+        errs = self.mutate(mark)
+        self.assertFalse(any("coexists_reason" in e for e in errs), errs)
 
     def test_edition_merged_by_title_is_caught(self):
         def fn(doc):
@@ -461,7 +464,7 @@ class BuildValidateTests(unittest.TestCase):
 
         def off(doc):
             self.ed(doc, self.B_ID)["legacy"]["offset"] = 0
-        self.assertViolation(self.mutate(off), "legacy rows do not all equal pdf_page - 1 - offset")
+        self.assertViolation(self.mutate(off), "legacy.offset must be the single offset of the rows")
 
         def count(doc):
             self.ed(doc, self.B_ID)["legacy"]["mapped_pages"] = 1
@@ -618,6 +621,185 @@ class BuildValidateTests(unittest.TestCase):
         path.write_text(dumps(doc), encoding="utf-8")
         resum(release)
         self.assertViolation(validate_release.validate(release, store), "40 pages, catalog says 41")
+
+    # ---- round 3: preview default, second editions, content-decided reader books ------------------
+    def test_exactly_one_preview_default_per_work(self):
+        cat = json.loads((self.release / "catalog.json").read_text())
+        held = [e for e in cat["editions"] if e["pdf"]]
+        self.assertTrue(all(e["preview_default"] for e in held))            # one held edition per work here
+        self.assertFalse(any(e["preview_default"] for e in cat["editions"] if not e["pdf"]))
+
+        def none(doc):
+            self.ed(doc, self.A_ID)["preview_default"] = False
+        self.assertViolation(self.mutate(none), "0 editions are preview_default")
+
+        def placeholder(doc):
+            self.ed(doc, self.D_ID)["preview_default"] = True
+        self.assertViolation(self.mutate(placeholder), "preview_default on a record without a PDF")
+
+        def two(doc):
+            self.ed(doc, self.B_ID)["work_id"] = self.ed(doc, self.A_ID)["work_id"]
+            for i in (self.A_ID, self.B_ID):
+                self.ed(doc, i)["coexists_reason"] = "test"
+        self.assertViolation(self.mutate(two), "2 editions are preview_default")
+
+    def second_edition_fixture(self):
+        """The pending record d becomes a held, platform-current second edition of e's work, and a
+        nominated candidate is compared with the PDF-less reader book KEY_C."""
+        plan = json.loads((self.fx.root / "plan.json").read_text())
+        by = {x["edition_id"]: x for x in plan["editions"]}
+        e, d = by[self.E_ID], by[self.D_ID]
+        sha_d, sha_x, sha_y = "d" * 64, "1" * 64, "2" * 64
+        new_id = f"cn-{SID_C}-{sha_d[:12]}"
+        d.update({"edition_id": new_id, "status": "active", "coexists_reason": "kept beside the current file",
+                  "holding": "sun",
+                  "pdf": dict(e["pdf"], sha256=sha_d)})
+        d["source"].update({"id_basis": "downloaded-by-id:size-only", "retrieved_at": "2026-10-11T01:00:00Z",
+                            "retrieved_via": "test"})
+        d["legacy"]["alias_candidate"] = {"sun_book_key": KEY_E, "jc_short_key": jc_short_key(KEY_E), "basis": "newer"}
+        d["legacy_spec"] = {"mode": "content", "legacy_pages": 40, "sun_book_key": KEY_E}
+        e.update({"newer_edition_id": new_id, "coexists_reason": "kept beside the current file"})
+        recs = page_recs(40, 2)
+        img = {k: {"pdf_page": k + 1, "score": 0.95, "second": 0.3} for k in range(0, 24, 2)}
+        write_json(self.fx.pm / f"{new_id}.json", page_map.build_page_map(
+            new_id, sha_d, {"extractor_version": "t", "page_texts": recs}, {**d["legacy_spec"], "image_rows": img,
+                                                                            "informative": 20}))
+        for sid, sha, good in (("55555555-5555-4555-8555-555555555555", sha_x, True),
+                               ("66666666-6666-4666-8666-666666666666", sha_y, False)):
+            c = edition(f"cn-{sid}-{sha[:12]}", sid, sha, None, basis=None, sid_basis="identifier:download",
+                        stage="高中", subject="数学", title="数学丙" + ("" if good else "（他版）"))
+            c["source"]["id_basis"] = "downloaded-by-id:size-only"
+            c["content_claim"] = True
+            c["legacy"]["alias_candidate"] = {"sun_book_key": KEY_C, "jc_short_key": jc_short_key(KEY_C),
+                                              "basis": "nominated"}
+            c["legacy_spec"] = {"mode": "content", "legacy_pages": 40, "sun_book_key": KEY_C}
+            rows = {k: {"pdf_page": k + 1, "score": 0.93, "second": 0.2} for k in (range(40) if good else (3, 9))}
+            write_json(self.fx.pm / f"{c['edition_id']}.json", page_map.build_page_map(
+                c["edition_id"], sha, {"extractor_version": "t", "page_texts": recs},
+                {**c["legacy_spec"], "image_rows": rows, "informative": 38, "same_threshold": 0.9}))
+            plan["editions"].append(c)
+        plan["newer_platform"] = [{"source_id": SID_C}]
+        write_json(self.fx.root / "plan.json", plan)
+        return self.fx.build(self.tmp / "out-r3"), new_id
+
+    def test_second_edition_and_content_decided_book(self):
+        release, new_id = self.second_edition_fixture()
+        hold = {**HOLD, "d" * 64: {}, "1" * 64: {}, "2" * 64: {}}
+        self.assertEqual(validate_release.validate(release, hold), [])
+        cat = json.loads((release / "catalog.json").read_text())
+        by = {e["edition_id"]: e for e in cat["editions"]}
+        old, new = by[self.E_ID], by[new_id]
+        # the newer file is the default; the older held file stays, linked both ways
+        self.assertEqual((new["preview_default"], old["preview_default"]), (True, False))
+        self.assertEqual((old["newer_edition_id"], new["supersedes_edition_id"]), (new_id, self.E_ID))
+        self.assertEqual((new["platform_current"], old["platform_current"]), (True, False))
+        self.assertIsNone(new["legacy"]["sun_book_key"])                   # old links stay with the corpus file
+        self.assertEqual(new["corpus"]["relation"], "partial")
+        # the reader book without an id is given to the candidate proven page by page; never by title
+        won = by["cn-55555555-5555-4555-8555-555555555555-" + "1" * 12]
+        lost = by["cn-66666666-6666-4666-8666-666666666666-" + "2" * 12]
+        self.assertEqual((won["legacy"]["sun_book_key"], won["legacy"]["basis"]), (KEY_C, "content:per-page-comparison"))
+        self.assertEqual((won["corpus"]["relation"], won["corpus"]["text_identity"]),
+                         ("aligned", "same-edition-image-proven"))
+        self.assertIsNone(lost["legacy"]["sun_book_key"])
+        self.assertEqual((lost["corpus"]["relation"], lost["legacy"]["mapped_pages"]), ("different-edition", 0))
+        self.assertNotIn(f"cn-x-legacy-{jc_short_key(KEY_C)}", by)         # placeholder replaced
+        rb = {r["sun_book_key"]: r for r in cat["reader_books"]}
+        self.assertEqual(rb[KEY_C]["edition_id"], won["edition_id"])
+        self.assertEqual(rb[KEY_C]["content_decision"]["chosen"], won["edition_id"])
+        self.assertEqual(len(rb[KEY_C]["content_decision"]["candidates"]), 2)
+        self.assertEqual(rb[KEY_E]["edition_id"], self.E_ID)
+        self.assertEqual(rb[KEY_E]["candidate_edition_ids"], [new_id])
+        dl = json.loads((release / "downloads.json").read_text())
+        row = next(r for r in dl["rows"] if r["source_id"] == SID_C)
+        self.assertEqual((row["edition_id"], row["held_other_edition_ids"]), (new_id, [self.E_ID]))
+        self.assertEqual(row["sources"][0]["edition_id"], new_id)
+
+        def swap(doc):
+            for e in doc["editions"]:
+                if e["edition_id"] in (new_id, self.E_ID):
+                    e["preview_default"] = not e["preview_default"]
+        path, doc = release / "catalog.json", json.loads((release / "catalog.json").read_text())
+        swap(doc)
+        path.write_text(dumps(doc), encoding="utf-8")
+        resum(release)
+        self.assertViolation(validate_release.validate(release, hold), "the preview default is not the platform's current file")
+
+    def test_content_rows_need_individual_proof(self):
+        release, new_id = self.second_edition_fixture()
+        path = release / "page-maps" / f"{new_id}.json"
+        pm = json.loads(path.read_text())
+        for r in pm["pages"]:
+            if r["legacy_basis"] == "image-match" and r["pdf_page"] > 9:
+                r["legacy_basis"] = "between-anchors"
+        path.write_text(dumps(pm), encoding="utf-8")
+        resum(release)
+        errs = validate_release.validate(release, {**HOLD, "d" * 64: {}, "1" * 64: {}, "2" * 64: {}})
+        self.assertViolation(errs, "filled between anchors more than 16 pages apart or of different offsets")
+        self.assertViolation(errs, "fewer than 8 individually proven rows")
+
+    # ---- xue / learn-books -------------------------------------------------------------------------
+    def learn_fixture(self):
+        """A is also bound in learn (alias by hash); a learn-only file of B's source id is catalogued."""
+        plan = json.loads((self.fx.root / "plan.json").read_text())
+        by = {x["edition_id"]: x for x in plan["editions"]}
+        a, b = by[self.A_ID], by[self.B_ID]
+        a["storage"]["learn"] = {"asset_id": "0123456789abcdef", "key": "books/0123456789abcdef/book.pdf"}
+        a["legacy"].update({"learn_asset_id": "0123456789abcdef", "learn_source_sha256": SHA_A})
+        sha_l = "9" * 64
+        lo = edition(f"cn-{SID_B}-{sha_l[:12]}", SID_B, sha_l, None, basis=None, sid_basis="identifier:learn-baseline",
+                     stage="高中", subject="物理", title="物理乙", current=False)
+        lo.update({"holding": "learn-only", "work_id": b["work_id"], "coexists_reason": "learn file",
+                   "newer_edition_id": b["edition_id"], "metadata_basis": "learn-baseline"})
+        lo["source"]["id_basis"] = "learn-baseline-record"
+        lo["storage"]["learn"] = {"asset_id": "fedcba9876543210", "key": "books/fedcba9876543210/book.pdf"}
+        lo["legacy"].update({"learn_asset_id": "fedcba9876543210", "learn_source_sha256": sha_l})
+        lo["legacy_spec"] = {"mode": "none", "relation": "none", "reason": "bytes held only in learn-books"}
+        b.update({"supersedes_edition_id": lo["edition_id"], "coexists_reason": "learn file"})
+        plan["editions"].append(lo)
+        write_json(self.fx.root / "plan.json", plan)
+        return self.fx.build(self.tmp / "out-learn"), lo["edition_id"]
+
+    def test_learn_alias_and_learn_only_edition(self):
+        release, lo_id = self.learn_fixture()
+        self.assertEqual(validate_release.validate(release, HOLD), [])       # the learn-only file is not in SUN's store
+        cat = json.loads((release / "catalog.json").read_text())
+        by = {e["edition_id"]: e for e in cat["editions"]}
+        lo, a, b = by[lo_id], by[self.A_ID], by[self.B_ID]
+        self.assertEqual((lo["holding"], lo["preview_default"], lo["storage"]["vps"], lo["corpus"]["relation"]),
+                         ("learn-only", False, None, "none"))
+        self.assertEqual(lo["storage"]["learn"]["key"], "books/fedcba9876543210/book.pdf")
+        self.assertFalse((release / "page-maps" / f"{lo_id}.json").exists())  # no page map is claimed
+        self.assertTrue(b["preview_default"])
+        self.assertEqual((a["legacy"]["learn_asset_id"], a["legacy"]["learn_source_sha256"]), ("0123456789abcdef", SHA_A))
+        rel = json.loads((release / "RELEASE.json").read_text())["counts"]
+        self.assertEqual((rel["editions_with_pdf"], rel["learn_only_editions"], rel["held_editions_with_learn_alias"]),
+                         (3, 1, 1))
+        dl = json.loads((release / "downloads.json").read_text())
+        self.assertFalse(any(lo_id in json.dumps(r) for r in dl["rows"]))     # not a source this site delivers
+
+        def check(fn, needle, name="catalog.json"):
+            path, sums = release / name, release / "SHA256SUMS"
+            before = (path.read_bytes(), sums.read_bytes())
+            doc = json.loads(path.read_text())
+            fn({e["edition_id"]: e for e in doc["editions"]})
+            path.write_text(dumps(doc), encoding="utf-8")
+            resum(release)
+            errs = validate_release.validate(release, HOLD)
+            path.write_bytes(before[0])
+            sums.write_bytes(before[1])
+            self.assertViolation(errs, needle)
+
+        check(lambda d: d[self.A_ID]["legacy"].update(learn_source_sha256="0" * 64), "alias is by SHA-256 equality only")
+        check(lambda d: d[self.A_ID]["storage"]["learn"].update(asset_id="XYZ"), "storage.learn must be")
+        check(lambda d: d[self.A_ID]["storage"].update(learn=None), "learn alias without a storage.learn locator")
+        check(lambda d: d[lo_id]["storage"].update(learn=None), "learn alias without a storage.learn locator")
+        check(lambda d: d[lo_id].update(preview_default=True), "preview_default on a file SUN does not hold")
+        check(lambda d: d[lo_id]["corpus"].update(relation="aligned", text_identity="page-aligned-other-printing"),
+              "corpus relation claimed without holding the PDF")
+        check(lambda d: d[lo_id]["storage"].update(vps={"path": f"pdf/{'9' * 64}.pdf"}),
+              "a learn-only edition must have storage.learn and no storage.vps")
+        check(lambda d: d[self.A_ID].update(holding=None), "holding must be sun / learn-only")
 
 
 if __name__ == "__main__":

@@ -53,7 +53,8 @@ def load_state(path: Path) -> dict:
     return state
 
 
-def fetch_once(url: str, part: Path, ua: str, deadline: float, sock_timeout: float) -> dict:
+def fetch_once(url: str, part: Path, ua: str, deadline: float, sock_timeout: float,
+               expect_headers: dict | None = None) -> dict:
     """One HTTP attempt. Appends to `part` when the server honours Range. Returns HTTP facts."""
     have = part.stat().st_size if part.exists() else 0
     headers = {"User-Agent": ua, "Accept": "application/pdf,*/*;q=0.8"}
@@ -72,6 +73,9 @@ def fetch_once(url: str, part: Path, ua: str, deadline: float, sock_timeout: flo
     with resp:
         status = resp.status
         hdr = {k.lower(): v for k, v in resp.headers.items()}
+        for name, want in (expect_headers or {}).items():
+            if hdr.get(name.lower()) != want:
+                raise ItemError(f"header-mismatch:{name.lower()}")   # checked before any byte is kept
         if status == 206 and have:
             crange = hdr.get("content-range", "")
             if not crange.startswith(f"bytes {have}-"):
@@ -107,7 +111,7 @@ def fetch_once(url: str, part: Path, ua: str, deadline: float, sock_timeout: flo
         "headers": {
             k: hdr.get(k)
             for k in ("etag", "last-modified", "content-length", "content-range", "content-type",
-                      "content-disposition", "cache-control")
+                      "content-disposition", "cache-control", "x-xue-source-sha256")
             if hdr.get(k) is not None
         },
     }
@@ -136,6 +140,11 @@ def verify_part(part: Path, item: dict) -> dict:
     else:
         h["md5_check"] = "no-expected-md5"
     h["size_check"] = "equal" if exp_size is not None else "no-expected-size"
+    exp_sha = (item.get("sha256") or "").lower()
+    if exp_sha:
+        if exp_sha != h["sha256"]:
+            raise ItemError("sha256-mismatch")
+        h["sha256_check"] = "equal"
     return h
 
 
@@ -148,6 +157,7 @@ def run(args) -> int:
         for it in items:
             assert isinstance(it["source_id"], str) and it["source_id"]
             assert "/" not in it["source_id"] and ".." not in it["source_id"]
+            assert it.get("url") is None or it["url"].startswith("https://") or it["url"].startswith("http://127.0.0.1")
     except Exception as exc:  # noqa: BLE001
         print(f"bad job file: {exc}", file=sys.stderr)
         return EXIT_USAGE
@@ -208,7 +218,7 @@ def run(args) -> int:
             break
 
         run_stats["attempted"] += 1
-        url = f"{args.base_url}{sid}"
+        url = it.get("url") or f"{args.base_url}{sid}"   # an item may name its own (allow-listed by the planner) URL
         outcome = None
         for attempt in (1, 2):  # one automatic retry, then failed
             if not first_request:
@@ -220,7 +230,8 @@ def run(args) -> int:
             run_stats["requests"] += 1
             t0 = time.monotonic()
             try:
-                http = fetch_once(url, part, args.user_agent, t0 + args.timeout, args.socket_timeout)
+                http = fetch_once(url, part, args.user_agent, t0 + args.timeout, args.socket_timeout,
+                                  it.get("expect_headers"))
                 run_stats["bytes_received"] += http["received"]
                 consecutive_refusals = 0
                 facts = verify_part(part, it)
@@ -235,7 +246,8 @@ def run(args) -> int:
                 st.update({
                     "state": "verified", "attempts": attempt, "sha256": facts["sha256"],
                     "md5": facts["md5"], "bytes": facts["bytes"], "md5_check": facts["md5_check"],
-                    "size_check": facts["size_check"], "retrieved_at": utc_now(),
+                    "size_check": facts["size_check"], "sha256_check": facts.get("sha256_check"),
+                    "retrieved_at": utc_now(),
                     "retrieved_via": url, "http": http, "deduplicated": deduped,
                     "seconds": round(time.monotonic() - t0, 2),
                 })
@@ -256,7 +268,7 @@ def run(args) -> int:
                 outcome = f"failed:{reason}"
                 log(logfh, f"ERROR {sid} {reason} attempt={attempt}")
                 if reason.split(":")[0] in ("md5-mismatch", "size-mismatch", "not-pdf", "empty",
-                                            "bad-content-range"):
+                                            "bad-content-range", "sha256-mismatch"):
                     # Content is wrong, not merely short: never keep it, restart from byte 0.
                     if part.exists():
                         part.unlink()

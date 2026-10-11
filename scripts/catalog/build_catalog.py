@@ -40,6 +40,7 @@ NOT_ENUMERATED = [
 
 TEXT_IDENTITY = {"same-bytes": "same-file", "aligned": "page-aligned-other-printing",
                  "partial": "page-aligned-other-printing"}
+CONTENT_BASIS = "content:per-page-comparison"
 
 
 def corpus_block(ed: dict, pm: dict | None) -> dict:
@@ -47,6 +48,8 @@ def corpus_block(ed: dict, pm: dict | None) -> dict:
 
     text_identity says whether the corpus TEXT is the text of this file:
       same-file                    the PDF is the file the corpus was built from
+      same-edition-image-proven    not the same bytes, but every informative page renders like the
+                                   legacy image at the same position (same page count, offset 0)
       page-aligned-other-printing  pages correspond, but this PDF is another printing/file than the
                                    corpus source: wording, figures and numbers on a page may differ
       null                         no page relation established
@@ -59,10 +62,32 @@ def corpus_block(ed: dict, pm: dict | None) -> dict:
 
     if not ed.get("pdf") or pm is None:
         return block("none", spec.get("reason") or "no PDF held", None, "not-possible")
+
     ev = pm["legacy"]["evidence"]
     if ev["method"] == "same-bytes":
+        chk = ev.get("image_check")
+        extra = ""
+        if chk:
+            extra = (f"; re-proven by page images: {chk['matched_at_same_position']} of {chk['informative_pages']} "
+                     f"informative pages match at the same position (min score {chk['min_score']})")
         return block("same-bytes", "the held PDF is the source file of the page images and corpus; "
-                                   f"page counts equal ({ev['pdf_pages']})", 1.0, "bytes")
+                                   f"page counts equal ({ev['pdf_pages']})" + extra, 1.0, "bytes")
+    if ev["method"] == "content":
+        how = "+".join(x for x, used in (("image", ev.get("informative_image_pages") is not None),
+                                         ("corpus-text", bool(ev.get("corpus_pages")))) if used) or "none"
+        basis = (f"page-by-page comparison ({how}): {ev['proven_pages']} of {ev['legacy_pages']} legacy pages proven "
+                 f"{ev['proven_by_basis']}, image matched {ev['image_matched_pages']}"
+                 f"/{ev.get('informative_image_pages')}, corpus text located {ev['text_located_pages']}"
+                 f"/{ev.get('corpus_pages')}, pdf pages {ev['pdf_pages']}")
+        if not ev["accepted"]:
+            b = block(ev["relation"], basis + f"; not accepted: {ev.get('reason')}", None, "content")
+            return b
+        basis += (f"; offsets {ev['offset_histogram']}; {ev['unmapped_legacy_pages']} legacy pages unmapped"
+                  f" ({len(ev['offset_changes'])} offset changes, {len(ev['wide_gaps'])} wide stretches)")
+        b = block(ev["relation"], basis, pm["legacy"]["coverage"], "content")
+        if ev["relation"] == "aligned" and ev.get("same_rendering"):
+            b["text_identity"] = "same-edition-image-proven"
+        return b
     if ev["method"] == "text-anchors":
         if ed["pdf"].get("has_text_layer") is False:
             return block("none", "not comparable: the PDF has no text layer, so page-by-page comparison "
@@ -83,12 +108,17 @@ def corpus_block(ed: dict, pm: dict | None) -> dict:
 
 
 def finalize_edition(ed: dict, pm: dict | None, staged: set[str]) -> dict:
-    rec = {k: v for k, v in ed.items() if k != "legacy_spec"}
+    rec = {k: v for k, v in ed.items() if k not in ("legacy_spec", "content_claim")}
+    rec["legacy"] = dict(rec["legacy"])
+    rec.setdefault("holding", "sun" if rec.get("pdf") else None)
+    rec["legacy"].setdefault("learn_asset_id", None)
+    rec["legacy"].setdefault("learn_source_sha256", None)
     rec["corpus"] = corpus_block(ed, pm)
     rec["processing"] = {"ocr_version": None, "index_version": None,
                          "page_map_version": PAGE_MAP_VERSION if pm else None,
                          "extractor_version": EXTRACTOR_VERSION if pm else None}
     rec["storage"] = dict(rec["storage"])
+    rec["storage"].setdefault("learn", None)
     if rec.get("pdf") and rec["pdf"]["sha256"] in staged:
         # Relative to the server's textbook root; set only for files verified by hash in --vps-holdings.
         rec["storage"]["vps"] = {"path": f"pdf/{rec['pdf']['sha256']}.pdf"}
@@ -107,6 +137,69 @@ def finalize_edition(ed: dict, pm: dict | None, staged: set[str]) -> dict:
         rec["legacy"]["offset"] = None
         rec["legacy"]["legacy_pages"] = (ed.get("legacy_spec") or {}).get("legacy_pages")
     return rec
+
+
+def resolve_content_claims(plan_editions: list[dict], page_maps: dict[str, dict]) -> tuple[list[dict], dict]:
+    """Give a reader book to the candidate edition that is proven page by page to be it.
+
+    A candidate (alias or nominated download) is eligible only when its page map was ACCEPTED by
+    the per-page comparison; among eligible candidates the one mapping the most legacy pages wins.
+    The winner takes `legacy.sun_book_key` on the basis CONTENT_BASIS and the PDF-less placeholder of
+    that book is dropped. Nothing is decided by title.
+    """
+    by_key: dict[str, list[dict]] = {}
+    for e in plan_editions:
+        if e.get("content_claim") and e.get("pdf") and e.get("holding", "sun") == "sun":
+            by_key.setdefault(e["legacy"]["alias_candidate"]["sun_book_key"], []).append(e)
+    decisions, drop, winners = {}, set(), {}
+    for key, cands in sorted(by_key.items()):
+        scored = []
+        for e in cands:
+            pm = page_maps[e["edition_id"]]
+            ev = pm["legacy"]["evidence"]
+            scored.append({"edition_id": e["edition_id"], "accepted": bool(ev.get("accepted")),
+                           "platform_current": bool(e.get("platform_current")), "provenance": e.get("provenance"),
+                           "relation": ev.get("relation"), "mapped_pages": pm["legacy"]["mapped_pages"],
+                           "proven_pages": ev.get("proven_pages"), "pdf_pages": ev.get("pdf_pages"),
+                           "legacy_pages": ev.get("legacy_pages")})
+        ok = [c for c in scored if c["accepted"] and c["mapped_pages"] > 0]
+        # most legacy pages mapped; then most pages individually proven; then the platform's current file
+        chosen = max(ok, key=lambda c: (c["mapped_pages"], c["proven_pages"] or 0, c["platform_current"],
+                                        c["edition_id"]))["edition_id"] if ok else None
+        decisions[key] = {"candidates": sorted(scored, key=lambda c: c["edition_id"]), "chosen": chosen}
+        if chosen:
+            winners[chosen] = key
+    out = []
+    placeholders = {e["legacy"]["sun_book_key"]: e for e in plan_editions
+                    if not e.get("pdf") and e["legacy"].get("sun_book_key")}
+    for e in plan_editions:
+        key = e["legacy"].get("sun_book_key")
+        if not e.get("pdf") and key in winners.values():
+            drop.add(e["edition_id"])
+            continue
+        if e["edition_id"] in winners:
+            key = winners[e["edition_id"]]
+            cand = e["legacy"]["alias_candidate"]
+            e = dict(e)
+            e["legacy"] = dict(e["legacy"], sun_book_key=key, jc_short_key=cand["jc_short_key"], basis=CONTENT_BASIS,
+                               in_sun_search=bool((placeholders.get(key) or {}).get("legacy", {}).get("in_sun_search")),
+                               alias_candidate=None, nominated_by=cand["basis"])
+        out.append(e)
+    return out, decisions
+
+
+def set_preview_default(editions: list[dict]) -> None:
+    """Exactly one held edition per work is the default in the preview tab: the platform's current
+    file when the work has one, otherwise the only held file."""
+    by_work: dict[str, list[dict]] = {}
+    for e in editions:
+        e["preview_default"] = False
+        if e.get("pdf") and e.get("holding") != "learn-only":
+            by_work.setdefault(e["work_id"], []).append(e)
+    for group in by_work.values():
+        current = [e for e in group if e["platform_current"]]
+        pick = sorted(current or group, key=lambda e: (e["source"].get("retrieved_at") or "", e["edition_id"]))[-1]
+        pick["preview_default"] = True
 
 
 def verify_vps_holdings(path: Path | None) -> tuple[set[str], str | None]:
@@ -135,6 +228,8 @@ def build_downloads(dl_dir: Path, details_dir: Path, editions: list[dict]) -> di
         sid = e["source"]["source_id"]
         if not sid:
             continue
+        if e.get("holding") == "learn-only":
+            continue                      # known to the catalog, not a source this site can deliver
         if not e.get("pdf"):
             pending[sid] = e["edition_id"]
         elif e["platform_current"]:
@@ -191,7 +286,7 @@ def build_downloads(dl_dir: Path, details_dir: Path, editions: list[dict]) -> di
 
 
 def counts(editions: list[dict], page_maps: dict[str, dict], downloads: dict, plan: dict) -> dict:
-    held = [e for e in editions if e.get("pdf")]
+    held = [e for e in editions if e.get("pdf") and e.get("holding") != "learn-only"]
     reader = [e for e in editions if e["legacy"].get("sun_book_key")]
     c = {
         "editions": len(editions),
@@ -210,6 +305,13 @@ def counts(editions: list[dict], page_maps: dict[str, dict], downloads: dict, pl
         "metadata_basis": dict(Counter(str(e.get("metadata_basis")) for e in editions)),
         "id_basis": dict(Counter(str(e["source"].get("id_basis")) for e in editions)),
         "storage_vps": sum(1 for e in editions if e["storage"]["vps"]),
+        "storage_learn": sum(1 for e in editions if e["storage"].get("learn")),
+        "learn_only_editions": sum(1 for e in editions if e.get("holding") == "learn-only"),
+        "held_editions_with_learn_alias": sum(1 for e in held if e["legacy"].get("learn_asset_id")),
+        "by_provenance_with_pdf": dict(Counter(e["provenance"] for e in held)),
+        "preview_default": sum(1 for e in editions if e.get("preview_default")),
+        "works_with_two_held_editions": sum(1 for n in Counter(e["work_id"] for e in held).values() if n > 1),
+        "legacy_basis_of_reader_books": dict(Counter(str(e["legacy"].get("basis")) for e in reader)),
         "legacy_rows_by_basis": dict(Counter(str(r["legacy_basis"]) for pm in page_maps.values() for r in pm["pages"])),
         "legacy_rows_nulled_by_gap_rule": sum(pm["legacy"]["evidence"].get("rows_nulled_by_gap_rule") or 0
                                               for pm in page_maps.values()),
@@ -272,7 +374,7 @@ def build(args) -> int:
     page_maps: dict[str, dict] = {}
     inputs = {"plan.json": file_hashes(plan_path, ("sha256",))["sha256"]}
     for e in plan["editions"]:
-        if e.get("pdf"):
+        if e.get("pdf") and e.get("holding", "sun") == "sun":
             f = pm_dir / f"{e['edition_id']}.json"
             if not f.exists():
                 raise SystemExit(f"missing page map for {e['edition_id']}")
@@ -299,8 +401,13 @@ def build(args) -> int:
     input_hash = sha256_text(dumps({"inputs": inputs, "tools": tools}))
     release_id = stamp.replace("-", "").replace(":", "") + "-" + input_hash[:8]
 
-    editions = [finalize_edition(e, page_maps.get(e["edition_id"]), staged) for e in plan["editions"]]
+    plan_editions, decisions = resolve_content_claims(plan["editions"], page_maps)
+    editions = [finalize_edition(e, page_maps.get(e["edition_id"]), staged) for e in plan_editions]
     editions.sort(key=lambda e: e["edition_id"])
+    set_preview_default(editions)
+    for pm_id in list(page_maps):
+        if pm_id not in {e["edition_id"] for e in editions}:
+            del page_maps[pm_id]
     downloads = build_downloads(dl_dir, details_dir, editions)
     downloads["release_id"] = release_id
     reader_index = sorted(
@@ -310,6 +417,9 @@ def build(args) -> int:
                                           if (x["legacy"].get("alias_candidate") or {}).get("sun_book_key")
                                           == e["legacy"]["sun_book_key"])}
          for e in editions if e["legacy"].get("sun_book_key")), key=lambda r: r["jc_short_key"])
+    for r in reader_index:
+        d = decisions.get(r["sun_book_key"])
+        r["content_decision"] = d
     catalog = {"contract": CONTRACT, "release_id": release_id, "generated_at": stamp, "region_default": "CN",
                "editions": editions, "reader_books": reader_index}
     try:

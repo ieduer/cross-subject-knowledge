@@ -24,16 +24,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import CONTRACT, SHA256_RE, UUID_RE, file_hashes, jc_short_key, read_json  # noqa: E402
 
 RELATIONS = {"same-bytes", "aligned", "partial", "different-edition", "none"}
-TEXT_IDENTITY = {"same-bytes": "same-file", "aligned": "page-aligned-other-printing",
-                 "partial": "page-aligned-other-printing", "different-edition": None, "none": None}
+TEXT_IDENTITY = {"same-bytes": ("same-file",),
+                 "aligned": ("page-aligned-other-printing", "same-edition-image-proven"),
+                 "partial": ("page-aligned-other-printing",), "different-edition": (None,), "none": (None,)}
+PROVEN_BASES = ("anchor", "text-anchor", "image-match", "image+text")
+TEXT_BASES = ("anchor", "text-anchor", "image+text")
 STATUSES = {"active", "superseded", "pending-verification"}
-LEGACY_BASES = {"identifier:jc-content-id", "identifier:jc-book-key", "bytes:source-pdf"}
-SOURCE_ID_BASES = {"identifier:jc-content-id", "identifier:jks-slug", "bytes:sha256=learn-books", "bytes:md5=ti_md5"}
+LEGACY_BASES = {"identifier:jc-content-id", "identifier:jc-book-key", "bytes:source-pdf",
+                "content:per-page-comparison"}
+SOURCE_ID_BASES = {"identifier:jc-content-id", "identifier:jks-slug", "bytes:sha256=learn-books", "bytes:md5=ti_md5",
+                   "identifier:download", "identifier:learn-baseline"}
 ID_BASES = {"md5-size-current", "downloaded-by-id:md5-equal", "downloaded-by-id:size-only",
-            "baseline-join-unreproven", "platform-record"}
+            "baseline-join-unreproven", "platform-record", "learn-baseline-record"}
+ASSET_RE = re.compile(r"^[0-9a-f]{16}$")
+
+
+def is_held(e: dict) -> bool:
+    """SUN holds the bytes (as opposed to a record known only from xue's learn binding)."""
+    return e.get("pdf") is not None and e.get("holding") != "learn-only"
 EDITION_KEYS = {"edition_id", "work_id", "region", "stage", "subject", "title", "volume", "publisher",
                 "edition_label", "source", "pdf", "storage", "legacy", "corpus", "processing", "status",
-                "platform_current", "newer_edition_id", "supersedes_edition_id", "metadata_basis"}
+                "platform_current", "newer_edition_id", "supersedes_edition_id", "metadata_basis",
+                "preview_default", "holding"}
 SOURCE_KEYS = {"provider", "source_id", "catalog_module", "online_time", "update_time", "ti_md5", "ti_size",
                "retrieved_at", "retrieved_via", "id_basis"}
 PDF_KEYS = {"sha256", "bytes", "pages", "has_text_layer", "producer"}
@@ -92,9 +104,23 @@ def check_sums(release_dir: Path, E) -> None:
 def check_storage(e: dict, E) -> None:
     eid, st, pdf = e["edition_id"], e["storage"] or {}, e["pdf"]
     sid = (e["source"] or {}).get("source_id")
-    if set(st) != {"vps", "drive", "upstream"}:
-        E(f"{eid}: storage must have vps / drive / upstream")
+    if set(st) != {"vps", "drive", "upstream", "learn"}:
+        E(f"{eid}: storage must have vps / drive / upstream / learn")
         return
+    learn, leg = st["learn"], e.get("legacy") or {}
+    if learn is not None:
+        if (pdf is None or not isinstance(learn, dict) or set(learn) != {"asset_id", "key"}
+                or not ASSET_RE.match(str(learn.get("asset_id"))) or learn.get("key") != f"books/{learn.get('asset_id')}/book.pdf"):
+            E(f"{eid}: storage.learn must be {{asset_id: 16 hex, key: books/<asset_id>/book.pdf}} on an edition with a PDF")
+        elif leg.get("learn_asset_id") != learn["asset_id"] or leg.get("learn_source_sha256") != pdf.get("sha256"):
+            E(f"{eid}: legacy.learn_asset_id / learn_source_sha256 must equal storage.learn and pdf.sha256 "
+              "(the alias is by SHA-256 equality only)")
+    elif leg.get("learn_asset_id") is not None or leg.get("learn_source_sha256") is not None:
+        E(f"{eid}: learn alias without a storage.learn locator")
+    if e.get("holding") == "learn-only" and (learn is None or st["vps"] is not None):
+        E(f"{eid}: a learn-only edition must have storage.learn and no storage.vps")
+    if e.get("holding") not in ("sun", "learn-only", None) or (e.get("holding") is None) != (pdf is None):
+        E(f"{eid}: holding must be sun / learn-only for a record with a PDF and null otherwise")
     vps = st["vps"]
     if vps is not None:
         if pdf is None:
@@ -170,37 +196,47 @@ def check_page_map(e: dict, pm: dict, E) -> None:
     if relation != lev.get("relation"):
         E(f"{eid}: corpus.relation {relation!r} differs from the page-map evidence {lev.get('relation')!r}")
     if legacy:
-        offset = lev.get("offset")
         if relation not in ("same-bytes", "aligned", "partial") or not accepted:
             E(f"{eid}: legacy_image_index filled while corpus.relation is {relation!r} (mapping accepted: {accepted})")
         if not (leg.get("sun_book_key") or leg.get("alias_candidate")):
             E(f"{eid}: legacy_image_index filled but the edition names no legacy book")
-        if offset is None or leg.get("offset") != offset or any(li != p - 1 - offset for p, li, _ in legacy):
+        offsets = {p - 1 - li for p, li, _ in legacy}
+        if lev.get("method") != "content" and (len(offsets) != 1 or lev.get("offset") not in offsets):
             E(f"{eid}: legacy rows do not all equal pdf_page - 1 - offset (recorded offset {leg.get('offset')!r})")
-        # between-anchor rows only inside stretches of at most max_gap pages
+        if leg.get("offset") != (next(iter(offsets)) if len(offsets) == 1 else None):
+            E(f"{eid}: legacy.offset must be the single offset of the rows, or null when they differ")
+        # an inferred row must lie between two individually proven rows that are close and agree
         max_gap = lev.get("max_gap")
-        anchors = sorted(p for p, _, basis in legacy if basis == "anchor")
+        proven = sorted((p, li) for p, li, basis in legacy if basis in PROVEN_BASES)
         if max_gap is not None:
-            for p, _, basis in legacy:
+            for p, li, basis in legacy:
                 if basis != "between-anchors":
                     continue
-                before = max((a for a in anchors if a < p), default=None)
-                after = min((a for a in anchors if a > p), default=None)
-                if before is None or after is None or after - before > max_gap:
-                    E(f"{name}: row {p} filled between anchors more than {max_gap} pages apart")
+                before = max((a for a in proven if a[0] < p), default=None)
+                after = min((a for a in proven if a[0] > p), default=None)
+                if (before is None or after is None or after[0] - before[0] > max_gap
+                        or after[0] - before[0] != after[1] - before[1] or li - before[1] != p - before[0]):
+                    E(f"{name}: row {p} filled between anchors more than {max_gap} pages apart or of different offsets")
                     break
+        if lev.get("method") == "content" and len(proven) < 8:
+            E(f"{name}: fewer than 8 individually proven rows")
     elif relation in ("same-bytes", "aligned", "partial"):
         E(f"{eid}: corpus.relation {relation!r} without any mapped row")
     if relation == "same-bytes" and (len(legacy) != len(rows) or any(li != p - 1 for p, li, _ in legacy)):
         E(f"{eid}: same-bytes requires legacy_image_index == pdf_page - 1 on every page")
     if relation == "aligned":
-        if len(legacy) < 8 or not lev.get("reaches_end") or lev.get("wide_gaps"):
+        if lev.get("method") == "content":
+            if legacy_pages is None or len(legacy) != legacy_pages:
+                E(f"{eid}: aligned requires every legacy page to be mapped")
+        elif len(legacy) < 8 or not lev.get("reaches_end") or lev.get("wide_gaps"):
             E(f"{eid}: aligned requires an accepted mapping that reaches the end without a wide unproven stretch")
+    if (e.get("corpus") or {}).get("text_identity") == "same-edition-image-proven" and not lev.get("same_rendering"):
+        E(f"{eid}: same-edition-image-proven without the page-image evidence")
     # --- image-only PDF: nothing can have been read from it ------------------------------------
     if e["pdf"].get("has_text_layer") is False:
         if labels:
             E(f"{eid}: printed labels on a PDF without a text layer")
-        if legacy and relation != "same-bytes":
+        if any(basis in TEXT_BASES for _, _, basis in legacy):
             E(f"{eid}: text-anchored legacy rows on a PDF without a text layer")
 
 
@@ -277,6 +313,7 @@ def validate(release_dir: Path, holdings=None) -> list[str]:
     by_id: dict[str, dict] = {}
     sha_refs: Counter = Counter()
     sun_keys: Counter = Counter()
+    all_shas: Counter = Counter()
     active_by_work: dict[str, list[dict]] = defaultdict(list)
     complete: list[dict] = []
     for e in editions:
@@ -322,13 +359,13 @@ def validate(release_dir: Path, holdings=None) -> list[str]:
         newer, older = e["newer_edition_id"], e["supersedes_edition_id"]
         if newer is not None:
             n = by_id.get(newer)
-            if (n is None or n.get("pdf") is not None or n["source"].get("source_id") != sid
+            if (n is None or n["source"].get("source_id") != sid or n.get("platform_current") is not True
                     or n.get("supersedes_edition_id") != eid or e["platform_current"] or pdf is None):
-                E(f"{eid}: newer_edition_id does not resolve to the pending record of the same source id")
+                E(f"{eid}: newer_edition_id does not resolve to the platform-current record of the same source id")
         if older is not None:
             o = by_id.get(older)
             if (o is None or o.get("pdf") is None or o["source"].get("source_id") != sid
-                    or o.get("newer_edition_id") != eid or pdf is not None):
+                    or o.get("newer_edition_id") != eid or e["platform_current"] is not True):
                 E(f"{eid}: supersedes_edition_id does not resolve to a held edition of the same source id")
         if pdf is not None:
             if PDF_KEYS - set(pdf):
@@ -336,7 +373,9 @@ def validate(release_dir: Path, holdings=None) -> list[str]:
             elif not SHA256_RE.match(pdf["sha256"] or ""):
                 E(f"{eid}: pdf.sha256 malformed")
             else:
-                sha_refs[pdf["sha256"]] += 1
+                if is_held(e):
+                    sha_refs[pdf["sha256"]] += 1
+                all_shas[pdf["sha256"]] += 1
                 if not isinstance(pdf["pages"], int) or pdf["pages"] < 1 or not isinstance(pdf["bytes"], int):
                     E(f"{eid}: pdf.pages / pdf.bytes invalid")
         elif e["status"] == "active":
@@ -355,21 +394,40 @@ def validate(release_dir: Path, holdings=None) -> list[str]:
         cor = e["corpus"] or {}
         if cor.get("relation") not in RELATIONS:
             E(f"{eid}: bad corpus.relation {cor.get('relation')!r}")
-        elif "text_identity" not in cor or cor["text_identity"] != TEXT_IDENTITY[cor["relation"]]:
+        elif "text_identity" not in cor or cor["text_identity"] not in TEXT_IDENTITY[cor["relation"]]:
             E(f"{eid}: corpus.text_identity {cor.get('text_identity')!r} does not fit relation {cor['relation']!r}")
         if not cor.get("basis"):
             E(f"{eid}: corpus.relation without a basis")
-        if pdf is None and cor.get("relation") != "none":
-            E(f"{eid}: corpus relation claimed without a PDF")
+        if not is_held(e) and cor.get("relation") != "none":
+            E(f"{eid}: corpus relation claimed without holding the PDF")
         check_storage(e, E)
         if e["status"] == "active":
             active_by_work[e["work_id"]].append(e)
-    for sha, n in sha_refs.items():
+    for sha, n in all_shas.items():
         if n != 1:
             E(f"pdf {sha[:16]}: referenced by {n} editions (must be exactly one)")
     for key, n in sun_keys.items():
         if n != 1:
             E(f"sun_book_key claimed by {n} editions: {key}")
+    # --- exactly one default edition per work in the preview tab --------------------------------
+    held_by_work: dict[str, list[dict]] = defaultdict(list)
+    for e in complete:
+        if not isinstance(e["preview_default"], bool):
+            E(f"{e['edition_id']}: preview_default must be a boolean")
+        elif e["pdf"] is None and e["preview_default"]:
+            E(f"{e['edition_id']}: preview_default on a record without a PDF")
+        if e.get("holding") == "learn-only" and e["preview_default"]:
+            E(f"{e['edition_id']}: preview_default on a file SUN does not hold")
+        if is_held(e):
+            held_by_work[e["work_id"]].append(e)
+    for work, group in held_by_work.items():
+        n = sum(1 for g in group if g["preview_default"] is True)
+        if n != 1:
+            E(f"work {work}: {n} editions are preview_default (must be exactly one of "
+              f"{', '.join(g['edition_id'] for g in group)})")
+        elif len(group) > 1 and any(g["platform_current"] for g in group) and not \
+                next(g for g in group if g["preview_default"])["platform_current"]:
+            E(f"work {work}: the preview default is not the platform's current file")
     for work, group in active_by_work.items():
         if len(group) > 1 and not all(g.get("coexists_reason") for g in group):
             E(f"work {work}: {len(group)} active editions without an explicit coexists_reason "
@@ -410,7 +468,9 @@ def validate(release_dir: Path, holdings=None) -> list[str]:
             E(f"page-maps/{eid}.json: edition has no PDF")
     for e in complete:
         eid = e["edition_id"]
-        if e.get("pdf") is None:
+        if not is_held(e):
+            if eid in pm_files and e.get("pdf") is not None:
+                E(f"page-maps/{eid}.json: page map claimed for bytes SUN does not hold")
             continue
         if eid not in pm_files:
             E(f"{eid}: edition with a PDF has no page map")
@@ -429,7 +489,7 @@ def validate(release_dir: Path, holdings=None) -> list[str]:
         eid = r["edition_id"]
         if eid is not None:
             ed = by_id.get(eid)
-            if ed is None or ed.get("pdf") is None:
+            if ed is None or not is_held(ed):
                 E(f"downloads: {sid} points at {eid}, which is not a held edition")
             elif (ed.get("source") or {}).get("source_id") != sid:
                 E(f"downloads: {sid} points at an edition of another source id")
@@ -437,7 +497,7 @@ def validate(release_dir: Path, holdings=None) -> list[str]:
                 E(f"downloads: {sid} edition_id names a held file that is not the platform's current file")
         for oid in r["held_other_edition_ids"]:
             o = by_id.get(oid)
-            if (o is None or o.get("pdf") is None or (o.get("source") or {}).get("source_id") != sid
+            if (o is None or not is_held(o) or (o.get("source") or {}).get("source_id") != sid
                     or o.get("platform_current") is True):
                 E(f"downloads: {sid} held_other_edition_ids entry {oid} is not an older held edition of that id")
         if r["cover"] is not None and not host_ok(r["cover"]):
@@ -479,9 +539,6 @@ def validate(release_dir: Path, holdings=None) -> list[str]:
         for k in sorted(set(expect) | set(got)):
             if expect.get(k) != got.get(k):
                 E(f"RELEASE: counts.{k} differs from the value recomputed from the release files")
-        newer = [e for e in editions if e.get("newer_edition_id")]
-        if len(release.get("newer_platform") or []) != len(newer):
-            E("RELEASE: newer_platform list differs from the editions carrying newer_edition_id")
     else:
         c = release.get("counts") or {}
         if c.get("editions") != len(editions) or (c.get("downloads") or {}).get("rows") != len(downloads.get("rows") or []):

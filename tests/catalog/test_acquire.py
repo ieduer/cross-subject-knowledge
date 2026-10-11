@@ -50,6 +50,7 @@ class Stub(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/pdf")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("ETag", '"stub"')
+        self.send_header("X-Xue-Source-Sha256", hashlib.sha256(data).hexdigest())
         self.end_headers()
         if sid in Stub.cut_once:
             Stub.cut_once.discard(sid)
@@ -216,6 +217,29 @@ class AcquireTests(unittest.TestCase):
         self.assertEqual(self.run_job(), acquire.EXIT_FAILED)
         self.assertEqual(self.state()["id-m"]["state"], "failed:not-pdf")
         self.assertEqual(self.stored(), [])
+
+    def test_item_url_sha256_and_bound_header(self):
+        data = pdf_bytes("x")
+        Stub.files["book.pdf"] = data
+        sha = hashlib.sha256(data).hexdigest()
+        url = self.base.replace("/pdf/", "/books/0123456789abcdef/book.pdf")
+        good = {"source_id": "xue:0123456789abcdef", "url": url, "ti_md5": None, "ti_size": len(data),
+                "sha256": sha, "expect_headers": {"x-xue-source-sha256": sha}}
+        self.job([good])
+        self.assertEqual(self.run_job(), acquire.EXIT_OK)
+        st = self.state()["xue:0123456789abcdef"]
+        self.assertEqual((st["state"], st["sha256_check"], st["retrieved_via"]), ("verified", "equal", url))
+        self.assertEqual(st["http"]["headers"]["x-xue-source-sha256"], sha)
+        # the server announces other bytes than the binding: nothing is kept
+        self.job([dict(good, source_id="xue:b", expect_headers={"x-xue-source-sha256": "0" * 64})])
+        self.assertEqual(self.run_job(), acquire.EXIT_FAILED)
+        self.assertEqual(self.state()["xue:b"]["state"], "failed:header-mismatch:x-xue-source-sha256")
+        self.assertFalse((self.tmp / "pdf" / ".partial" / "xue:b.part").exists())
+        # the body is not the bound file
+        self.job([dict(good, source_id="xue:c", sha256="1" * 64, expect_headers=None)])
+        self.assertEqual(self.run_job(), acquire.EXIT_FAILED)
+        self.assertEqual(self.state()["xue:c"]["state"], "failed:sha256-mismatch")
+        self.assertEqual(len(self.stored()), 1)
 
     def test_bad_job_file_is_a_usage_error(self):
         (self.tmp / "job.json").write_text(json.dumps({"items": [{"source_id": "../x"}]}))
