@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.10.11-r40",
+  "frontend_refactor_version": "2026.10.11-r41",
   "updated_at": "2026-10-11",
   "history": [
+    {
+      "version": "2026.10.11-r41",
+      "date": "2026-10-11",
+      "summary": "page-image hardening: requests waiting for a render are bounded so other routes stay responsive; legacy-page image URLs answer 404 for unmapped pages unless nearest=1 is asked for; the page viewer opens each neighbour in its own edition; asset cache key 20261011c for app.js, library.js, library.css"
+    },
     {
       "version": "2026.10.11-r40",
       "date": "2026-10-11",

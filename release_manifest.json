@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-10-11T03:07:48.250352+00:00",
-  "git_head": "07e72e856ad3bca5c6fd6a12f77da0aa60664d19",
-  "frontend_version": "2026.10.11-r40",
+  "generated_at": "2026-10-11T03:18:52.049990+00:00",
+  "git_head": "572fca2a16f2d630a2a5cb7ee70c53ad915786f5",
+  "frontend_version": "2026.10.11-r41",
   "source_of_truth": {
     "local_workspace": "authoritative",
     "github": "authoritative_for_code_only_after_push",
@@ -31,8 +31,8 @@
     {
       "kind": "source",
       "logical_path": "backend/main.py",
-      "size": 367819,
-      "sha256": "97a6d03121d500ae22d7e4eae5ee7659375f02a5500937728c250463253aabf0"
+      "size": 367792,
+      "sha256": "9be7b21e7c4108132465f7c8bcd14dc1bc4979b024fbcdae8128fe6a84bbf59f"
     },
     {
       "kind": "source",
@@ -49,8 +49,8 @@
     {
       "kind": "source",
       "logical_path": "backend/page_images.py",
-      "size": 28594,
-      "sha256": "496770778d0dd1d8b159ef7e5268217071bc2bb20d7955351e9eb3e59ad623cc"
+      "size": 30932,
+      "sha256": "de88b9f07f5aa777ea70eb6a96f80e5e6baefce61c0ff627cdd904076b82344f"
     },
     {
       "kind": "source",
@@ -116,7 +116,7 @@
       "kind": "source",
       "logical_path": "frontend/index.html",
       "size": 14505,
-      "sha256": "0c48bfe59656ac0c678fc223e93991509909d80bcd8088a2d0fc9464050f2c30"
+      "sha256": "22f5a84c6f9809c0ec92282dc57097c5b3763bb199cc7a34e1362ff32c40c3ee"
     },
     {
       "kind": "source",
@@ -128,7 +128,7 @@
       "kind": "source",
       "logical_path": "frontend/chuzhong.html",
       "size": 11136,
-      "sha256": "c3743f0e6e36a57e2e89deebba0af0e6b0855476dcb54fa442d82f03d5b1e54a"
+      "sha256": "f42625561a02fd98233133680b5b95d9bab0a29acaa4673e42c57523d294bc46"
     },
     {
       "kind": "source",
@@ -145,8 +145,8 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/app.js",
-      "size": 117198,
-      "sha256": "e8d7730a1e9bc936cb2404c2c5fde381522b355d7e20bc943a064b8a9a0b6a34"
+      "size": 117066,
+      "sha256": "a906b5cfb5c4026b886c6d8f1832976004c9cfbaa6fa981d2287dc245746f857"
     },
     {
       "kind": "source",
@@ -187,8 +187,8 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/version.json",
-      "size": 12145,
-      "sha256": "ca9f2e2b47f378bb3bfb6bbb2a4990918037e7782c1bc81dae4da30cf41da836"
+      "size": 12540,
+      "sha256": "6efece2399695284e0a37ba9568ef0aa930a0659844046c8b356585dab4d064d"
     },
     {
       "kind": "source",
@@ -199,8 +199,8 @@
     {
       "kind": "source",
       "logical_path": "scripts/deploy_vps.sh",
-      "size": 23470,
-      "sha256": "003ed0f74dc5f5644a5507ff96dc1352164b111212294589c667af2a19482e34"
+      "size": 25794,
+      "sha256": "20e51de947ec2e676ba88b7e07e0d0023a53b041bf375420c2c39c3362648d65"
     },
     {
       "kind": "source",
@@ -1494,7 +1494,7 @@
     }
   ],
   "runtime_assets_carried_from": {
-    "generated_at": "2026-10-11T03:02:41.035323+00:00",
+    "generated_at": "2026-10-11T03:07:48.250352+00:00",
     "git_head": "07e72e856ad3bca5c6fd6a12f77da0aa60664d19",
     "note": "runtime half not re-measured in this build; deploy_vps.sh verifies it on the VPS"
   },

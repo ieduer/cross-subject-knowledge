@@ -73,8 +73,19 @@ limit_req_zone $binary_remote_addr zone=sun_library_img:10m rate=30r/s;
         types { image/webp webp; }
         default_type image/webp;
         sendfile on;
-        # Content-Type and Cache-Control come from the app response.
+        disable_symlinks on;
+        # The long lifetime is set HERE, without `always`: nginx then adds it to successful
+        # answers only (200/206/304). The app deliberately sends no Cache-Control with its
+        # X-Accel-Redirect, so if a file was evicted between the app's check and this
+        # location, the 404 carries no cache lifetime and the next request re-renders.
+        add_header Cache-Control "public, max-age=31536000, immutable";
         add_header X-Content-Type-Options nosniff always;
+        error_page 404 = @page_image_gone;
+    }
+
+    location @page_image_gone {
+        add_header Cache-Control "no-store" always;
+        return 404;
     }
 
     location /files/page/ {

@@ -156,8 +156,8 @@ nginx 需要的内部位置与建议的 `limit_req`、`limit_conn` 见 `docs/ops
 | `LIBRARY_UPSTREAM_HOSTS` | `jks-ai.bdfz.net,smartedu.cn,ykt.cbern.com.cn` | 官方平台来源的主机白名单（含子域） |
 | `LIBRARY_COVER_HOSTS` | `jks-ai.bdfz.net,ykt.cbern.com.cn,smartedu.cn,img.rdfzer.com,img.bdfz.net` | 封面主机白名单 |
 | `LIBRARY_PAGE_CACHE_ROOT`、`LIBRARY_PAGE_CACHE_MAX_BYTES`、`LIBRARY_PAGE_ACCEL_PREFIX` | 见 §9 | 页面图缓存 |
-| `LIBRARY_RENDER_QUEUE`、`LIBRARY_RENDER_TIMEOUT_SECONDS`、`LIBRARY_RENDER_WAIT_SECONDS`、`LIBRARY_RENDER_MEMORY_MB` | `8`／`20`／`25`／`1536` | 页面渲染的排队、时间与内存上限 |
-| `LIBRARY_RATE_IMAGE_BURST`／`_PER_SECOND`、`LIBRARY_RATE_RENDER_BURST`／`_PER_SECOND` | `600`／`20`、`120`／`2` | 页面图请求与渲染的每来源令牌桶 |
+| `LIBRARY_RENDER_QUEUE`、`LIBRARY_RENDER_WAITERS`、`LIBRARY_RENDER_TIMEOUT_SECONDS`、`LIBRARY_RENDER_WAIT_SECONDS`、`LIBRARY_RENDER_MEMORY_MB` | `8`／`8`／`20`／`25`／`1536` | 页面渲染的排队、等待者、时间与内存上限 |
+| `LIBRARY_RATE_IMAGE_BURST`／`_PER_SECOND`、`LIBRARY_RATE_RENDER_BURST`／`_PER_SECOND` | `600`／`20`、`20`／`2` | 页面图请求与渲染的每来源令牌桶 |
 | `LIBRARY_CORS_ORIGINS` | 空 | 只作用于 `/api/library/legacy-page`：允许跨站读取的确切来源 |
 | `LIBRARY_UPSTREAM_TEMPLATE` | 空 | 下载记录的 `upstream` 来源没写网址时才用，例如 `https://jks-ai.bdfz.net/pdf/{source_id}` |
 
@@ -188,6 +188,7 @@ nginx 需要的内部位置与建议的 `limit_req`、`limit_conn` 见 `docs/ops
 
 nginx 经 `127.0.0.1:8080` 进来的连线，容器内看到的对端是 Docker 网桥闸道（通常 `172.17.0.1`），不是回环地址。因此：
 
+- `LIBRARY_TRUSTED_PROXIES` 是页面图与 PDF 限流正确运作的**前提**（正式环境已设为 `172.17.0.1`）：没有它，所有访客共用一个渲染桶（每来源 20 次突发）。
 - **8080 仍对外发布（`0.0.0.0`／`[::]`）时，不得信任任何代理。** 公网直连 8080 的请求——尤其 IPv6，经 docker-proxy 进来时来源同样会显示为网桥闸道——可以自带 `X-Real-IP`，一旦信任闸道，来源键就由对方任意指定。此时只能接受「所有访客共用一个桶」。
 - 支持的顺序只有一种：**先**把发布改为回环（本版 `deploy_vps.sh` 已固定如此，并在启动后核对），确认公网连不上 8080；**然后**才在配置档里设 `LIBRARY_TRUSTED_PROXIES=<网桥闸道>`（在容器内确认实际地址，例如看预设路由；可写单一地址或 `/32`）。`AI_TRUSTED_PROXIES` 同理。
 - nginx 的每个代理位置都要写 `proxy_set_header X-Real-IP $remote_addr;`（范例已补齐）。
@@ -249,7 +250,7 @@ python scripts/dev_library_server.py --release-dir <…/releases/<id>> --pdf-dir
 | --- | --- |
 | `GET`／`HEAD /files/page/{edition_id}/{sha12}/{pdf_page}.webp?w=` | 目录内、本站已存（`holding: "sun"`）的版次，`sha12` 相符，`1 ≤ pdf_page ≤ pdf.pages`。`w` 只接受 `240`、`480`、`960`、`1440`（预设 `960`），其余 `400`。`200` 带 `image/webp`、`Cache-Control: public, max-age=31536000, immutable`、`ETag`（PDF 哈希＋页＋宽＋渲染版本）、`nosniff`；其余状态一律 `no-store` |
 | `GET /files/cover/{edition_id}.webp?w=240|480` | 发行版内有预渲染封面（修订 4：`covers/<edition_id>-<w>.webp`，须列在 `SHA256SUMS`、文件名须与版次相符）就直接送出（`max-age=604800`）；没有则 `302` 到该版次第 1 页的页面图 |
-| `GET /files/legacy-page/{jc_short_key}/p{index}.webp?w=` | 旧页图网址的直接替身：经 `reader_books` 与页对应行解析，`302`（`max-age=3600`）到 `/files/page/…`。该页没有对应行、而页对应表有 `legacy_unmapped[].nearest_mapped` 时，`302` 到最接近的已对应页并带 `X-Sun-Legacy-Approximate: nearest; distance=<n>`；都没有则 `404` JSON `{available:false, reason}` |
+| `GET /files/legacy-page/{jc_short_key}/p{index}.webp?w=` | 旧页图网址的直接替身：经 `reader_books` 与页对应行解析，`302`（`max-age=3600`）到 `/files/page/…`。该页没有对应行时一律 `404`（`no-store`，JSON `{available:false, reason, nearest_available?}`）：别站的 `<img>` 看不到回应标头，所以不会悄悄换成另一页。只有明确加上 `?nearest=1`，且页对应表有 `legacy_unmapped[].nearest_mapped`，才 `302` 到最接近的已对应页并带 `X-Sun-Legacy-Approximate: nearest; distance=<n>` |
 | `GET /api/library/legacy-page?jc=&index=&w=` | 同上，回 JSON：`available`、`exact`、`edition_id`、`pdf_page`、`pdf_pages`、`image_url`、`viewer_url`、`text_identity`、`preview_default`、`default_edition_id`、`provenance`，近似时另有 `approximate: {kind:"nearest", distance, legacy_image_index}` |
 
 ### 其他站点怎么迁移
@@ -257,37 +258,37 @@ python scripts/dev_library_server.py --release-dir <…/releases/<id>> --pdf-dir
 - **只换前缀**：把 `https://img.rdfzer.com/pages/<key>/p<N>.webp` 换成 `https://sun.bdfz.net/files/legacy-page/<key>/p<N>.webp?w=960`（缩图用 `w=240` 或 `480`）。`<img>` 不需要 CORS。回应是 `302`，浏览器会跟到不可变的 `/files/page/…`。
 - **想连到阅读器而不是嵌图**：`GET https://sun.bdfz.net/api/library/legacy-page?jc=<key>&index=<N>`，用回应里的 `viewer_url`（相对于 `https://sun.bdfz.net`）与 `image_url`。浏览器端跨站读取这个 JSON 需要对方来源列在 `LIBRARY_CORS_ORIGINS`（只接受 `https://…bdfz.net`／`rdfz.net`／`rdfzer.com` 的确切来源，预设为空）；服务端读取不受限。应用的全局 CORS 设定没有改动。
 - 最好的终态是使用方自己保存「版次＋PDF 页」，直接用 `/files/page/<edition_id>/<sha12>/<pdf_page>.webp`：网址随文件内容变，可永久缓存。
-- 注意 `302` 的目标会随目录发行版变化（一小时缓存）；`X-Sun-Legacy-Approximate` 出现时，图不是原来那一页。
+- 注意 `302` 的目标会随目录发行版变化（一小时缓存）。没有对应行的旧页，图片网址回 `404`；要显示最接近的一页，请用 JSON 端点（`approximate` 会标明相差几页）或自行加 `?nearest=1` 并向读者说明。
 
 ### 渲染如何受限
 
 | 项目 | 做法与预设 |
 | --- | --- |
 | 进程隔离 | Web 进程**不导入** PyMuPDF／Pillow。每次渲染是一个短命子进程（`backend/page_render_worker.py`）：打开文件、渲染一页、写出 WebP（品质 80）、结束 |
-| 并发 | 同时只跑 1 个渲染；另外最多排 `LIBRARY_RENDER_QUEUE`（8）个，超过回 `503`＋`Retry-After: 3`。同一页同一宽度的并发请求共用一次渲染 |
-| 时间 | 每次渲染 `LIBRARY_RENDER_TIMEOUT_SECONDS`（20）秒，逾时杀掉子进程回 `504`；请求最多等 `LIBRARY_RENDER_WAIT_SECONDS`（25）秒，否则 `503`。失败的页 10 分钟内不重试 |
+| 并发 | 同时只跑 1 个渲染；另外最多排 `LIBRARY_RENDER_QUEUE`（8）个不同的页，超过回 `503`＋`Retry-After: 3`。同一页同一宽度的并发请求共用一次渲染。**同时等待渲染结果的请求**最多 `LIBRARY_RENDER_WAITERS`（8）个，其余立即 `503`：等待者各占一个服务线程（共约 40 个），不设上限的话慢渲染会拖住其他端点 |
+| 时间 | 每次渲染 `LIBRARY_RENDER_TIMEOUT_SECONDS`（20）秒，逾时杀掉子进程回 `504`；请求最多等 `LIBRARY_RENDER_WAIT_SECONDS`（25）秒，否则 `503`。确定会重复的失败（页面尺寸不接受、文件不可读）10 分钟内不重试；逾时与缓存目录不可写（`503`）不记忆 |
 | 内存 | 子进程地址空间上限 `LIBRARY_RENDER_MEMORY_MB`（1536，Linux 上以 `RLIMIT_AS` 设定；`0` 关闭），并 `nice 10` |
 | 像素 | 输出不超过 1440×2200（3,168,000 像素）；页面边长超过 14,400 pt 或长宽比超过 6 一律 `422` |
-| 限流 | 所有页面图请求：每来源 `LIBRARY_RATE_IMAGE_BURST`／`_PER_SECOND`（600／20）；**未命中缓存而需要渲染的请求**另有 `LIBRARY_RATE_RENDER_BURST`／`_PER_SECOND`（120／2）。缓存命中不消耗后者 |
+| 限流 | 所有页面图请求：每来源 `LIBRARY_RATE_IMAGE_BURST`／`_PER_SECOND`（600／20）；**未命中缓存而需要渲染的请求**另有 `LIBRARY_RATE_RENDER_BURST`／`_PER_SECOND`（20／2）。缓存命中不消耗后者 |
 
 ### 磁盘缓存
 
 - 路径 `<缓存根>/<渲染版本>/<pdf sha256>/<页>-<宽>.webp`（键是 PDF 哈希，不是版次 id；同一文件的多个版次记录共用）。先写临时文件再改名；目录 `0755`、文件 `0644`。
-- 缓存根：`LIBRARY_PAGE_CACHE_ROOT`；预设在 `PDF_SERVE_MODE=accel` 时为 `/srv/sun-textbooks/page-cache`，`direct` 时为 `${STATE_ROOT}/page-cache`。正式环境必须在 `/srv` 下，因为缓存命中由 nginx 以 `X-Accel-Redirect`（`LIBRARY_PAGE_ACCEL_PREFIX`，预设 `/_protected_page/`）送出，而 nginx 读不到 `/root` 下的状态目录。
+- 缓存根：`LIBRARY_PAGE_CACHE_ROOT`；预设在 `PDF_SERVE_MODE=accel` 时为 `/srv/sun-textbooks/page-cache`，`direct` 时为 `${STATE_ROOT}/page-cache`。正式环境必须在 `/srv` 下，因为缓存命中由 nginx 以 `X-Accel-Redirect`（`LIBRARY_PAGE_ACCEL_PREFIX`，预设 `/_protected_page/`）送出，而 nginx 读不到 `/root` 下的状态目录。`accel` 模式下应用**不送** `Cache-Control`：长效缓存头由 nginx 的内部位置以不带 `always` 的 `add_header` 加上（只在成功回应出现），文件若在应用检查之后、nginx 打开之前被淘汰，`404` 不带缓存寿命（范例另设为 `no-store`）。缓存文件以不跟随符号链接的方式读取，nginx 位置设 `disable_symlinks on`。
 - 总量上限 `LIBRARY_PAGE_CACHE_MAX_BYTES`（预设 2 GiB，最小 16 MiB）。每次写入后若超限，就淘汰最久未用的文件（其他渲染版本的优先）到上限的 90%，每轮最多删 400 个；一小时前的残留临时文件顺带清掉。命中时若访问时间超过一小时会更新一次，使淘汰顺序在 `noatime`／`relatime` 挂载上仍然可信。
 - 缓存内容全部可重建，随时可以整个删除。改渲染参数时把 `page_images.RENDER_VERSION` 加一，旧文件会被优先淘汰。
 
 ### 部署要求
 
 - `requirements.runtime.txt` 新增 `pymupdf==1.28.2`（目录工具所用的同一版本）与 `pillow==12.3.0`（PyMuPDF 不能写 WebP）。两者都有 x86_64 manylinux 轮子（`cp310-abi3-manylinux_2_28`、`cp313-manylinux_2_28`）。`Dockerfile` 不需要改。
-- `scripts/deploy_vps.sh`：`/srv/sun-textbooks` 仍以只读挂入；另把 `SUN_PAGE_CACHE_DIR`（预设 `/srv/sun-textbooks/page-cache`，由脚本以 `root:root 0755` 建立，不得是符号链接）以读写叠挂。切换前的映像检查新增：两个新模块存在并可导入、`pymupdf` 版本、Pillow 能写 WebP、并用应用所用的同一个子进程实际渲染一页。
+- `scripts/deploy_vps.sh`：`/srv/sun-textbooks` 仍以只读挂入；另把 `SUN_PAGE_CACHE_DIR`（预设 `/srv/sun-textbooks/page-cache`，由脚本以 `root:root 0755` 建立，不得是符号链接）以读写叠挂，并以 `-e LIBRARY_PAGE_CACHE_ROOT=<同一路径>` 告知应用（优先于配置档）。新容器通过健康检查后，脚本还会经应用实际取一张 `w=240` 的页面图（`accel` 模式下核对缓存目录里确实出现了非空文件）；失败就走既有的回退流程。切换前的映像检查新增：两个新模块存在并可导入、`pymupdf` 版本、Pillow 能写 WebP、并用应用所用的同一个子进程实际渲染一页。
 - nginx：`docs/ops/nginx-library.conf.example` 的 `/_protected_page/` 内部位置、`/files/page/`、`/files/cover/`、`/files/legacy-page/` 三个代理位置与 `sun_library_img` 限流区。
 - 没有 PDF 可读时（容器内看不到 `LIBRARY_PDF_ROOT`）未命中缓存的请求回 `404 file missing`；已缓存的页仍可送出。
 
 ### SUN 自己的使用方
 
 - 检索结果的 `page_url`：改为 `/files/page/…?w=960`（经 `reader_books` 与页对应行；没有确切对应行就是 `null`，沿用既有的「暂无页图」处理）；新增 `pdf_ref`（`edition_id`、`pdf_page`、`pdf_pages`、已核对才有的 `printed_label`、`viewer_url`、`text_identity`、`preview_default`、`default_edition_id`），「在 PDF 中打开」直接用它，不再另发请求。
-- `/api/page-image`：每一页给 `url`（960）、`thumb_url`（240）、`pdf_page`、`printed_label`、`viewer_url`；没有对应行的邻页略去；被请求的那一页没有对应行时用目录的最近页提示（`approximate`），都没有则 `404`。回应另有 `edition_id`、`pdf_total_pages`、`text_identity`。`page` 仍是旧的 0 起算序号（实虚词典页面在用）。
+- `/api/page-image`：每一页给 `url`（960）、`thumb_url`（240）、`edition_id`、`pdf_page`、`printed_label`、`viewer_url`；只用确切的对应行，没有对应行的页略去；被请求的那一页没有对应行就 `404`（检视器显示「该页暂无页图」）。回应另有 `edition_id`、`pdf_total_pages`、`text_identity`。`page` 仍是旧的 0 起算序号（实虚词典页面在用）。
 - 页图检视器的标示：一律「PDF 第 N 页」，书页只在已核对时显示；提供「在 PDF 中打开」；图片在渲染忙碌时自动重试三次。
 - `frontend/assets/pages/book_map.json` 与 `/api/book-pages` **是旧资料**（旧页图集的键与页数），暂时照旧提供给仍在读取的工具，不再是页图来源。
 - 书目卡片与下载条目的封面：本站已存的版次用 `/files/cover/…`（修订 3 没有预渲染封面，首次显示时由第 1 页渲染后进缓存；修订 4 直接取发行版里的小图）。只有本站没有文件的条目才取官方封面（约 1 MB、首字节数秒）。
@@ -302,7 +303,7 @@ python scripts/dev_library_server.py --release-dir <…/releases/<id>> --pdf-dir
 - `scripts/stage_clean_release.py` 的 `RELEASE_FILES`＋`RELEASE_TREES`（整棵 `frontend/vendor/pdfjs`，逐档对照 `VENDOR.json`）与 `scripts/build_release_manifest.py` 的 `SOURCE_ASSETS`＋`SOURCE_TREES` 是发布内容的两份清单；`tests/library/test_release_bundle.py` 把清单原样铺到临时目录后在子进程 `import main`，并检查四个页面、样式表、脚本（含 `library.js` 拼出的 PDF.js 路径）引用的每个本地文件都在里面，也检查 `backend/`、`frontend/` 下每个受版本控制的文件都在清单内。新增运行期文件而没加进清单，测试会红。
 - `release_manifest.json` 必须在最后一次改动代码之后重新生成。持有运行期数据（`data/index`）的机器照旧执行 `python scripts/build_release_manifest.py`；只改了代码、手边没有运行期数据时用 `python scripts/build_release_manifest.py --reuse-runtime-from release_manifest.json`：重算全部源码条目，运行期条目原样沿用并在档内注明（`runtime_assets_carried_from`），`deploy_vps.sh` 仍会在 VPS 上逐项核对。运行期数据有变动时不得用这个参数。
 - `deploy_vps.sh` 在停掉现行容器之前，会在候选映像内确认前端文件齐全、PDF.js 目录与 `VENDOR.json` 逐档相符、`import ai_guard, library` 成功。
-- 页脚版本：`frontend/assets/version.json` 为 `2026.10.11-r40`，`app.js` 的后备值 `DEFAULT_FRONTEND_VERSION` 同步。资源缓存键：`app.js`、`library.js`、`library.css` 为 `?v=20261011b`（`index.html`、`chuzhong.html`）；未改动的 `ai-client.js`、`dict.js` 仍是 `20261010a`。之后再改这三个文件须同时更换页面里的缓存键（`tests/library/test_release_bundle.py` 会检查三者同键、且与版本档一致）。
+- 页脚版本：`frontend/assets/version.json` 为 `2026.10.11-r41`，`app.js` 的后备值 `DEFAULT_FRONTEND_VERSION` 同步。资源缓存键：`app.js`、`library.js`、`library.css` 为 `?v=20261011c`（`index.html`、`chuzhong.html`）；未改动的 `ai-client.js`、`dict.js` 仍是 `20261010a`。之后再改这三个文件须同时更换页面里的缓存键（`tests/library/test_release_bundle.py` 会检查三者同键、且与版本档一致）。
 - `--reuse-runtime-from` 会把上一份清单里 `runtime_assets_*` 的说明（例如 `runtime_assets_measured_from`，含主机上实读的哈希）连同运行期条目一起带过来。
 
 ## 11. 排错

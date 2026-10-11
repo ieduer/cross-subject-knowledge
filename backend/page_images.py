@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import stat as stat_module
 import re
 import subprocess
 import sys
@@ -101,6 +102,7 @@ class ImageSettings:
     render_burst: int
     render_per_second: float
     cors_origins: tuple[str, ...]
+    waiters: int = 8
 
     @classmethod
     def from_env(cls, env: Mapping[str, str], serve_mode: str, state_root: Path) -> "ImageSettings":
@@ -125,9 +127,12 @@ class ImageSettings:
             memory_mb=_int_env(env, "LIBRARY_RENDER_MEMORY_MB", 1536, 0, 8192),
             image_burst=_int_env(env, "LIBRARY_RATE_IMAGE_BURST", 600, 1, 100000),
             image_per_second=_float_env(env, "LIBRARY_RATE_IMAGE_PER_SECOND", 20.0, 0.01, 10000.0),
-            render_burst=_int_env(env, "LIBRARY_RATE_RENDER_BURST", 120, 1, 100000),
+            render_burst=_int_env(env, "LIBRARY_RATE_RENDER_BURST", 20, 1, 100000),
             render_per_second=_float_env(env, "LIBRARY_RATE_RENDER_PER_SECOND", 2.0, 0.01, 10000.0),
             cors_origins=origins,
+            # Requests allowed to WAIT for a render at the same time (each holds one of the
+            # server's ~40 worker threads); the rest are answered 503 at once.
+            waiters=_int_env(env, "LIBRARY_RENDER_WAITERS", 8, 1, 24),
         )
 
 
@@ -160,10 +165,10 @@ class PageCache:
 
     def lookup(self, path: Path) -> Optional[os.stat_result]:
         try:
-            stat = os.stat(path)
+            stat = os.lstat(path)
         except OSError:
             return None
-        if stat.st_size <= 0:
+        if not stat_module.S_ISREG(stat.st_mode) or stat.st_size <= 0:   # never a symlink
             return None
         now = time.time()
         if now - stat.st_atime > self.TOUCH_AFTER:   # keep LRU order honest on noatime/relatime mounts
@@ -298,6 +303,7 @@ class RenderService:
         self._lock = threading.Lock()
         self._inflight: dict[tuple, Future] = {}
         self._failures: dict[tuple, tuple[float, str, int]] = {}
+        self._waiters = threading.BoundedSemaphore(settings.waiters)
         self.renders = 0
 
     def stats(self) -> dict:
@@ -326,18 +332,36 @@ class RenderService:
             raise RenderBusy()
         return final
 
+    def ensure_bounded(self, pdf_path: Path, sha256: str, page: int, width: int) -> Path:
+        """ensure() for request handlers: at most `waiters` callers may block here at once, so
+        slow renders can never use up the server's worker threads.  The rest get RenderBusy."""
+        if not self._waiters.acquire(blocking=False):
+            raise RenderBusy()
+        try:
+            return self.ensure(pdf_path, sha256, page, width)
+        finally:
+            self._waiters.release()
+
     def _render(self, pdf_path: Path, key: tuple, final: Path) -> None:
         try:
             if self.cache.lookup(final) is not None:
                 return
-            temp = self.cache.temp_path(final)
+            try:
+                temp = self.cache.temp_path(final)
+            except OSError:
+                raise RenderFailed("cache-unwritable", 503)     # e.g. the cache root is read-only
             try:
                 self.runner(pdf_path, key[1], key[2], temp, self.settings)
                 if not temp.is_file() or temp.stat().st_size <= 0:
                     raise RenderFailed("render-error", 500)
-                self.cache.commit(temp, final)
+                try:
+                    self.cache.commit(temp, final)
+                except OSError:
+                    raise RenderFailed("cache-unwritable", 503)
             except RenderFailed as error:
-                if error.status != 503:
+                # Remember only failures that will repeat (bad page, page too large).  A timeout
+                # or an unavailable renderer/cache may well succeed next time.
+                if error.status not in (503, 504):
                     with self._lock:
                         if len(self._failures) > 500:
                             self._failures.clear()
@@ -403,17 +427,22 @@ def build_router(lib: Any, images: ImageSettings, service: RenderService, image_
         headers = {"X-Content-Type-Options": "nosniff", "X-Library-Release": release_id, "ETag": etag}
         if any(part.strip() in (etag, "W/" + etag) for part in (request.headers.get("if-none-match") or "")[:2000].split(",")):
             return Response(status_code=304, headers=headers)
-        headers["Cache-Control"] = "public, max-age=31536000, immutable"   # 200 only; the URL is content-versioned
         if lib.settings.serve_mode == "accel":
+            # No Cache-Control here: nginx keeps the upstream's across the internal redirect, and
+            # if the file was evicted meanwhile its 404 would carry a one-year lifetime.  The
+            # internal location adds the header itself, on successful answers only.
             headers["X-Accel-Redirect"] = images.accel_prefix + relative
             return Response(status_code=200, media_type="image/webp", headers=headers)
+        headers["Cache-Control"] = "public, max-age=31536000, immutable"   # 200 only; the URL is content-versioned
         headers["Content-Length"] = str(stat.st_size)
         if request.method == "HEAD":
             return Response(status_code=200, media_type="image/webp", headers=headers)
         if stat.st_size > MAX_IMAGE_FILE_BYTES:
             raise HTTPException(status_code=500, detail="image too large", headers={"Cache-Control": "no-store"})
         try:
-            data = path.read_bytes()
+            descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(descriptor, "rb") as handle:
+                data = handle.read(MAX_IMAGE_FILE_BYTES + 1)
         except OSError:
             raise not_found("image missing")
         headers["Content-Length"] = str(len(data))
@@ -442,7 +471,7 @@ def build_router(lib: Any, images: ImageSettings, service: RenderService, image_
             if not pdf_path.is_file():
                 raise not_found("file missing")
             try:
-                service.ensure(pdf_path, edition.sha256, page, width)
+                service.ensure_bounded(pdf_path, edition.sha256, page, width)
             except RenderBusy:
                 raise HTTPException(status_code=503, detail="页面图片正在排队生成，请稍后再试",
                                     headers={"Retry-After": "3", "Cache-Control": "no-store"})
@@ -501,8 +530,10 @@ def build_router(lib: Any, images: ImageSettings, service: RenderService, image_
         return {"edition": None, "reason": outcome.get("reason") or "unknown-book"}
 
     @router.api_route("/files/legacy-page/{jc}/{name}", methods=["GET", "HEAD"])
-    def library_legacy_page(request: Request, jc: str, name: str, w: Optional[str] = None):
-        """Drop-in for https://img.rdfzer.com/pages/<jc>/p<index>.webp: answers 302 to the page image."""
+    def library_legacy_page(request: Request, jc: str, name: str, w: Optional[str] = None, nearest: Optional[str] = None):
+        """Drop-in for https://img.rdfzer.com/pages/<jc>/p<index>.webp: answers 302 to the page image.
+        An index without a row is 404: an <img> on another site cannot see a response header, so
+        a different page is never substituted silently.  ?nearest=1 opts in to the nearest page."""
         lib._limit(request, image_limiter)
         release = lib._release()
         match = LEGACY_NAME_RE.fullmatch(name or "")
@@ -510,6 +541,9 @@ def build_router(lib: Any, images: ImageSettings, service: RenderService, image_
             raise not_found()
         width = parse_width(w, WIDTHS, DEFAULT_WIDTH)
         found = resolve_legacy(release, jc, int(match.group(1)))
+        if found["edition"] is not None and not found["exact"] and nearest != "1":
+            return JSONResponse({"available": False, "reason": "page-not-mapped", "nearest_available": True,
+                                 "release_id": release.release_id}, status_code=404, headers=no_store)
         if found["edition"] is None:
             return JSONResponse({"available": False, "reason": found["reason"], "release_id": release.release_id},
                                 status_code=404, headers=no_store)

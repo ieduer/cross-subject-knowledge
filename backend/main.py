@@ -9291,8 +9291,8 @@ def page_image(
     pages = []
     current_ref = None
     for p in range(start, end + 1):
-        # the requested page may fall back to the catalog's nearest-mapped hint; neighbours never do
-        ref = _book_page_ref(book_key, p, nearest=(p == page))
+        # exact rows only: a page without a row is left out (the viewer says so), never replaced
+        ref = _book_page_ref(book_key, p)
         if not ref:
             continue
         if p == page:
@@ -9301,10 +9301,10 @@ def page_image(
             "page": p,
             "url": ref["image_url"],
             "thumb_url": ref["thumb_url"],
+            "edition_id": ref["edition_id"],
             "pdf_page": ref["pdf_page"],
             "printed_label": ref["printed_label"],
             "viewer_url": ref["viewer_url"],
-            "approximate": ref["approximate"],
             "current": p == page,
         })
     if current_ref is None:

@@ -150,9 +150,12 @@ if [ -d "${SUN_TEXTBOOK_ROOT}" ]; then
     exit 1
   fi
   install -d -m 0755 -o root -g root "${SUN_PAGE_CACHE_DIR}"
+  # The app is told the same path (-e wins over the env file), so it can never try to
+  # write its cache into the read-only part of the mount.
   runtime_mount_args=(
     -v "${SUN_TEXTBOOK_ROOT}:${SUN_TEXTBOOK_ROOT}:ro"
     -v "${SUN_PAGE_CACHE_DIR}:${SUN_PAGE_CACHE_DIR}:rw"
+    -e "LIBRARY_PAGE_CACHE_ROOT=${SUN_PAGE_CACHE_DIR}"
   )
 fi
 
@@ -320,6 +323,45 @@ sys.exit(0 if ok else 1)
 PY
 }
 
+library_page_smoke() {
+  # One real page image through the new container: catalog -> allow-list -> render child ->
+  # cache write. Skipped only when no catalog release with held files is loaded.
+  python3 - "${SUN_PAGE_CACHE_DIR}" <<'PY'
+import json, os, sys, urllib.request
+
+BASE = "http://127.0.0.1:8080"
+
+
+def get(path, timeout):
+    with urllib.request.urlopen(BASE + path, timeout=timeout) as response:
+        return response.status, {k.lower(): v for k, v in response.headers.items()}, response.read()
+
+
+try:
+    release = json.loads(get("/api/library/release", 15)[2])
+    if not release.get("available") or not (release.get("counts") or {}).get("previewable"):
+        print("page image smoke test: skipped (no catalog release with held files is loaded)")
+        sys.exit(0)
+    edition = json.loads(get("/api/library/editions?limit=1", 15)[2])["editions"][0]["edition_id"]
+    status, headers, body = get(f"/files/page/{edition}/{edition[-12:]}/1.webp?w=240", 60)
+    if status != 200 or not headers.get("content-type", "").startswith("image/webp"):
+        sys.exit(f"page image smoke test: status {status}, type {headers.get('content-type')}")
+    accel = headers.get("x-accel-redirect")
+    if accel:
+        # nginx serves the body: the rendered file must now exist, non-empty, in the cache mount
+        cached = os.path.join(sys.argv[1], *accel.strip("/").split("/")[-3:])
+        if not (os.path.isfile(cached) and os.path.getsize(cached) > 0):
+            sys.exit("page image smoke test: rendered file is not in the page cache: " + cached)
+    elif not (body[:4] == b"RIFF" and body[8:12] == b"WEBP"):
+        sys.exit("page image smoke test: the body is not a WebP image")
+    print("page image smoke test ok:", edition)
+except SystemExit:
+    raise
+except Exception as error:  # 503 unwritable cache, 404 missing file, connection refused, ...
+    sys.exit(f"page image smoke test failed: {type(error).__name__}: {error}")
+PY
+}
+
 warm_precision_agent() {
   # /api/chat/context is retired (docs/AI_GUARD.md). Warm retrieval through the public,
   # model-free search route instead; the reranker itself is preloaded at startup
@@ -471,6 +513,11 @@ for _ in $(seq 1 24); do
   fi
   sleep 5
 done
+
+if [ "${healthy}" = "true" ] && ! library_page_smoke; then
+  echo "ERROR: new container cannot produce a page image (see above); treating as unhealthy"
+  healthy="false"
+fi
 
 if [ "${healthy}" != "true" ]; then
   echo "ERROR: new container failed health checks"

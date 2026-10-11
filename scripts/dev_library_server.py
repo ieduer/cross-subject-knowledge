@@ -79,14 +79,14 @@ def build_app(catalog_root: Path, pdf_dir: Path, upstream: str | None, max_searc
         context = max(0, min(context, 8))
         pages, current = [], None
         for index in range(max(0, page - context), min(total - 1, page + context) + 1):
-            ref = lib.legacy_page_ref(book_key, index, nearest=(index == page))
+            ref = lib.legacy_page_ref(book_key, index)
             if not ref:
                 continue
             if index == page:
                 current = ref
             pages.append({"page": index, "url": ref["image_url"], "thumb_url": ref["thumb_url"], "pdf_page": ref["pdf_page"],
                           "printed_label": ref["printed_label"], "viewer_url": ref["viewer_url"],
-                          "approximate": ref["approximate"], "current": index == page})
+                          "edition_id": ref["edition_id"], "current": index == page})
         if current is None:
             return JSONResponse({"detail": "该页在现有 PDF 中没有对应页图"}, status_code=404)
         return {"book_key": book_key, "short_key": info.get("key"), "title": info.get("title") or "", "current_page": page,

@@ -336,8 +336,15 @@ class CacheHitTests(Base):
         self.assertEqual((response.status_code, response.content), (200, b""))
         self.assertEqual(response.headers["x-accel-redirect"], f"/_protected_page/{page_images.RENDER_VERSION}/{sha}/6-240.webp")
         self.assertEqual(response.headers["content-type"], "image/webp")
-        self.assertEqual(response.headers["cache-control"], "public, max-age=31536000, immutable")
+        # nginx adds the lifetime on success; the app must not, or an evicted file's 404 would carry it
+        self.assertNotIn("cache-control", response.headers)
         self.assertTrue((self.tmp / "cache-accel" / page_images.RENDER_VERSION / sha / "6-240.webp").is_file())
+        example = (ROOT / "docs" / "ops" / "nginx-library.conf.example").read_text(encoding="utf-8")
+        block = example[example.index("location /_protected_page/"):example.index("location /files/page/")]
+        self.assertIn('add_header Cache-Control "public, max-age=31536000, immutable";', block)
+        self.assertNotIn('immutable" always', block)
+        self.assertIn("disable_symlinks on;", block)
+        self.assertIn("internal;", block)
 
     def test_default_cache_root_per_mode(self):
         state = Path("/state")
@@ -345,6 +352,35 @@ class CacheHitTests(Base):
         self.assertEqual(str(page_images.ImageSettings.from_env({}, "direct", state).cache_root), "/state/page-cache")
         settings = page_images.ImageSettings.from_env({"LIBRARY_PAGE_ACCEL_PREFIX": "/x y\r\nSet-Cookie: a"}, "accel", state)
         self.assertEqual((settings.accel_prefix, settings.cache_max_bytes, settings.queue), ("/_protected_page/", 2 * 1024 ** 3, 8))
+        self.assertEqual((settings.waiters, settings.render_burst), (8, 20))
+
+    def test_a_symlink_in_the_cache_is_never_served(self):
+        counter = []
+        app, lib = self.make_app(runner=self.fake_runner(counter), cache_name="cache-symlink")
+        sha = self.seed["e1"]["pdf"]["sha256"]
+        secret = self.tmp / "secret.txt"
+        secret.write_bytes(b"TOP-SECRET")
+        final = lib.render_service.cache.path_for(sha, 9, 240)
+        final.parent.mkdir(parents=True)
+        final.symlink_to(secret)
+        response = TestClient(app).get(self.page(page=9, w=240))
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b"TOP-SECRET", response.content)
+        self.assertEqual(len(counter), 1)                     # treated as a miss and rendered over the link
+        self.assertFalse(final.is_symlink())
+        self.assertEqual(secret.read_bytes(), b"TOP-SECRET")
+
+    def test_unwritable_cache_is_503_and_not_remembered(self):
+        blocked = self.tmp / "cache-blocked"
+        blocked.write_text("a file where the cache directory should be")
+        counter = []
+        app, lib = self.make_app({"LIBRARY_PAGE_CACHE_ROOT": str(blocked)}, runner=self.fake_runner(counter))
+        client = TestClient(app)
+        for _ in range(2):
+            response = client.get(self.page(page=2, w=240))
+            self.assertEqual((response.status_code, response.headers["cache-control"]), (503, "no-store"))
+            self.assertIn("retry-after", response.headers)
+        self.assertEqual(lib.render_service._failures, {})
 
 
 class QueueTests(Base):
@@ -395,7 +431,55 @@ class QueueTests(Base):
         self.assertEqual(sorted(counter), [(1, 240), (2, 240), (3, 240)])
         self.assertEqual(client.get(self.page(page=4, w=240)).status_code, 200)
 
-    def test_render_time_limit_kills_the_child_and_is_remembered(self):
+    def test_other_routes_stay_responsive_while_renders_are_slow(self):
+        """100 requests over 9 pages against a renderer that does not finish: only a few may
+        wait (each waiter holds a server worker thread); everything else is refused at once and
+        a plain route still answers."""
+        import asyncio
+        import httpx
+
+        counter, gate = [], threading.Event()
+        app, lib = self.make_app({"LIBRARY_RENDER_WAITERS": "4"}, runner=self.fake_runner(counter, gate=gate), cache_name="cache-starve")
+        urls = [self.page(page=1 + (n % 9), w=240) for n in range(100)]
+
+        async def scenario():
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://sun.test") as client:
+                tasks = [asyncio.create_task(client.get(url)) for url in urls]
+                await asyncio.sleep(0.5)
+                started = time.perf_counter()
+                release = await asyncio.wait_for(client.get("/api/library/release"), timeout=3)
+                listing = await asyncio.wait_for(client.get("/api/library/editions"), timeout=3)
+                elapsed = time.perf_counter() - started
+                done_early = [task.result().status_code for task in tasks if task.done()]
+                waiting = sum(1 for task in tasks if not task.done())
+                gate.set()
+                finished = [response.status_code for response in await asyncio.gather(*tasks)]
+                return release.status_code, listing.status_code, elapsed, done_early, waiting, finished
+
+        try:
+            release_status, listing_status, elapsed, done_early, waiting, finished = asyncio.run(scenario())
+        finally:
+            gate.set()
+        self.assertEqual((release_status, listing_status), (200, 200))
+        self.assertLess(elapsed, 2.0)
+        self.assertEqual(waiting, 4)                                   # exactly the waiter bound is blocked
+        self.assertEqual(set(done_early), {503})
+        self.assertEqual(len(done_early), 96)
+        self.assertEqual(sorted(set(finished)), [200, 503])
+        self.assertEqual(finished.count(200), 4)
+        self.assertLessEqual(len(counter), 4)
+
+    def test_waiter_slots_are_released(self):
+        counter = []
+        _, lib = self.make_app({"LIBRARY_RENDER_WAITERS": "2"}, runner=self.fake_runner(counter), cache_name="cache-slots")
+        sha = self.seed["e1"]["pdf"]["sha256"]
+        pdf = self.pdf_dir / f"{sha}.pdf"
+        for page in range(1, 9):                                       # more calls than slots, one after another
+            lib.render_service.ensure_bounded(pdf, sha, page, 240)
+        self.assertEqual(len(counter), 8)
+
+    def test_render_time_limit_kills_the_child_and_is_not_remembered(self):
         slow = self.tmp / "slow_worker.py"
         slow.write_text("import time\ntime.sleep(60)\n", encoding="utf-8")
         app, lib = self.make_app({"LIBRARY_RENDER_TIMEOUT_SECONDS": "1"}, cache_name="cache-timeout")
@@ -408,10 +492,11 @@ class QueueTests(Base):
             self.assertEqual(response.status_code, 504)
             self.assertLess(elapsed, 6)
             self.assertEqual(response.headers["cache-control"], "no-store")
+            self.assertEqual(lib.render_service._failures, {})                # a timeout may succeed next time
             started = time.time()
-            again = TestClient(app).get(self.page(page=8, w=240))             # not rendered again right away
+            again = TestClient(app).get(self.page(page=8, w=240))             # tried again, not answered from memory
             self.assertEqual(again.status_code, 504)
-            self.assertLess(time.time() - started, 0.5)
+            self.assertGreater(time.time() - started, 0.8)
         finally:
             page_images.WORKER = original
         sha = self.seed["e1"]["pdf"]["sha256"]
@@ -574,12 +659,21 @@ class LegacyPageTests(Base):
         self.assertEqual((followed.status_code, followed.headers["content-type"]), (200, "image/webp"))
         self.assertEqual(self.client.head(f"/files/legacy-page/{self.key}/p0.webp", follow_redirects=False).status_code, 302)
 
-    def test_unmapped_page_uses_the_release_hint_and_says_so(self):
+    def test_unmapped_page_is_404_unless_the_nearest_page_is_asked_for(self):
         for index, page in ((2, 2), (3, 5), (12, 12)):
-            response = self.client.get(f"/files/legacy-page/{self.key}/p{index}.webp", follow_redirects=False)
+            plain = self.client.get(f"/files/legacy-page/{self.key}/p{index}.webp", follow_redirects=False)
+            self.assertEqual((plain.status_code, plain.headers["cache-control"]), (404, "no-store"), index)
+            self.assertEqual((plain.json()["reason"], plain.json()["nearest_available"]), ("page-not-mapped", True))
+            self.assertNotIn("location", plain.headers)
+            for value in ("0", "true", "", "2"):
+                other = self.client.get(f"/files/legacy-page/{self.key}/p{index}.webp?nearest={value}", follow_redirects=False)
+                self.assertEqual(other.status_code, 404, value)
+            response = self.client.get(f"/files/legacy-page/{self.key}/p{index}.webp?nearest=1", follow_redirects=False)
             self.assertEqual(response.status_code, 302, index)
             self.assertEqual(response.headers["location"], f"/files/page/{self.main}/{self.main[-12:]}/{page}.webp?w=960")
             self.assertEqual(response.headers["x-sun-legacy-approximate"], "nearest; distance=1")
+        exact = self.client.get(f"/files/legacy-page/{self.key}/p7.webp?nearest=1", follow_redirects=False)
+        self.assertNotIn("x-sun-legacy-approximate", exact.headers)     # exact rows are never flagged
 
     def test_nothing_to_show_is_404_json(self):
         cases = {f"/files/legacy-page/{self.key}/p13.webp": "page-not-mapped",     # its hint contradicts the rows: dropped
@@ -698,9 +792,16 @@ for key in sample:
             for page in payload["pages"]:
                 assert page["url"].startswith("/files/page/") and page["thumb_url"].endswith("?w=240"), page
                 assert isinstance(page["pdf_page"], int) and page["pdf_page"] >= 1
+                assert page["edition_id"] and ("/" + page["edition_id"] + "/") in page["url"], page
+                assert "approximate" not in page
         except HTTPException as error:
             assert error.status_code == 404, error.status_code
             out["viewer_404"] += 1
+try:
+    main.page_image(book_key="高中_语文_普通高中教科书_语文必修_上册", page=3, context=2, phase=None)
+    out["unmapped_current"] = "served"
+except HTTPException as error:
+    out["unmapped_current"] = error.status_code
 out["dict_url"] = main._dict_page_url("xuci", 10)
 out["sample_ref"] = main._book_page_ref("高中_语文_普通高中教科书_语文必修_上册", 6)
 print(json.dumps(out, ensure_ascii=False))
@@ -725,6 +826,7 @@ print(json.dumps(out, ensure_ascii=False))
         self.assertGreater(out["none"], 100)        # every other book: no held file -> null, never a legacy URL
         ref = out["sample_ref"]
         self.assertEqual((ref["edition_id"], ref["pdf_page"], ref["printed_label"]), (self.ids["main"], 7, "3"))
+        self.assertEqual(out["unmapped_current"], 404)   # legacy index 3 has only a nearest hint: the viewer gets "无对应"
         self.assertTrue(out["dict_url"].startswith("https://img.rdfzer.com/pages/dict_xuci/"))   # dictionary images are not retired
 
     def test_no_legacy_image_url_without_any_catalog(self):

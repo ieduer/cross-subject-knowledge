@@ -7,7 +7,7 @@ window._subjectMeta = {};
 // AI runs only on an explicit user action and only through this site's own server
 // (assets/ai-client.js → POST /api/chat). The browser never contacts a model gateway.
 const IMG_CDN = 'https://img.rdfzer.com';
-const DEFAULT_FRONTEND_VERSION = '2026.10.11-r40';
+const DEFAULT_FRONTEND_VERSION = '2026.10.11-r41';
 const FRONTEND_VERSION_FILE = '/assets/version.json';
 const AI_MEMORY_LIMIT = 12;
 const DOWNLOADABLE_LIBRARY_BOOKS = 316;
@@ -1386,7 +1386,6 @@ function showPageViewerImage(idx) {
     viewer.querySelector('.page-viewer-page').textContent = pageRefLabel(page);
     const info = viewer.querySelector('.page-viewer-info');
     info.textContent = `${pageRefLabel(page)} / 共 ${data.pdf_total_pages} 页`
-        + (page.approximate ? ` · 该页没有逐页对应，显示的是最接近的已对应页（相差 ${page.approximate.distance} 页）` : '')
         + (data.text_identity === 'page-aligned-other-printing' ? ' · 检索文字来自较早印次，以 PDF 为准' : '');
     if (page.viewer_url) {
         const link = document.createElement('a');
@@ -1399,7 +1398,7 @@ function showPageViewerImage(idx) {
             if (!samePage) return;
             event.preventDefault();
             closePageViewer();
-            window.SunLibrary.openEdition(data.edition_id, page.pdf_page, '', 'search');
+            window.SunLibrary.openEdition(page.edition_id || data.edition_id, page.pdf_page, '', 'search');
         });
         info.append(' · ', link);
     }

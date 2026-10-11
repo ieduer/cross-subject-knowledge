@@ -242,6 +242,23 @@ class DeployScriptStaticTests(unittest.TestCase):
         self.assertLess(self.text.index(':${SUN_TEXTBOOK_ROOT}:ro"'), self.text.index(':${SUN_PAGE_CACHE_DIR}:rw"'))
         self.assertIn('install -d -m 0755 -o root -g root "${SUN_PAGE_CACHE_DIR}"', self.text)
         self.assertEqual(len(re.findall(r":rw\"", self.text)), 1)
+        # the app is told the same directory, so an override can never point it at the read-only part
+        self.assertIn('-e "LIBRARY_PAGE_CACHE_ROOT=${SUN_PAGE_CACHE_DIR}"', self.text)
+
+    def test_page_image_smoke_test_runs_before_the_deploy_is_declared_healthy(self):
+        self.assertIn("library_page_smoke() {", self.text)
+        call = self.text.index('if [ "${healthy}" = "true" ] && ! library_page_smoke; then')
+        rollback = self.text.index('if [ "${healthy}" != "true" ]; then')
+        stop = self.text.index('docker stop "${CONTAINER_NAME}"')
+        self.assertLess(stop, call)
+        self.assertLess(call, rollback)
+        self.assertIn('healthy="false"', self.text[call:rollback])
+        body = self.text[self.text.index("library_page_smoke() {"):self.text.index("warm_precision_agent() {")]
+        self.assertIn("/1.webp?w=240", body)
+        self.assertIn("image/webp", body)
+        self.assertIn("x-accel-redirect", body)
+        code = body[body.index("<<'PY'\n") + 6:body.index("\nPY\n")]
+        compile(code, "library_page_smoke", "exec")
 
     def test_both_run_blocks_publish_on_loopback_and_take_the_env_file(self):
         for block in self.run_blocks():
