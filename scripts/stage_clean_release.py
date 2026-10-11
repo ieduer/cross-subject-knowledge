@@ -30,6 +30,8 @@ RELEASE_FILES = (
     "backend/entrypoint.sh",
     "backend/library.py",
     "backend/main.py",
+    "backend/page_images.py",
+    "backend/page_render_worker.py",
     "backend/preflight.py",
     "backend/supplemental_textbook_pages.jsonl.gz",
     "backend/supplemental_textbook_pages.manifest.json",

@@ -7,7 +7,7 @@ window._subjectMeta = {};
 // AI runs only on an explicit user action and only through this site's own server
 // (assets/ai-client.js → POST /api/chat). The browser never contacts a model gateway.
 const IMG_CDN = 'https://img.rdfzer.com';
-const DEFAULT_FRONTEND_VERSION = '2026.10.11-r39';
+const DEFAULT_FRONTEND_VERSION = '2026.10.11-r40';
 const FRONTEND_VERSION_FILE = '/assets/version.json';
 const AI_MEMORY_LIMIT = 12;
 const DOWNLOADABLE_LIBRARY_BOOKS = 316;
@@ -948,7 +948,7 @@ function renderResults(data, filterSubject = null, subjectCountsOverride = null)
                         ${r.source === 'gaokao' ? '<span class="source-badge gaokao">' + (PHASE === '高中' ? '📝 真题' : '📝 考试') + '</span>' : '<span class="source-badge textbook">📚 教材</span>'}
                         ${renderMatchChannelBadge(r)}
                         ${r.image_count > 0 ? `<span class="img-badge">📷 ${r.image_count}</span>` : ''}
-                        ${r.page_url ? `<span class="page-badge" title="第 ${r.page_num} 页 / 共 ${r.total_pages} 页">📄 p${r.logical_page ?? r.page_num}</span>` : ''}
+                        ${r.page_url ? `<span class="page-badge" title="${escAttr(pageRefTitle(r))}">📄 ${escHtml(pageRefLabel(r))}</span>` : ''}
                     </div>
                     ${renderEvidenceTrace(r, g.subject, subjectBreadth, data.query)}
                     <div class="result-snippet">${sanitizeSnippet(r.snippet)}</div>
@@ -1062,7 +1062,7 @@ function renderEvidenceTrace(result, subject, subjectBreadth, query) {
     }
 
     if (result.page_url) {
-        evidenceChips.push(`<span class="evidence-chip page">可回原页 p${result.logical_page ?? result.page_num}</span>`);
+        evidenceChips.push(`<span class="evidence-chip page">可回原页 ${escHtml(pageRefLabel(result))}</span>`);
     } else {
         evidenceChips.push('<span class="evidence-chip neutral">仅片段证据</span>');
     }
@@ -1227,6 +1227,20 @@ function renderKaTeX(container) {
 }
 
 // ── Page Image Viewer (Lightbox) ─────────────────────────
+// Page labels: the image is a page of the held PDF. Always "PDF 第 N 页"; the printed page
+// ("书页 p.X") only when the catalog verified it. The legacy image index is never shown.
+function pageRefLabel(item) {
+    const ref = item && (item.pdf_ref || item);
+    if (!ref || !ref.pdf_page) return '页图';
+    return `PDF 第 ${ref.pdf_page} 页` + (ref.printed_label ? ` · 书页 p.${ref.printed_label}` : '');
+}
+
+function pageRefTitle(item) {
+    const ref = item && item.pdf_ref;
+    if (!ref || !ref.pdf_page) return '页图';
+    return `PDF 第 ${ref.pdf_page} 页 / 共 ${ref.pdf_pages} 页` + (ref.printed_label ? ` · 书页 p.${ref.printed_label}（已核对）` : '');
+}
+
 function openPageViewer(bookKey, page, totalPages) {
     // Remove existing viewer
     const existing = document.getElementById('page-viewer');
@@ -1245,7 +1259,7 @@ function openPageViewer(bookKey, page, totalPages) {
         <div class="page-viewer-modal">
             <div class="page-viewer-header">
                 <span class="page-viewer-title">加载中...</span>
-                <span class="page-viewer-page">p${page}</span>
+                <span class="page-viewer-page"></span>
                 <button class="page-viewer-close" onclick="closePageViewer()">✕</button>
             </div>
             <div class="page-viewer-body">
@@ -1299,22 +1313,23 @@ function openPageViewer(bookKey, page, totalPages) {
 
     // Fetch page data from API
     fetch(`${API}/api/page-image?book_key=${encodeURIComponent(bookKey)}&page=${page}&context=${context}`)
-        .then(r => r.json())
+        .then(r => {
+            if (!r.ok) throw new Error(r.status === 404 ? '该页暂无页图' : '加载失败');
+            return r.json();
+        })
         .then(data => {
             window._pageViewerData = data;
-            window._pageViewerIdx = data.pages.findIndex(p => p.current);
+            window._pageViewerIdx = Math.max(0, data.pages.findIndex(p => p.current));
 
             // Update header
             viewer.querySelector('.page-viewer-title').textContent = data.title;
-            viewer.querySelector('.page-viewer-info').textContent =
-                `第 ${page + 1} 页 / 共 ${data.total_pages} 页`;
 
-            // Build thumbnails
+            // Build thumbnails (small renditions; the label is the PDF page)
             const thumbs = viewer.querySelector('.page-viewer-thumbnails');
             thumbs.innerHTML = data.pages.map((p, i) => `
                 <div class="page-thumb ${p.current ? 'active' : ''}" data-idx="${i}" onclick="pageViewerGo(${i})">
-                    <img src="${p.url}" alt="p${p.page}" loading="lazy" />
-                    <span>p${p.page + 1}</span>
+                    <img src="${escAttr(p.thumb_url || p.url)}" alt="PDF 第 ${Number(p.pdf_page) || ''} 页" loading="lazy" />
+                    <span>${Number(p.pdf_page) || ''}</span>
                 </div>
             `).join('');
 
@@ -1322,7 +1337,9 @@ function openPageViewer(bookKey, page, totalPages) {
             showPageViewerImage(window._pageViewerIdx);
         })
         .catch(e => {
-            viewer.querySelector('.page-viewer-title').textContent = '加载失败';
+            viewer.querySelector('.page-viewer-title').textContent = e && e.message ? e.message : '加载失败';
+            const loading = viewer.querySelector('.page-viewer-loading');
+            if (loading) loading.innerHTML = '<span>没有可显示的页图</span>';
         });
 }
 
@@ -1349,15 +1366,43 @@ function showPageViewerImage(idx) {
         img.style.display = 'block';
         requestAnimationFrame(() => { img.style.opacity = '1'; });
     };
+    // The image is rendered on demand the first time; when the renderer is busy (503/429)
+    // try again a few times before giving up.
+    let attempts = 0;
     img.onerror = () => {
+        if (window._pageViewerIdx !== idx || !document.getElementById('page-viewer')) return;
+        attempts += 1;
+        if (attempts <= 3) {
+            setTimeout(() => {
+                if (window._pageViewerIdx === idx) img.src = page.url + (page.url.includes('?') ? '&' : '?') + 'retry=' + attempts;
+            }, 2500 * attempts);
+            return;
+        }
         if (loading) loading.innerHTML = '<span>图片加载失败</span>';
     };
     img.src = page.url;
-    img.alt = `第 ${page.page + 1} 页`;
+    img.alt = pageRefLabel(page);
 
-    viewer.querySelector('.page-viewer-page').textContent = `p${page.page + 1}`;
-    viewer.querySelector('.page-viewer-info').textContent =
-        `第 ${page.page + 1} 页 / 共 ${data.total_pages} 页`;
+    viewer.querySelector('.page-viewer-page').textContent = pageRefLabel(page);
+    const info = viewer.querySelector('.page-viewer-info');
+    info.textContent = `${pageRefLabel(page)} / 共 ${data.pdf_total_pages} 页`
+        + (page.approximate ? ` · 该页没有逐页对应，显示的是最接近的已对应页（相差 ${page.approximate.distance} 页）` : '')
+        + (data.text_identity === 'page-aligned-other-printing' ? ' · 检索文字来自较早印次，以 PDF 为准' : '');
+    if (page.viewer_url) {
+        const link = document.createElement('a');
+        link.className = 'page-viewer-open-pdf';
+        link.href = page.viewer_url;
+        link.textContent = '📕 在 PDF 中打开';
+        link.addEventListener('click', event => {
+            if (!window.SunLibrary || event.metaKey || event.ctrlKey || event.shiftKey || event.button) return;
+            const samePage = new URL(link.href, location.href).pathname === location.pathname;
+            if (!samePage) return;
+            event.preventDefault();
+            closePageViewer();
+            window.SunLibrary.openEdition(data.edition_id, page.pdf_page, '', 'search');
+        });
+        info.append(' · ', link);
+    }
 
     // Update thumbnail active state
     viewer.querySelectorAll('.page-thumb').forEach((t, i) => {

@@ -131,9 +131,29 @@ else
   echo "runtime env file: ${SUN_ENV_FILE} not present -> code defaults (AI off, library defaults)"
 fi
 
+# Page-image cache (backend/page_images.py). The textbook root stays read-only; only this one
+# subdirectory is mounted read-write, on top of it. It must live under /srv (not under the
+# state directory in /root) because nginx serves cache hits from it via X-Accel-Redirect.
+# Files in it are derived data: safe to delete at any time.
+SUN_PAGE_CACHE_DIR="${SUN_PAGE_CACHE_DIR:-${SUN_TEXTBOOK_ROOT}/page-cache}"
 runtime_mount_args=()
 if [ -d "${SUN_TEXTBOOK_ROOT}" ]; then
-  runtime_mount_args=(-v "${SUN_TEXTBOOK_ROOT}:${SUN_TEXTBOOK_ROOT}:ro")
+  case "${SUN_PAGE_CACHE_DIR}" in
+    "${SUN_TEXTBOOK_ROOT}"/*) ;;
+    *)
+      echo "ERROR: SUN_PAGE_CACHE_DIR must be a subdirectory of ${SUN_TEXTBOOK_ROOT}"
+      exit 1
+      ;;
+  esac
+  if [ -L "${SUN_PAGE_CACHE_DIR}" ] || { [ -e "${SUN_PAGE_CACHE_DIR}" ] && [ ! -d "${SUN_PAGE_CACHE_DIR}" ]; }; then
+    echo "ERROR: ${SUN_PAGE_CACHE_DIR} must be a real directory (not a symlink or a file)"
+    exit 1
+  fi
+  install -d -m 0755 -o root -g root "${SUN_PAGE_CACHE_DIR}"
+  runtime_mount_args=(
+    -v "${SUN_TEXTBOOK_ROOT}:${SUN_TEXTBOOK_ROOT}:ro"
+    -v "${SUN_PAGE_CACHE_DIR}:${SUN_PAGE_CACHE_DIR}:rw"
+  )
 fi
 
 if [ "${RUNTIME_DB_SYNC_MODE}" != "disabled" ]; then
@@ -200,6 +220,7 @@ verify_built_image_release_assets() {
       test -s "/app/frontend/$f" || { echo "missing in image: frontend/$f" >&2; exit 1; }
     done
     test -s /app/backend/ai_guard.py && test -s /app/backend/library.py
+    test -s /app/backend/page_images.py && test -s /app/backend/page_render_worker.py
     cd /app/backend
     python - <<"PY"
 import hashlib, json, pathlib, sys
@@ -211,8 +232,28 @@ if on_disk != set(listed):
 for name, meta in listed.items():
     if hashlib.sha256((base / name).read_bytes()).hexdigest() != meta["sha256"]:
         sys.exit("vendored pdfjs sha256 mismatch: " + name)
-import ai_guard, library  # noqa: F401  (ModuleNotFoundError here must stop the deploy)
-print("image check ok: frontend files, pdfjs tree (%d files), ai_guard + library import" % len(listed))
+import ai_guard, library, page_images  # noqa: F401  (ModuleNotFoundError here must stop the deploy)
+# The page renderer: both libraries import, WebP can be written, and one real page goes through
+# the same child process the application starts.
+import subprocess, tempfile
+import pymupdf
+from PIL import features
+if pymupdf.__version__ != "1.28.2":
+    sys.exit("unexpected pymupdf version: " + pymupdf.__version__)
+if not features.check("webp"):
+    sys.exit("Pillow in this image cannot write WebP")
+with tempfile.TemporaryDirectory() as tmp:
+    sample = pathlib.Path(tmp) / "sample.pdf"
+    document = pymupdf.open()
+    document.new_page(width=420, height=595).insert_text((60, 90), "render check", fontsize=20)
+    document.save(str(sample))
+    document.close()
+    out = pathlib.Path(tmp) / "out.webp"
+    done = subprocess.run([sys.executable, "-I", "/app/backend/page_render_worker.py", str(sample), "1", "240",
+                           str(out), str(page_images.MAX_OUTPUT_PIXELS), "80", "1536"], capture_output=True, timeout=60)
+    if done.returncode != 0 or out.read_bytes()[8:12] != b"WEBP":
+        sys.exit("page render check failed (exit %s): %s" % (done.returncode, done.stderr[-300:]))
+print("image check ok: frontend files, pdfjs tree (%d files), ai_guard + library + page_images import, page render" % len(listed))
 PY
   '
 }

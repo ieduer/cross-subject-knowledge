@@ -49,6 +49,8 @@ SOURCE_ASSETS = (
     "backend/main.py",
     "backend/ai_guard.py",
     "backend/library.py",
+    "backend/page_images.py",
+    "backend/page_render_worker.py",
     "backend/entrypoint.sh",
     "backend/preflight.py",
     "backend/sync_db.py",

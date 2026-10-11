@@ -21,6 +21,7 @@ Notes
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import sys
 import tempfile
@@ -44,9 +45,53 @@ PAGES = {"/": "index.html", "/chuzhong.html": "chuzhong.html", "/dict.html": "di
 def build_app(catalog_root: Path, pdf_dir: Path, upstream: str | None, max_search: int, extra_env: dict) -> FastAPI:
     app = FastAPI(title="SUN library tabs · dev")
     env = {"PDF_SERVE_MODE": "direct", "LIBRARY_PDF_ROOT": str(pdf_dir), "LIBRARY_CATALOG_ROOT": str(catalog_root),
-           "LIBRARY_RELOAD_SECONDS": "5"}
+           "LIBRARY_RELOAD_SECONDS": "5", "LIBRARY_PAGE_CACHE_ROOT": str(catalog_root.parent / "page-cache")}
     env.update(extra_env)
-    library.install(app, data_root=catalog_root.parent, frontend_dir=FRONTEND, env=env)
+    lib = library.install(app, data_root=catalog_root.parent, frontend_dir=FRONTEND, env=env,
+                          state_root=catalog_root.parent / "state")
+    try:
+        book_map = json.loads((FRONTEND / "assets" / "pages" / "book_map.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        book_map = {}
+
+    def rewrite_search(payload: dict) -> dict:
+        """What backend/main.py does locally for each hit (page_url + pdf_ref from the catalog):
+        production may still answer with the previous release's fields."""
+        for group in payload.get("groups") or []:
+            for item in group.get("results") or []:
+                if (item.get("source") or "") == "gaokao":
+                    continue
+                ref = lib.legacy_page_ref(item.get("book_key"), item.get("section"))
+                item["page_url"] = ref["image_url"] if ref else None
+                item["pdf_ref"] = ({key: ref[key] for key in (
+                    "edition_id", "pdf_page", "pdf_pages", "printed_label", "viewer_url", "text_identity",
+                    "preview_default", "default_edition_id")} if ref else None)
+        return payload
+
+    @app.get("/api/page-image", include_in_schema=False)
+    def page_image(book_key: str, page: int = 0, context: int = 4):
+        """Local stand-in for main.py's /api/page-image (same response shape)."""
+        info = book_map.get(book_key)
+        if not info:
+            return JSONResponse({"detail": "Book not found"}, status_code=404)
+        total = int(info.get("pages") or 0)
+        page = max(0, min(page, total - 1))
+        context = max(0, min(context, 8))
+        pages, current = [], None
+        for index in range(max(0, page - context), min(total - 1, page + context) + 1):
+            ref = lib.legacy_page_ref(book_key, index, nearest=(index == page))
+            if not ref:
+                continue
+            if index == page:
+                current = ref
+            pages.append({"page": index, "url": ref["image_url"], "thumb_url": ref["thumb_url"], "pdf_page": ref["pdf_page"],
+                          "printed_label": ref["printed_label"], "viewer_url": ref["viewer_url"],
+                          "approximate": ref["approximate"], "current": index == page})
+        if current is None:
+            return JSONResponse({"detail": "该页在现有 PDF 中没有对应页图"}, status_code=404)
+        return {"book_key": book_key, "short_key": info.get("key"), "title": info.get("title") or "", "current_page": page,
+                "total_pages": total, "edition_id": current["edition_id"], "pdf_total_pages": current["pdf_pages"],
+                "text_identity": current["text_identity"], "preview_default": current["preview_default"], "pages": pages}
     app.mount("/assets", StaticFiles(directory=FRONTEND / "assets"), name="assets")
 
     for route, filename in PAGES.items():
@@ -78,6 +123,18 @@ def build_app(catalog_root: Path, pdf_dir: Path, upstream: str | None, max_searc
                                           headers={"Accept": "application/json", "User-Agent": "sun-library-dev/1"})
         except httpx.HTTPError as exc:
             return JSONResponse({"detail": f"upstream unreachable: {type(exc).__name__}"}, status_code=502)
+        if path in ("search", "dict/textbook") and upstream_response.status_code == 200:
+            try:
+                payload = upstream_response.json()
+                if path == "search":
+                    payload = rewrite_search(payload)
+                else:
+                    for item in payload.get("results") or []:
+                        ref = lib.legacy_page_ref(item.get("book_key"), item.get("section"))
+                        item["page_url"] = ref["image_url"] if ref else None
+                return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+            except ValueError:
+                pass
         return Response(content=upstream_response.content, status_code=upstream_response.status_code,
                         media_type=upstream_response.headers.get("content-type", "application/json"),
                         headers={"Cache-Control": "no-store"})

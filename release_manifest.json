@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-10-11T02:29:45.129145+00:00",
-  "git_head": "5c9a29677907140b2b9e6014d9c155456160869a",
-  "frontend_version": "2026.10.11-r39",
+  "generated_at": "2026-10-11T03:07:48.250352+00:00",
+  "git_head": "07e72e856ad3bca5c6fd6a12f77da0aa60664d19",
+  "frontend_version": "2026.10.11-r40",
   "source_of_truth": {
     "local_workspace": "authoritative",
     "github": "authoritative_for_code_only_after_push",
@@ -25,14 +25,14 @@
     {
       "kind": "source",
       "logical_path": "requirements.runtime.txt",
-      "size": 204,
-      "sha256": "9096979e7e8bc6e8dc50a45a0a3f326ad5c9026645061bedf5aa147b8044b50b"
+      "size": 598,
+      "sha256": "2c7cc2bb9ddef240a00cc902de22aa1dac94d381afc5f2ec6a52d34addd67d30"
     },
     {
       "kind": "source",
       "logical_path": "backend/main.py",
-      "size": 365484,
-      "sha256": "4909d0b9da22b6d6bb0e5402a6219d51c5f7158e5784c8a8516f75aa35bcadf6"
+      "size": 367819,
+      "sha256": "97a6d03121d500ae22d7e4eae5ee7659375f02a5500937728c250463253aabf0"
     },
     {
       "kind": "source",
@@ -43,8 +43,20 @@
     {
       "kind": "source",
       "logical_path": "backend/library.py",
-      "size": 83580,
-      "sha256": "b5bc415349596807ec7ab1f1d50a5347bcb60ad6a2db07976fdc02d3173da3f8"
+      "size": 91332,
+      "sha256": "31d20f36e1cae3a92cb93bd3a97d13d222a4d4bb2ebeca4ca0116b794f573ff6"
+    },
+    {
+      "kind": "source",
+      "logical_path": "backend/page_images.py",
+      "size": 28594,
+      "sha256": "496770778d0dd1d8b159ef7e5268217071bc2bb20d7955351e9eb3e59ad623cc"
+    },
+    {
+      "kind": "source",
+      "logical_path": "backend/page_render_worker.py",
+      "size": 3021,
+      "sha256": "62cdd4e0e2cc5f7f97e4a912ce5a3fee4fdf30eb95ab7c0b8b47d4c68959b103"
     },
     {
       "kind": "source",
@@ -104,25 +116,25 @@
       "kind": "source",
       "logical_path": "frontend/index.html",
       "size": 14505,
-      "sha256": "97899845cbb5749a016f8b107c80f66ecc80b4a6f2b8bc1dbc4db642184aad88"
+      "sha256": "0c48bfe59656ac0c678fc223e93991509909d80bcd8088a2d0fc9464050f2c30"
     },
     {
       "kind": "source",
       "logical_path": "frontend/dict.html",
       "size": 10410,
-      "sha256": "d6b393a469f141d2bfdd89399042e3a512d8a732b764a362ee2df55fcceda8c0"
+      "sha256": "a2f0e29b420cb771bb20ec489382f779829e73f474a94ba6ac6939cece3082b7"
     },
     {
       "kind": "source",
       "logical_path": "frontend/chuzhong.html",
       "size": 11136,
-      "sha256": "4111da489af9d3929f36806a2cb1260f0a60fe41a912aed2c1c77652145811c4"
+      "sha256": "c3743f0e6e36a57e2e89deebba0af0e6b0855476dcb54fa442d82f03d5b1e54a"
     },
     {
       "kind": "source",
       "logical_path": "frontend/chuzhong-dict.html",
       "size": 10371,
-      "sha256": "6f3b57c0e0b8ce9f187085f670bf1589335c53fe3fca74e75c75f706d77a074f"
+      "sha256": "be310fb126e7e26df396b5f2b7aa19f55affe23c424d79999cf339a07bd1b827"
     },
     {
       "kind": "source",
@@ -133,8 +145,8 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/app.js",
-      "size": 114712,
-      "sha256": "2ccbb8a604e45e2fbf95a60fb67f3fc94bf09c06ef2958eeea7755f6f0acfc78"
+      "size": 117198,
+      "sha256": "e8d7730a1e9bc936cb2404c2c5fde381522b355d7e20bc943a064b8a9a0b6a34"
     },
     {
       "kind": "source",
@@ -151,8 +163,8 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/dict.js",
-      "size": 79905,
-      "sha256": "f00b9fa3280720050b2326dddc5793be6ea3875b328013b70b37a0d6d6db2c18"
+      "size": 80376,
+      "sha256": "18f92d39655afee806eae5bb2f6116a197b92aa3286bd84f95065fa914eb1149"
     },
     {
       "kind": "source",
@@ -163,20 +175,20 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/library.css",
-      "size": 16892,
-      "sha256": "2651ca82aaa7bdca2fe9137910a50f1b11c99095e7d06e72b83fbd116bb74886"
+      "size": 17321,
+      "sha256": "55bc9f2e5fc35f22cde27198049b62763a20879287c93dac2ca00322f3c14e8e"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/library.js",
-      "size": 96873,
-      "sha256": "f80bfae404d986220804bb4f420320569c7475edf367c8417a0b41eecfd1a23b"
+      "size": 99964,
+      "sha256": "beffc0ce5968f2d06b1fbcb8851c4502364e48cc90a88c1924c27640305b6554"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/version.json",
-      "size": 11566,
-      "sha256": "0b52bf21c5119810f408deffe5b35ab3fc3ae82b92cc06668a5bb444df25e2c0"
+      "size": 12145,
+      "sha256": "ca9f2e2b47f378bb3bfb6bbb2a4990918037e7782c1bc81dae4da30cf41da836"
     },
     {
       "kind": "source",
@@ -187,20 +199,20 @@
     {
       "kind": "source",
       "logical_path": "scripts/deploy_vps.sh",
-      "size": 21287,
-      "sha256": "46298e6a6efda4769a1a674f6870fa87df76db0aad8847da98c16cdbbf97adf9"
+      "size": 23470,
+      "sha256": "003ed0f74dc5f5644a5507ff96dc1352164b111212294589c667af2a19482e34"
     },
     {
       "kind": "source",
       "logical_path": "scripts/stage_clean_release.py",
-      "size": 9255,
-      "sha256": "74a950285691f5b1e8cee23b53e9f7c34c25bed7c2b7bf9351dbb3af611a711b"
+      "size": 9322,
+      "sha256": "f1272caf96d880f71cb450d62e5ee5393667eeab56bca883d38fa7a8ea19d74d"
     },
     {
       "kind": "source",
       "logical_path": "scripts/build_release_manifest.py",
-      "size": 15691,
-      "sha256": "f76fe8436f94d9e7f460c5f38e7fe4d316b56c1bddb22f89d3ce35a9221081b6"
+      "size": 15758,
+      "sha256": "7e1992c8037062c4a2058ae5811568c20611f6ed0f71598316fbdf7905e68fde"
     },
     {
       "kind": "source",
@@ -1482,8 +1494,8 @@
     }
   ],
   "runtime_assets_carried_from": {
-    "generated_at": "2026-10-10T13:28:18.906861+00:00",
-    "git_head": "f6dd0ac6ddd7ff1a5fe97c975c1d334d2a44a9d1",
+    "generated_at": "2026-10-11T03:02:41.035323+00:00",
+    "git_head": "07e72e856ad3bca5c6fd6a12f77da0aa60664d19",
     "note": "runtime half not re-measured in this build; deploy_vps.sh verifies it on the VPS"
   },
   "page_mapping": {

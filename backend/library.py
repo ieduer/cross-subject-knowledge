@@ -37,6 +37,8 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+import page_images
+
 SCHEMA = "sun-catalog-v1"
 
 # ── Limits (every request parameter is capped) ───────────────────────────────
@@ -64,9 +66,12 @@ SHORT_KEY_RE = re.compile(r"^[0-9a-f]{12}$")
 SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$")
 STATUSES = ("active", "superseded", "pending-verification")
-CORPUS_RELATIONS = ("same-bytes", "aligned", "partial", "different-edition", "none")
-SEARCHABLE_RELATIONS = ("same-bytes", "aligned", "partial")
-TEXT_IDENTITIES = ("same-file", "page-aligned-other-printing")
+# "legacy-image-source" (revision 4): the PDF was reassembled from the legacy page images
+# themselves, so PDF page N is legacy image N-1 by construction.
+CORPUS_RELATIONS = ("same-bytes", "aligned", "partial", "different-edition", "none", "legacy-image-source")
+SEARCHABLE_RELATIONS = ("same-bytes", "aligned", "partial", "legacy-image-source")
+TEXT_IDENTITIES = ("same-file", "page-aligned-other-printing", "legacy-images")
+REASSEMBLED = "reassembled-from-legacy-images"
 HOLDINGS = ("sun", "learn-only")   # release revision 3; absent / null in older releases
 STAGE_ORDER = {"小学": 0, "初中": 1, "高中": 2}
 SOURCE_LABELS = {"vps": "本站", "drive": "云端硬盘", "upstream": "官方平台"}
@@ -245,6 +250,9 @@ class PageMap:
     printed_verified_pages: int
     legacy_mapped_pages: int
     bases: tuple = ()   # per page: how the legacy row was established (diagnostic), or None
+    # legacy index without a row -> (nearest mapped legacy index, its pdf page, distance).  A hint for
+    # degrading an old link ("the nearest page we can show"), never a mapping.
+    nearest: Mapping[int, tuple] = field(default_factory=dict)
 
     def row(self, pdf_page: int) -> dict:
         printed, verified, legacy, ocr, jks = self.rows[pdf_page - 1]
@@ -440,7 +448,30 @@ def _parse_page_map(raw: Any, edition_id: str, pages: int, sha256: str) -> PageM
         printed_verified_pages=verified_count,
         legacy_mapped_pages=len(by_legacy),
         bases=tuple(bases),
+        nearest=_nearest_hints(raw, by_legacy, pages),
     )
+
+
+def _nearest_hints(raw: Any, by_legacy: Mapping[int, int], pages: int) -> dict:
+    """page map `legacy_unmapped[]` (revision 4).  A hint is kept only if it is consistent with
+    the rows of the same file; anything else is dropped (the link then has no approximation)."""
+    hints: dict[int, tuple] = {}
+    items = raw.get("legacy_unmapped") if isinstance(raw, dict) else None
+    if not isinstance(items, list):
+        return hints
+    for item in items[:MAX_PAGES_PER_BOOK]:
+        if not isinstance(item, dict):
+            continue
+        index, near = item.get("legacy_image_index"), item.get("nearest_mapped")
+        if not _is_int(index) or index < 0 or index in by_legacy or not isinstance(near, dict):
+            continue
+        near_index, pdf_page, distance = near.get("legacy_image_index"), near.get("pdf_page"), near.get("distance")
+        if not (_is_int(near_index) and _is_int(pdf_page) and _is_int(distance)):
+            continue
+        if by_legacy.get(near_index) != pdf_page or not 1 <= pdf_page <= pages or distance != abs(near_index - index):
+            continue
+        hints[index] = (near_index, pdf_page, distance)
+    return hints
 
 
 def _drive_source(raw: Any) -> Optional[dict]:
@@ -532,6 +563,8 @@ def _build_edition(raw: Any, order: int, release_dir: Path, listed: set[str], se
         text_identity = "same-file"
     elif relation in ("aligned", "partial"):
         text_identity = "page-aligned-other-printing"
+    elif relation == "legacy-image-source":
+        text_identity = "legacy-images"
     else:
         text_identity = None
 
@@ -600,6 +633,10 @@ def _build_edition(raw: Any, order: int, release_dir: Path, listed: set[str], se
         # bytes came from there, else our retrieval time).
         "acquired_at": _opt_str(source.get("learn_acquired_at"), 40) or _opt_str(source.get("retrieved_at"), 40),
         "in_grid": False,   # set by load_release
+        "provenance": _opt_str(raw.get("provenance"), 60),
+        # pre-rendered covers shipped inside the release (revision 4): {width: (path, size, digest)}
+        "cover_files": (page_images.cover_files_for(raw.get("cover"), edition_id, release_dir, listed) if has_vps else {}),
+        "cover_url": page_images.cover_url(edition_id) if has_vps else None,
         "storage": {
             "vps": has_vps,
             "drive": drive,
@@ -722,6 +759,10 @@ def _build_download(raw: Any, editions: Mapping[str, Edition], settings: Setting
         "platform_current": edition.record["platform_current"] if edition else None,
         "retrieved_at": edition.record["source"]["retrieved_at"] if edition else None,
         "newer_edition": None,   # filled by load_release
+        # a small local cover (from the held file) is preferred over the remote one, which is
+        # about 1 MB and slow: the platform's current file first
+        "cover_local": next((held.record["cover_url"] for held in sorted(
+            local.values(), key=lambda e: (e.record["platform_current"] is False, e.order))), None),
         "sources": vps_sources + [by_kind[kind] for kind in SOURCE_ORDER if kind in by_kind],
         # Other files held for the same source id that are NOT offered above are different
         # editions with their own row: listed, never merged.
@@ -1133,6 +1174,8 @@ def _edition_card(edition: Edition) -> dict:
         "holding": record["holding"],
         "preview_default": record["preview_default"],
         "acquired_at": record["acquired_at"],
+        "provenance": record["provenance"],
+        "cover_url": record["cover_url"],
         "badges": {
             "searchable": edition.searchable and bool(page_map and page_map.legacy_mapped_pages > 0),
             "corpus_relation": edition.corpus_relation,
@@ -1246,12 +1289,68 @@ def _etag_matches(header: Optional[str], etag: str) -> bool:
 # ── Router ───────────────────────────────────────────────────────────────────
 
 class Library:
-    def __init__(self, settings: Settings, clock: Callable[[], float] = time.monotonic):
+    def __init__(self, settings: Settings, clock: Callable[[], float] = time.monotonic,
+                 env: Optional[Mapping[str, str]] = None, state_root: Optional[Path] = None, render_runner=None):
         self.settings = settings
         self.state = LibraryState(settings, clock)
         self.json_limiter = RateLimiter(settings.json_capacity, settings.json_per_second, clock)
         self.pdf_limiter = RateLimiter(settings.pdf_capacity, settings.pdf_per_second, clock)
         self.router = self._build_router()
+        # Page images made from the PDFs (backend/page_images.py).
+        env = os.environ if env is None else env
+        state_root = Path(state_root or env.get("STATE_ROOT") or (settings.catalog_root.parent.parent / "state"))
+        self.images = page_images.ImageSettings.from_env(env, settings.serve_mode, state_root)
+        self.render_service = page_images.RenderService(self.images, render_runner or page_images.subprocess_runner)
+        self.image_limiter = RateLimiter(self.images.image_burst, self.images.image_per_second, clock)
+        self.render_limiter = RateLimiter(self.images.render_burst, self.images.render_per_second, clock)
+        self.image_router = page_images.build_router(self, self.images, self.render_service,
+                                                     self.image_limiter, self.render_limiter)
+
+    # -- page images for the rest of SUN (search hits, the page viewer) -------
+    def _nearest(self, release: Release, ids: tuple[str, ...], index: int):
+        """The release's own nearest-mapped hint for an unmapped legacy page, if it has one."""
+        found = []
+        for edition in self._candidates(release, ids):
+            if edition.page_map is None or edition.corpus_relation not in SEARCHABLE_RELATIONS:
+                continue
+            hint = edition.page_map.nearest.get(index)
+            if hint is not None:
+                found.append((edition, hint[1], hint[2], hint[0]))
+        return found[0] if len(found) == 1 else None
+
+    def legacy_page_ref(self, book_key: Optional[str], index: Any, width: int = page_images.DEFAULT_WIDTH,
+                        nearest: bool = False) -> Optional[dict]:
+        """reader book key + 0-based legacy image index -> the page of the held PDF that shows it.
+        None when the catalog is unavailable, the book has no held file, or the page has no row
+        (and, with ``nearest``, no hint either).  Never raises."""
+        try:
+            number = int(index)
+            release = self.state.get()
+            if release is None or not book_key or number < 0:
+                return None
+            ids = release.by_sun_key.get(book_key, ())
+            outcome = self._resolve_one(release, ids, number)
+            approximate = None
+            if outcome.get("available"):
+                edition, pdf_page = release.editions[outcome["edition_id"]], outcome["pdf_page"]
+            elif nearest and outcome.get("reason") == "page-not-mapped" and self._nearest(release, ids, number):
+                edition, pdf_page, distance, near_index = self._nearest(release, ids, number)
+                approximate = {"kind": "nearest", "distance": distance, "legacy_image_index": near_index}
+            else:
+                return None
+            row = edition.page_map.row(pdf_page) if edition.page_map else {}
+            return {
+                "edition_id": edition.edition_id, "pdf_page": pdf_page, "pdf_pages": edition.pages,
+                "printed_label": row.get("printed_label") if row.get("printed_verified") else None,
+                "image_url": page_images.page_url(edition.edition_id, edition.sha12, pdf_page, width),
+                "thumb_url": page_images.page_url(edition.edition_id, edition.sha12, pdf_page, 240),
+                "viewer_url": page_images.viewer_url(edition.stage, edition.edition_id, pdf_page),
+                "text_identity": edition.record["corpus"]["text_identity"],
+                "provenance": edition.record["provenance"],
+                "approximate": approximate, **self._which(edition),
+            }
+        except Exception:
+            return None
 
     # -- shared guards -------------------------------------------------------
     def _limit(self, request: Request, limiter: RateLimiter) -> None:
@@ -1393,6 +1492,7 @@ class Library:
                     "pages": edition.pages,
                     "printed_verified_pages": page_map.printed_verified_pages if page_map else 0,
                     "legacy_mapped_pages": page_map.legacy_mapped_pages if page_map else 0,
+                    "legacy_unmapped_with_hint": len(page_map.nearest) if page_map else 0,
                 },
                 # Other sources for THIS edition only.
                 # (when this file is not the platform's current one, the upstream link would
@@ -1534,6 +1634,15 @@ class Library:
                     return lib._json({"available": True, "exact": True, "kind": kind,
                                       "edition_id": edition.edition_id, "pdf_page": pdf_page,
                                       "title": edition.title, **lib._which(edition)}, release)
+            if kind == "jc" and number is not None:
+                near = lib._nearest(release, ids, number)
+                if near is not None:      # the release's own hint: the nearest page that is mapped
+                    edition, pdf_page, distance, near_index = near
+                    return lib._json({"available": True, "exact": False, "kind": kind, "edition_id": edition.edition_id,
+                                      "pdf_page": pdf_page, "title": edition.title, "reason": "nearest",
+                                      "approximate": {"kind": "nearest", "distance": distance,
+                                                      "legacy_image_index": near_index},
+                                      **lib._which(edition)}, release)
             if len(candidates) != 1:
                 return lib._json({"available": False, "exact": False, "kind": kind, "reason": "ambiguous"}, release)
             edition = candidates[0]
@@ -1651,13 +1760,22 @@ class Library:
         return router
 
 
+def legacy_page_ref(app: FastAPI, book_key: Optional[str], index: Any, **kwargs) -> Optional[dict]:
+    """For main.py: where search hits and /api/page-image get their page images from."""
+    library = getattr(getattr(app, "state", None), "library", None)
+    return library.legacy_page_ref(book_key, index, **kwargs) if library is not None else None
+
+
 def install(app: FastAPI, data_root: Path, frontend_dir: Optional[Path] = None,
-            env: Optional[Mapping[str, str]] = None, clock: Callable[[], float] = time.monotonic) -> Library:
+            env: Optional[Mapping[str, str]] = None, clock: Callable[[], float] = time.monotonic,
+            state_root: Optional[Path] = None, render_runner=None) -> Library:
     """Attach the library router to ``app``.  Never raises because of catalog
     problems: a missing or invalid release only makes the two tabs report
     "目录尚未发布/不可用"."""
-    library = Library(Settings.from_env(Path(data_root), env), clock)
+    library = Library(Settings.from_env(Path(data_root), env), clock, env=env, state_root=state_root,
+                      render_runner=render_runner)
     app.include_router(library.router)
+    app.include_router(library.image_router)
     vendor = Path(frontend_dir) / "vendor" if frontend_dir else None
     if vendor is not None and vendor.is_dir():
         app.mount("/vendor", StaticFiles(directory=vendor), name="library-vendor")

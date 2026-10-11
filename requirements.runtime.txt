@@ -8,3 +8,9 @@ transformers==5.2.0
 huggingface_hub==1.5.0
 httpx==0.28.1
 opencc-python-reimplemented==0.1.7
+# Page images from the catalogued PDFs (backend/page_images.py). Used only by the short-lived
+# render child process (backend/page_render_worker.py); the web process never imports them.
+# pymupdf: the version the catalog tooling used; wheel cp310-abi3-manylinux_2_28_x86_64.
+# pillow: WebP encoding (PyMuPDF cannot write WebP); wheel cp313-manylinux_2_28_x86_64.
+pymupdf==1.28.2
+pillow==12.3.0

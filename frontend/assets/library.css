@@ -116,6 +116,9 @@
 .lib-link { color: var(--lib-strong); font-size: 14px; text-decoration: underline; text-underline-offset: 3px; }
 .lib-link:hover { color: var(--lib-strong-hover); }
 
+/* 「在 PDF 中打开」 inside SUN's page-image viewer footer */
+.page-viewer-open-pdf { color: var(--lib-strong); text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+
 /* extra link inside existing search-result cards */
 .view-page-btn.lib-open-pdf { display: inline-flex; align-items: center; color: var(--lib-strong); text-decoration: none; }
 
@@ -165,14 +168,15 @@
 /* ── PDF grid ────────────────────────────────────────────── */
 .lib-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
     gap: 12px;
 }
 
 .lib-card {
     display: flex;
-    flex-direction: column;
-    gap: 6px;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 12px;
     padding: 14px 16px;
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -183,6 +187,8 @@
     transition: var(--transition);
 }
 
+.lib-card-text { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-width: 0; align-self: stretch; }
+.lib-card .lib-cover { flex: 0 0 60px; width: 60px; height: 84px; font-size: 13px; }
 .lib-card:hover { border-color: var(--lib-strong); transform: translateY(-1px); }
 .lib-card-subject { font-size: 12px; color: var(--lib-strong); font-weight: 600; }
 .lib-card-title { font-size: 15px; font-weight: 600; line-height: 1.45; }

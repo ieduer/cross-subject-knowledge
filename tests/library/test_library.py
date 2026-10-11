@@ -335,7 +335,8 @@ class EditionTests(Base):
         self.assertTrue(body["file"]["url"].startswith(f"/files/pdf/{self.eid('e1')}/{sha12}/"))
         self.assertTrue(body["file"]["download_url"].endswith("?download=1"))
         self.assertEqual(body["page_map"], {"available": True, "version": "synthetic-1", "pages": 12,
-                                            "printed_verified_pages": 10, "legacy_mapped_pages": 12})
+                                            "printed_verified_pages": 10, "legacy_mapped_pages": 12,
+                                            "legacy_unmapped_with_hint": 0})
         self.assertEqual([s["kind"] for s in body["sources"]], ["upstream"])
         # the other edition of the same work is listed separately with its own label
         self.assertEqual([(o["edition_id"], o["edition_label"], o["status"]) for o in body["other_editions"]],

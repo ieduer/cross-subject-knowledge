@@ -73,12 +73,15 @@ class ReleaseBundleTests(unittest.TestCase):
             self.skipTest("fastapi is not installed in this interpreter")
         code = (
             "import sys, pathlib\n"
-            "import main, ai_guard, library\n"
+            "import main, ai_guard, library, page_images\n"
+            "assert pathlib.Path(page_images.WORKER).is_file(), page_images.WORKER\n"
             "stage = pathlib.Path(sys.argv[1]).resolve()\n"
-            "for module in (main, ai_guard, library):\n"
+            "for module in (main, ai_guard, library, page_images):\n"
             "    assert pathlib.Path(module.__file__).resolve().is_relative_to(stage), module.__file__\n"
             "paths = {getattr(r, 'path', None) for r in main.app.routes}\n"
             "need = {'/', '/chuzhong.html', '/dict.html', '/chuzhong-dict.html', '/api/health', '/api/search',\n"
+            "        '/files/page/{edition_id}/{sha12}/{page_name}', '/files/cover/{name}', '/files/legacy-page/{jc}/{name}',\n"
+            "        '/api/library/legacy-page', '/api/page-image',\n"
             "        '/api/library/release', '/api/library/downloads', '/files/pdf/{edition_id}/{sha12}/{filename}',\n"
             "        '/assets', '/vendor'}\n"
             "assert need <= paths, sorted(need - paths)\n"
@@ -227,6 +230,19 @@ class DeployScriptStaticTests(unittest.TestCase):
         self.assertEqual(len(blocks), 2, "expected the start block and the rollback block")
         return blocks
 
+    def test_requirements_pin_the_render_libraries(self):
+        text = (ROOT / "requirements.runtime.txt").read_text(encoding="utf-8")
+        self.assertRegex(text, r"(?m)^pymupdf==1\.28\.2$")
+        self.assertRegex(text, r"(?m)^pillow==\d+\.\d+\.\d+$")
+
+    def test_page_cache_is_the_only_read_write_part_of_the_textbook_root(self):
+        self.assertIn('SUN_PAGE_CACHE_DIR="${SUN_PAGE_CACHE_DIR:-${SUN_TEXTBOOK_ROOT}/page-cache}"', self.text)
+        self.assertIn('-v "${SUN_TEXTBOOK_ROOT}:${SUN_TEXTBOOK_ROOT}:ro"', self.text)
+        self.assertIn('-v "${SUN_PAGE_CACHE_DIR}:${SUN_PAGE_CACHE_DIR}:rw"', self.text)
+        self.assertLess(self.text.index(':${SUN_TEXTBOOK_ROOT}:ro"'), self.text.index(':${SUN_PAGE_CACHE_DIR}:rw"'))
+        self.assertIn('install -d -m 0755 -o root -g root "${SUN_PAGE_CACHE_DIR}"', self.text)
+        self.assertEqual(len(re.findall(r":rw\"", self.text)), 1)
+
     def test_both_run_blocks_publish_on_loopback_and_take_the_env_file(self):
         for block in self.run_blocks():
             self.assertIn('-p "${PUBLISH_ADDR}:8080:8080"', block)
@@ -253,7 +269,10 @@ class DeployScriptStaticTests(unittest.TestCase):
         self.assertLess(build, check)
         self.assertLess(check, stop)
         body = self.text[self.text.index("verify_built_image_release_assets() {"):self.text.index("verify_release_manifest_alignment() {")]
-        self.assertIn("import ai_guard, library", body)
+        self.assertIn("import ai_guard, library, page_images", body)
+        self.assertIn("import pymupdf", body)
+        self.assertIn('features.check("webp")', body)
+        self.assertIn("/app/backend/page_render_worker.py", body)
         for name in ("assets/library.js", "assets/library.css", "assets/ai-client.js", "vendor/pdfjs/VENDOR.json",
                      "vendor/pdfjs/legacy/build/pdf.min.mjs", "vendor/pdfjs/legacy/build/pdf.worker.min.mjs"):
             self.assertIn(name, body)
@@ -283,7 +302,8 @@ class DeployScriptStaticTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr[-2000:])
             self.assertIn("image check ok", result.stdout)
 
-            for victim in ("backend/library.py", "backend/ai_guard.py", "frontend/assets/library.js",
+            for victim in ("backend/library.py", "backend/ai_guard.py", "backend/page_images.py",
+                           "backend/page_render_worker.py", "frontend/assets/library.js",
                            "frontend/vendor/pdfjs/cmaps/UniGB-UTF16-H.bcmap"):
                 bad = tmp / "bad"
                 shutil.rmtree(bad, ignore_errors=True)

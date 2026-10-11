@@ -35,6 +35,7 @@
     const COVER_CONCURRENCY = 3;
     const COVER_TIMEOUT_MS = 20000;
     const OTHER_PRINTING = 'page-aligned-other-printing';
+    const REASSEMBLED = 'reassembled-from-legacy-images';
     const OTHER_PRINTING_NOTE = '检索文字来自较早印次，可能与此 PDF 的文字略有出入，以 PDF 为准';
     const RANGE_CHUNK = 65536;   // PDF.js default; a flat page tree costs about one chunk per page on open
     const OTHER_VIEWS = ['gaokao', 'insights', 'graph'];
@@ -273,8 +274,14 @@
         return pdfjsPromise;
     }
 
-    function badgeNodes(badges, statusValue, platformCurrent) {
+    function badgeNodes(badges, statusValue, platformCurrent, provenance) {
         const out = [];
+        if (provenance === REASSEMBLED) {
+            out.push(el('span', {
+                class: 'lib-badge lib-badge-warn', text: '由旧页图重组的旧版',
+                title: '这份 PDF 由原先的页图逐页拼成，没有文字层，只为旧链接与对照保留',
+            }));
+        }
         if (platformCurrent === false) {
             out.push(el('span', {
                 class: 'lib-badge lib-badge-warn', text: '非平台现行版',
@@ -332,7 +339,7 @@
         const d = pdf.dom;
         if (pdf.listCtl) pdf.listCtl.abort();
         const ctl = pdf.listCtl = new AbortController();
-        if (!append) { pdf.items = []; clear(d.grid); }
+        if (!append) { pdf.items = []; clear(d.grid); resetCoverQueue('pdf'); }
         d.gridStatus.textContent = '加载中…';
         d.more.classList.add('hidden');
         try {
@@ -390,11 +397,14 @@
                 openEdition(item.edition_id, 1, { push: true });
             },
         }, [
-            el('span', { class: 'lib-card-subject', text: item.subject || '' }),
-            el('strong', { class: 'lib-card-title', text: item.title }),
-            el('span', { class: 'lib-card-meta', text: editionLine(item) }),
-            el('span', { class: 'lib-card-meta', text: `共 ${item.pages} 页 · ${formatBytes(item.bytes)}` }),
-            el('span', { class: 'lib-badges' }, badgeNodes(item.badges, item.status, item.platform_current)),
+            coverNode('pdf', item.subject, item.cover_url, null),
+            el('span', { class: 'lib-card-text' }, [
+                el('span', { class: 'lib-card-subject', text: item.subject || '' }),
+                el('strong', { class: 'lib-card-title', text: item.title }),
+                el('span', { class: 'lib-card-meta', text: editionLine(item) }),
+                el('span', { class: 'lib-card-meta', text: `共 ${item.pages} 页 · ${formatBytes(item.bytes)}` }),
+                el('span', { class: 'lib-badges' }, badgeNodes(item.badges, item.status, item.platform_current, item.provenance)),
+            ]),
         ]);
         const others = item.other_held_editions || [];
         if (!others.length) return card;
@@ -642,7 +652,7 @@
         pdf.edition = edition;
         d.vTitle.textContent = edition.title;
         d.vMeta.textContent = `${[edition.stage, edition.subject].filter(Boolean).join(' · ')} · ${editionLine(edition)} · 共 ${edition.pages} 页`;
-        d.vBadges.append.apply(d.vBadges, badgeNodes(edition.badges, edition.status, edition.platform_current));
+        d.vBadges.append.apply(d.vBadges, badgeNodes(edition.badges, edition.status, edition.platform_current, edition.provenance));
         renderViewerSources(edition, pdf.via);
         if (edition.status === 'superseded') d.vNotices.append(notice('warn', '此版次已被较新的版次取代，内容与页码可能与现行教材不同。'));
         if (edition.status === 'pending-verification') d.vNotices.append(notice('warn', '此版次尚待核对，信息可能不完整。'));
@@ -747,6 +757,12 @@
             d.vDownload.classList.remove('hidden');
         }
         const label = edition.edition_label || '本版次';
+        if (edition.provenance === REASSEMBLED) {
+            const current = siblings.find(item => item.platform_current === true) || siblings[0];
+            d.vNotices.append(notice('warn',
+                '由旧页图重组的旧版：这份 PDF 由原先的页图逐页拼成，无文字层，仅供旧链接与对照。'
+                + (current ? '平台现行版见右侧的切换。' : '平台现行版未存于本站，可到「教材下载」查找。')));
+        }
         if (other) {
             // Two files of this book are held here.  Say which one is open and offer the other.
             // There is no page-to-page map between them: switching always starts at page 1.
@@ -1287,7 +1303,7 @@
             if (ctl.signal.aborted) return;
             dl.total = data.total;
             clear(d.notices); clear(d.list);
-            resetCoverQueue();
+            resetCoverQueue('downloads');
             if (dl.row) {
                 d.notices.append(notice('warn', dl.total ? '只显示指定的这一个条目。' : '没有找到指定的条目（目录可能已更新）。', [
                     el('button', { class: 'lib-btn', type: 'button', text: '显示全部', onclick: () => { dl.row = ''; dl.page = 1; refreshDownloads(true); } })]));
@@ -1315,17 +1331,17 @@
     // card nears the viewport; at most COVER_CONCURRENCY load at once; one that has not
     // arrived within COVER_TIMEOUT_MS is abandoned (the placeholder stays, marked as such);
     // nothing is loaded when the browser asks to save data.
-    const coverQueue = { waiting: [], active: 0, generation: 0, observer: null };
+    const coverQueue = { waiting: [], active: 0, observers: {} };
 
-    function resetCoverQueue() {
-        coverQueue.generation++;
-        coverQueue.waiting = [];
-        coverQueue.active = 0;
-        if (coverQueue.observer) coverQueue.observer.disconnect();
-        coverQueue.observer = ('IntersectionObserver' in window) ? new IntersectionObserver(entries => {
+    // One observer per tab; a refresh of that tab's list drops its old watch list.
+    function resetCoverQueue(group) {
+        const old = coverQueue.observers[group];
+        if (old) old.disconnect();
+        coverQueue.waiting = coverQueue.waiting.filter(box => box.isConnected);
+        coverQueue.observers[group] = ('IntersectionObserver' in window) ? new IntersectionObserver((entries, observer) => {
             for (const entry of entries) {
                 if (!entry.isIntersecting) continue;
-                coverQueue.observer.unobserve(entry.target);
+                observer.unobserve(entry.target);
                 coverQueue.waiting.push(entry.target);
             }
             pumpCovers();
@@ -1335,15 +1351,25 @@
     function pumpCovers() {
         while (coverQueue.active < COVER_CONCURRENCY && coverQueue.waiting.length) {
             const box = coverQueue.waiting.shift();
-            const url = externalUrl(box.dataset.cover);
+            const local = box.dataset.coverLocal === '1';
+            const url = local ? box.dataset.cover : externalUrl(box.dataset.cover);
             if (!url || !box.isConnected) continue;
-            const generation = coverQueue.generation;
             coverQueue.active++;
             box.dataset.coverState = 'loading';
             const img = el('img', { alt: '', decoding: 'async', referrerpolicy: 'no-referrer' });
             let settled = false;
+            let retried = false;
+            let timer = 0;
             const done = ok => {
                 if (settled) return;
+                // A local cover is rendered on first use; when the renderer is busy, try once more.
+                if (!ok && local && !retried && box.isConnected) {
+                    retried = true;
+                    clearTimeout(timer);
+                    timer = setTimeout(() => done(false), COVER_TIMEOUT_MS);
+                    setTimeout(() => { if (!settled) img.src = url + '&retry=1'; }, 4000);
+                    return;
+                }
                 settled = true;
                 clearTimeout(timer);
                 if (ok) {
@@ -1354,22 +1380,32 @@
                     box.dataset.coverState = 'none';
                     box.title = '封面未能加载';
                 }
-                if (generation === coverQueue.generation) { coverQueue.active--; pumpCovers(); }
+                coverQueue.active--;
+                pumpCovers();
             };
-            const timer = setTimeout(() => done(false), COVER_TIMEOUT_MS);
-            img.addEventListener('load', () => done(true), { once: true });
-            img.addEventListener('error', () => done(false), { once: true });
+            timer = setTimeout(() => { retried = true; done(false); }, COVER_TIMEOUT_MS);
+            img.addEventListener('load', () => done(true));
+            img.addEventListener('error', () => done(false));
             img.src = url;
         }
     }
 
-    function coverNode(row) {
-        const box = el('div', { class: 'lib-cover', 'aria-hidden': 'true' }, el('span', { text: (row.subject || '教材').slice(0, 2) }));
+    // `localUrl`: a small cover made from the file held on this site (same origin) — always
+    // preferred.  `remoteUrl`: the official cover (about 1 MB, slow), used only without one.
+    function coverNode(group, subject, localUrl, remoteUrl) {
+        const box = el('div', { class: 'lib-cover', 'aria-hidden': 'true' }, el('span', { text: (subject || '教材').slice(0, 2) }));
+        const observer = coverQueue.observers[group];
         const saveData = navigator.connection && navigator.connection.saveData;
-        if (externalUrl(row.cover) && !saveData && coverQueue.observer) {
-            box.dataset.cover = row.cover;
+        const isLocal = typeof localUrl === 'string' && /^\/files\/cover\/[a-z0-9._-]+\.webp\?w=(240|480)$/.test(localUrl);
+        if (observer && isLocal) {
+            box.dataset.cover = localUrl;
+            box.dataset.coverLocal = '1';
             box.dataset.coverState = 'waiting';
-            coverQueue.observer.observe(box);
+            observer.observe(box);
+        } else if (observer && externalUrl(remoteUrl) && !saveData) {
+            box.dataset.cover = remoteUrl;
+            box.dataset.coverState = 'waiting';
+            observer.observe(box);
         } else {
             box.dataset.coverState = 'none';
         }
@@ -1482,7 +1518,7 @@
                 other.previewable ? previewLink(other.edition_id, label + ' · 预览') : label]));
         }
         return el('article', { class: 'lib-dl-card' }, [
-            coverNode(row),
+            coverNode('downloads', row.subject, row.cover_local, row.cover),
             el('div', { class: 'lib-dl-body' }, [
                 el('h3', { class: 'lib-dl-title', text: row.title }),
                 chips.length ? el('p', { class: 'lib-badges' }, chips) : null,
@@ -1616,6 +1652,25 @@
     // ════════════════════════════════════════════════════════════════════════
     // Search-result integration: 「在 PDF 中打开」
     // ════════════════════════════════════════════════════════════════════════
+    function addOpenPdfLink(card, result, query) {
+        if (!card || !card.isConnected || card.querySelector('.lib-open-pdf')) return;
+        let actions = card.querySelector('.result-actions');
+        if (!actions) { actions = el('div', { class: 'result-actions' }); card.append(actions); }
+        const otherPrinting = result.text_identity === OTHER_PRINTING;
+        actions.append(el('a', {
+            class: 'view-page-btn lib-open-pdf', href: pdfHref(result.edition_id, result.pdf_page, query),
+            title: `在 PDF 预览中打开（PDF 第 ${result.pdf_page} 页）` + (otherPrinting ? '。' + OTHER_PRINTING_NOTE : ''),
+            text: otherPrinting ? '📕 在 PDF 中打开对应页' : '📕 在 PDF 中打开',
+            onclick: event => {
+                event.stopPropagation();
+                if (event.metaKey || event.ctrlKey || event.shiftKey || event.button) return;
+                event.preventDefault();
+                openEdition(result.edition_id, result.pdf_page, { push: true, query, via: 'search' });
+            },
+        }));
+        if (otherPrinting) actions.append(el('span', { class: 'lib-open-note', text: OTHER_PRINTING_NOTE }));
+    }
+
     let decorateCtl = null;
     async function decorateSearchResults(root, groups) {
         if (decorateCtl) decorateCtl.abort();
@@ -1625,10 +1680,20 @@
             const flat = [];
             for (const group of groups || []) for (const r of group.results || []) flat.push(r);
             if (!cards.length || cards.length !== flat.length) return;
+            const query = currentQueryText();
+            // The backend already says which PDF page each hit is on (pdf_ref): no request needed.
+            if (flat.some(r => r && r.pdf_ref !== undefined)) {
+                flat.forEach((r, index) => {
+                    const ref = r && r.pdf_ref;
+                    if (r.source === 'gaokao' || !ref || !ref.edition_id || !Number.isInteger(ref.pdf_page)) return;
+                    addOpenPdfLink(cards[index], ref, query);
+                });
+                return;
+            }
             const wanted = new Map();   // item -> [card indexes]
             flat.forEach((r, index) => {
                 if (r.source === 'gaokao' || !r.page_url || !Number.isInteger(r.section)) return;
-                const match = /\/pages\/([0-9a-f]{12})\/p(\d+)\.webp$/.exec(r.page_url);
+                const match = /\/(?:pages|legacy-page)\/([0-9a-f]{12})\/p(\d+)\.webp(?:\?.*)?$/.exec(r.page_url);
                 if (!match || +match[2] !== r.section) return;
                 const item = match[1] + '.' + r.section;
                 if (!wanted.has(item)) {
@@ -1643,28 +1708,9 @@
             // One request per results page.
             const data = await api('/api/library/resolve', { items: Array.from(wanted.keys()).join(',') }, ctl.signal);
             if (ctl.signal.aborted) return;
-            const query = currentQueryText();
             for (const result of data.results || []) {
                 if (!result.available) continue;
-                for (const index of wanted.get(result.item) || []) {
-                    const card = cards[index];
-                    if (!card || !card.isConnected || card.querySelector('.lib-open-pdf')) continue;
-                    let actions = card.querySelector('.result-actions');
-                    if (!actions) { actions = el('div', { class: 'result-actions' }); card.append(actions); }
-                    const otherPrinting = result.text_identity === OTHER_PRINTING;
-                    actions.append(el('a', {
-                        class: 'view-page-btn lib-open-pdf', href: pdfHref(result.edition_id, result.pdf_page, query),
-                        title: `在 PDF 预览中打开（PDF 第 ${result.pdf_page} 页）` + (otherPrinting ? '。' + OTHER_PRINTING_NOTE : ''),
-                        text: otherPrinting ? '📕 在 PDF 中打开对应页' : '📕 在 PDF 中打开',
-                        onclick: event => {
-                            event.stopPropagation();
-                            if (event.metaKey || event.ctrlKey || event.shiftKey || event.button) return;
-                            event.preventDefault();
-                            openEdition(result.edition_id, result.pdf_page, { push: true, query, via: 'search' });
-                        },
-                    }));
-                    if (otherPrinting) actions.append(el('span', { class: 'lib-open-note', text: OTHER_PRINTING_NOTE }));
-                }
+                for (const index of wanted.get(result.item) || []) addOpenPdfLink(cards[index], result, query);
             }
         } catch (_) { /* the existing result list keeps working without the extra link */ }
     }
@@ -1684,10 +1730,15 @@
             const data = await api('/api/library/legacy', { kind, ref, page });
             if (data.available && data.exact) {
                 openEdition(data.edition_id, data.pdf_page, { via: 'legacy' });
+            } else if (data.available && data.reason === 'nearest' && data.approximate) {
+                openEdition(data.edition_id, data.pdf_page, {
+                    via: 'legacy',
+                    notice: `旧链接指向的页在现行文件中没有逐页对应，已打开最接近的已对应页（相差 ${data.approximate.distance} 页）。`,
+                });
             } else if (data.available) {
                 openEdition(data.edition_id, 1, {
                     via: 'legacy',
-                    notice: data.reason === 'no-page'
+                    notice: data.reason === 'nearest' ? null : data.reason === 'no-page'
                         ? '已从旧链接打开本册。'
                         : '旧链接中的页码无法确切对应到这份 PDF，已打开第 1 页。请用目录或册内检索定位。',
                 });
@@ -1782,7 +1833,7 @@
 
     window.SunLibrary = {
         decorateSearchResults,
-        openEdition: (editionId, page, query) => openEdition(editionId, page, { push: true, query }),
+        openEdition: (editionId, page, query, via) => openEdition(editionId, page, { push: true, query, via }),
     };
 
     route();

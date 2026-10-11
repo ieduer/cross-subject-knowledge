@@ -1591,7 +1591,7 @@ function renderModal() {
     if (!current) return;
     el.modalImage.src = current.url;
     el.modalTitle.textContent = state.modalTitle || '原文页图';
-    el.modalMeta.textContent = current.pdfPage && current.pdfPage !== current.page
+    el.modalMeta.textContent = current.label ? current.label : current.pdfPage && current.pdfPage !== current.page
         ? `书页 ${current.page}（PDF ${current.pdfPage}）`
         : `第 ${current.page} 页`;
     el.modalPrev.disabled = state.modalIndex === 0;
@@ -1612,7 +1612,15 @@ async function openBookModal(bookKey, page) {
     try {
         const data = await fetchJson(`${API}/api/page-image?book_key=${encodeURIComponent(bookKey)}&page=${page}&context=2`);
         openModalWithPages(
-            (data.pages || []).map(item => ({ page: item.page, pdfPage: null, url: item.url })),
+            (data.pages || []).map(item => ({
+                page: item.page,
+                pdfPage: item.pdf_page || null,
+                url: item.url,
+                // 教材的 page 是旧页图序号，不是书页：只显示 PDF 页，书页仅在已核对时显示。
+                label: item.pdf_page
+                    ? (item.printed_label ? `书页 ${item.printed_label}（PDF 第 ${item.pdf_page} 页）` : `PDF 第 ${item.pdf_page} 页`)
+                    : `页图 ${Number(item.page) + 1}`,
+            })),
             data.title || '教材原文',
         );
     } catch (error) {

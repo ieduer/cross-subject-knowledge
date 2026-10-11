@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.10.11-r39",
+  "frontend_refactor_version": "2026.10.11-r40",
   "updated_at": "2026-10-11",
   "history": [
+    {
+      "version": "2026.10.11-r40",
+      "date": "2026-10-11",
+      "summary": "textbook page images now come from the held PDFs (bounded on-demand rendering with a disk cache) instead of the legacy page-image set: search hits, the page viewer (labels are PDF 第 N 页 plus the printed page only when verified, with 在 PDF 中打开) and covers in PDF 预览 / 教材下载; legacy-page compatibility URLs for other sites; reassembled legacy editions and nearest-page notices for unmapped old links; asset cache key 20261011b for app.js, library.js, library.css"
+    },
     {
       "version": "2026.10.11-r39",
       "date": "2026-10-11",

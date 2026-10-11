@@ -21,6 +21,10 @@ limit_req_status 429;
 # 330 MB book. Cap simultaneous PDF transfers per address as well.
 limit_conn_zone $binary_remote_addr zone=sun_library_pdf_conn:10m;
 limit_conn_status 429;
+# Page images made from the PDFs (/files/page/, /files/cover/, /files/legacy-page/).
+# Cache hits are cheap (one small app round trip + a static file); misses are rendered one
+# at a time by the app, which has its own, smaller, per-client budget for them.
+limit_req_zone $binary_remote_addr zone=sun_library_img:10m rate=30r/s;
 
 # ── server { } for sun.bdfz.net (443) — add next to the existing `location /` ─
 
@@ -50,6 +54,56 @@ limit_conn_status 429;
         # PDF.js opens up to 6 parallel Range reads per tab; a classroom may share one
         # address. Start at 48 and tune from the access log.
         limit_conn sun_library_pdf_conn 48;
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 15s;
+    }
+
+    # Page-image cache: internal only, reached solely through X-Accel-Redirect from the app
+    # after it has checked the edition, the hash and the page against the loaded catalog.
+    # HOST path of the read-write cache mount (scripts/deploy_vps.sh: SUN_PAGE_CACHE_DIR).
+    # It is under /srv on purpose: nginx cannot read the app's state directory in /root.
+    location /_protected_page/ {
+        internal;
+        alias /srv/sun-textbooks/page-cache/;
+        types { image/webp webp; }
+        default_type image/webp;
+        sendfile on;
+        # Content-Type and Cache-Control come from the app response.
+        add_header X-Content-Type-Options nosniff always;
+    }
+
+    location /files/page/ {
+        limit_req zone=sun_library_img burst=120 nodelay;
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # a miss waits for its turn in the single render slot (app default: up to 25 s)
+        proxy_read_timeout 40s;
+    }
+
+    location /files/cover/ {
+        limit_req zone=sun_library_img burst=120 nodelay;
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 15s;
+    }
+
+    # Drop-in replacement for https://img.rdfzer.com/pages/<key>/p<N>.webp used by other sites:
+    # answers 302 to /files/page/…  No CORS header is needed for <img>.
+    location /files/legacy-page/ {
+        limit_req zone=sun_library_img burst=120 nodelay;
         proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -126,5 +180,10 @@ limit_conn_status 429;
 #   curl -s -o /dev/null -w '%{http_code} %{size_download}\n' -H 'Range: bytes=0-1023' \
 #        "https://sun.bdfz.net/files/pdf/<edition_id>/<sha12>/x.pdf"     -> 206 1024
 #   curl -sI "https://sun.bdfz.net/files/pdf/<edition_id>/000000000000/x.pdf" -> 404
+#   curl -sI https://sun.bdfz.net/_protected_page/r1/<sha256>/1-960.webp  -> 404 (internal)
+#   curl -s -o /dev/null -w '%{http_code} %{content_type} %{size_download}\n' \
+#        "https://sun.bdfz.net/files/page/<edition_id>/<sha12>/1.webp?w=240"  -> 200 image/webp <bytes>   (twice: 2nd is a cache hit)
+#   curl -sI "https://sun.bdfz.net/files/legacy-page/<jc_short_key>/p0.webp" -> 302, Location: /files/page/…
+#   ls -l /srv/sun-textbooks/page-cache/r1/                               -> directories 0755, files 0644 (readable by www-data)
 #   curl -s -o /dev/null -w '%{http_code}\n' --max-time 5 http://<public address>:8080/api/health
 #                                                                         -> no connection (loopback bind)

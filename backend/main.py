@@ -5955,17 +5955,23 @@ def _search_moe_idioms_entries(clean_q: str, limit: int) -> dict:
     }
 
 
-def _book_page_url(book_key: str | None, page: int | None) -> Optional[str]:
+def _book_page_ref(book_key: str | None, page: int | None, *, nearest: bool = False) -> Optional[dict]:
+    """Where the image of a textbook page comes from: the held PDF of the reader book, through
+    the catalog's page map (backend/library.py). `page` is the 0-based legacy image index
+    (chunks.section). None when the catalog has no exact row for it. The legacy image set
+    img.rdfzer.com/pages/<key>/ is being retired and is no longer referenced from here."""
     if not book_key or page is None:
-        return None
-    short_key = _book_key_to_short.get(book_key, "")
-    if not short_key:
         return None
     try:
         page_num = int(page)
     except Exception:
         return None
-    return f"{IMG_CDN}/pages/{short_key}/p{page_num}.webp"
+    return sun_library.legacy_page_ref(app, book_key, page_num, nearest=nearest)
+
+
+def _book_page_url(book_key: str | None, page: int | None) -> Optional[str]:
+    ref = _book_page_ref(book_key, page)
+    return ref["image_url"] if ref else None
 
 
 def _build_context_snippet(text: str | None, query: str, *, window: int = 180) -> str:
@@ -6848,7 +6854,8 @@ def search(
             img_count = text.count('![')
             bk = r["book_key"]
             page_num = r["section"] or 0
-            page_url = _book_page_url(bk, page_num)
+            page_ref = _book_page_ref(bk, page_num)
+            page_url = page_ref["image_url"] if page_ref else None
             bm_info = _book_map.get(bk, {})
             result_item = {
                 "id": r["id"],
@@ -6868,6 +6875,10 @@ def search(
                 "page_url": page_url,
                 "page_num": page_num,
                 "total_pages": bm_info.get("pages", 0),
+                # the PDF page behind page_url (edition, PDF page, verified printed label)
+                "pdf_ref": ({key: page_ref[key] for key in (
+                    "edition_id", "pdf_page", "pdf_pages", "printed_label", "viewer_url", "text_identity",
+                    "preview_default", "default_edition_id")} if page_ref else None),
             }
             if (r["source"] or "mineru") != "gaokao":
                 result_item = _apply_book_runtime_meta(
@@ -9179,7 +9190,9 @@ def health():
     return status
 
 
-# Images served from Cloudflare R2 CDN
+# Images served from Cloudflare R2 CDN: dictionary page images (pages/dict_*), inline
+# illustrations (orig/) and exam images (gaokao/). Textbook page images are NOT taken from
+# there any more: see _book_page_ref.
 IMG_CDN = os.getenv("IMG_CDN", "https://img.rdfzer.com")
 
 # ── Book Map for page images ─────────────────────────────────────────
@@ -9244,7 +9257,11 @@ def page_image(
     context: int = Query(4, ge=0, le=8, description="Number of context pages before/after"),
     phase: Optional[str] = Query(None, description="Filter by phase: 高中, 初中, or None for all"),
 ):
-    """Return R2 CDN URLs for a page and surrounding context pages."""
+    """Images of a textbook page and its neighbours, rendered from the held PDF.
+
+    `page` and each returned `page` are 0-based legacy image indexes (what search hits carry in
+    `section`); `pdf_page` / `printed_label` say what the image actually is. Pages without a row
+    in the catalog's page map are left out; nothing is taken from img.rdfzer.com/pages/."""
     # Find the book in book_map
     info = _book_map.get(book_key)
     if not info:
@@ -9258,7 +9275,6 @@ def page_image(
     ):
         raise HTTPException(404, f"Book not available in current edition scope: {book_key[:60]}")
 
-    short_key = info["key"]
     total_pages = info["pages"]
     title = _resolve_book_runtime_meta(
         book_key,
@@ -9273,26 +9289,46 @@ def page_image(
     start = max(0, page - context)
     end = min(total_pages - 1, page + context)
     pages = []
+    current_ref = None
     for p in range(start, end + 1):
+        # the requested page may fall back to the catalog's nearest-mapped hint; neighbours never do
+        ref = _book_page_ref(book_key, p, nearest=(p == page))
+        if not ref:
+            continue
+        if p == page:
+            current_ref = ref
         pages.append({
             "page": p,
-            "url": f"{IMG_CDN}/pages/{short_key}/p{p}.webp",
+            "url": ref["image_url"],
+            "thumb_url": ref["thumb_url"],
+            "pdf_page": ref["pdf_page"],
+            "printed_label": ref["printed_label"],
+            "viewer_url": ref["viewer_url"],
+            "approximate": ref["approximate"],
             "current": p == page,
         })
+    if current_ref is None:
+        raise HTTPException(404, "该页在现有 PDF 中没有对应页图")
 
     return {
         "book_key": book_key,
-        "short_key": short_key,
+        "short_key": info["key"],
         "title": title,
         "current_page": page,
         "total_pages": total_pages,
+        "edition_id": current_ref["edition_id"],
+        "pdf_total_pages": current_ref["pdf_pages"],
+        "text_identity": current_ref["text_identity"],
+        "preview_default": current_ref["preview_default"],
         "pages": pages,
     }
 
 
 @app.get("/api/book-pages")
 def book_pages(phase: Optional[str] = Query(None, description="Filter by phase: 高中, 初中, or None for all")):
-    """Return the full book map for frontend use."""
+    """Return the full book map. LEGACY: describes the retired page-image set (key, legacy page
+    count); kept for tooling that still reads it. Page images now come from /files/page/ and
+    /files/legacy-page/ (docs/LIBRARY_TABS.md)."""
     return {
         bk: {
             "key": info["key"],
