@@ -352,7 +352,7 @@ def build_manifest_with_carried_runtime(source_assets: list[dict[str, object]], 
         twin = by_path.get(remainder) if remainder.startswith("backend/") else None
         if twin is not None and twin["sha256"] != entry.get("sha256"):
             raise RuntimeError(f"bundled runtime file changed since the previous manifest: {source_path}")
-    return {
+    manifest = {
         "schema_version": 1,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "git_head": git_head_sha(),
@@ -369,6 +369,12 @@ def build_manifest_with_carried_runtime(source_assets: list[dict[str, object]], 
         "runtime_facts": previous.get("runtime_facts"),
         "release_rules": previous.get("release_rules"),
     }
+    # Notes about how the runtime half was measured (e.g. runtime_assets_measured_from, with
+    # hand-recorded on-host hashes) travel with the entries they describe.
+    for key, value in previous.items():
+        if key.startswith("runtime_assets_") and key != "runtime_assets_carried_from":
+            manifest[key] = value
+    return manifest
 
 
 def main() -> None:

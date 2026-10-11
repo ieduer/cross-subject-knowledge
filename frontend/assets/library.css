@@ -143,6 +143,7 @@
 }
 
 .lib-notice-text { flex: 1 1 240px; }
+.lib-notice-info { background: var(--lib-chip-bg); color: var(--text); border-color: var(--border); }
 .lib-notice-warn { background: var(--lib-warn-bg); color: var(--lib-warn); border-color: rgba(123, 83, 48, 0.25); }
 .lib-notice-error { background: var(--lib-err-bg); color: var(--lib-err); border-color: rgba(154, 59, 50, 0.25); }
 
@@ -187,6 +188,9 @@
 .lib-card-title { font-size: 15px; font-weight: 600; line-height: 1.45; }
 .lib-card-meta { font-size: 13px; color: var(--lib-soft); }
 .lib-card .lib-badges { margin-top: auto; padding-top: 4px; }
+.lib-card-cell { display: flex; flex-direction: column; gap: 6px; }
+.lib-card-cell .lib-card { flex: 1 1 auto; }
+.lib-card-other { font-size: 13px; padding: 0 4px 2px; }
 .lib-more { text-align: center; margin: 18px 0; }
 
 /* ── PDF viewer ──────────────────────────────────────────── */
@@ -382,6 +386,8 @@
 .lib-dl-title { font-size: 15px; font-weight: 600; line-height: 1.45; color: var(--text); }
 .lib-dl-meta { font-size: 13px; color: var(--lib-soft); }
 .lib-dl-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 6px; }
+.lib-dl-source { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; flex-basis: 100%; }
+.lib-dl-source-facts { font-size: 12px; color: var(--lib-soft); }
 .lib-dl-btn { min-height: 42px; padding: 8px 20px; font-size: 15px; }
 .lib-dl-state { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; color: var(--lib-soft); min-height: 18px; margin-top: 2px; }
 .lib-progress { flex: 1 1 120px; height: 8px; accent-color: var(--lib-strong); }

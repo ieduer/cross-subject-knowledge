@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-10-10T13:28:18.906861+00:00",
-  "git_head": "f6dd0ac6ddd7ff1a5fe97c975c1d334d2a44a9d1",
-  "frontend_version": "2026.10.10-r38",
+  "generated_at": "2026-10-11T02:29:45.129145+00:00",
+  "git_head": "5c9a29677907140b2b9e6014d9c155456160869a",
+  "frontend_version": "2026.10.11-r39",
   "source_of_truth": {
     "local_workspace": "authoritative",
     "github": "authoritative_for_code_only_after_push",
@@ -43,8 +43,8 @@
     {
       "kind": "source",
       "logical_path": "backend/library.py",
-      "size": 74776,
-      "sha256": "cb00d1a9b93afc044876bf6b9a2f93ccd6dd08a84a3a6725e9fea11e451691db"
+      "size": 83580,
+      "sha256": "b5bc415349596807ec7ab1f1d50a5347bcb60ad6a2db07976fdc02d3173da3f8"
     },
     {
       "kind": "source",
@@ -103,8 +103,8 @@
     {
       "kind": "source",
       "logical_path": "frontend/index.html",
-      "size": 14517,
-      "sha256": "dc04b7d98a900f254dbdd5ae1a75f846dcfae387145dbc61fcc49eb3bd259d44"
+      "size": 14505,
+      "sha256": "97899845cbb5749a016f8b107c80f66ecc80b4a6f2b8bc1dbc4db642184aad88"
     },
     {
       "kind": "source",
@@ -116,7 +116,7 @@
       "kind": "source",
       "logical_path": "frontend/chuzhong.html",
       "size": 11136,
-      "sha256": "5cde40ad47420013d586fd64529e6fd03c045ec63e3f4f73d8dea49c7e4f90d8"
+      "sha256": "4111da489af9d3929f36806a2cb1260f0a60fe41a912aed2c1c77652145811c4"
     },
     {
       "kind": "source",
@@ -134,7 +134,7 @@
       "kind": "source",
       "logical_path": "frontend/assets/app.js",
       "size": 114712,
-      "sha256": "f78ccf91773e9750c135e15673d5a327f4e9afd73fd25002ad5502f0e6dbee06"
+      "sha256": "2ccbb8a604e45e2fbf95a60fb67f3fc94bf09c06ef2958eeea7755f6f0acfc78"
     },
     {
       "kind": "source",
@@ -163,20 +163,20 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/library.css",
-      "size": 16449,
-      "sha256": "b3516e53f4674bce318baa90226df06d8c0819947e34b8d3c40d3d2ceffdfe58"
+      "size": 16892,
+      "sha256": "2651ca82aaa7bdca2fe9137910a50f1b11c99095e7d06e72b83fbd116bb74886"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/library.js",
-      "size": 90266,
-      "sha256": "3d790b41a23d18f68123cb826b74d5e34acde809d1c92c35beb0cbd118fd9691"
+      "size": 96873,
+      "sha256": "f80bfae404d986220804bb4f420320569c7475edf367c8417a0b41eecfd1a23b"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/version.json",
-      "size": 10937,
-      "sha256": "c970f34d8314aa0f8491b5cab23badc0ca3873cc80eaaded32cc2b86f55f2c90"
+      "size": 11566,
+      "sha256": "0b52bf21c5119810f408deffe5b35ab3fc3ae82b92cc06668a5bb444df25e2c0"
     },
     {
       "kind": "source",
@@ -199,8 +199,8 @@
     {
       "kind": "source",
       "logical_path": "scripts/build_release_manifest.py",
-      "size": 15338,
-      "sha256": "5d62b30dc4f76153e95369b40f0a1afedb0e83af29c9d9a6761abd761f2576a3"
+      "size": 15691,
+      "sha256": "f76fe8436f94d9e7f460c5f38e7fe4d316b56c1bddb22f89d3ce35a9221081b6"
     },
     {
       "kind": "source",
@@ -1481,6 +1481,11 @@
       "source_path": "data/index/dict_moe_revised.db"
     }
   ],
+  "runtime_assets_carried_from": {
+    "generated_at": "2026-10-10T13:28:18.906861+00:00",
+    "git_head": "f6dd0ac6ddd7ff1a5fe97c975c1d334d2a44a9d1",
+    "note": "runtime half not re-measured in this build; deploy_vps.sh verifies it on the VPS"
+  },
   "page_mapping": {
     "book_count": 144,
     "required_r2_prefixes": [

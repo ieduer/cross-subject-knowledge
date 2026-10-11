@@ -70,6 +70,23 @@
         return match ? `${match[1]}-${match[2]}` : '';
     }
 
+    function dayOf(stamp) {
+        const match = /^(\d{4}-\d{2}-\d{2})/.exec(String(stamp || ''));
+        return match ? match[1] : '';
+    }
+
+    // Which file of a book this is, in words.  Two held files of one work are different
+    // versions; they are told apart by "is it the platform's current file" and by when the
+    // file was obtained.
+    function roleText(platformCurrent, acquiredAt) {
+        if (platformCurrent === true) return '平台现行文件';
+        if (platformCurrent === false) {
+            const day = dayOf(acquiredAt);
+            return '较早取得' + (day ? `（取得于 ${day}）` : '');
+        }
+        return '';
+    }
+
     function canvasBudget() {
         const small = Math.min(window.screen.width || 9999, window.screen.height || 9999) <= 820
             || (navigator.deviceMemory && navigator.deviceMemory <= 4);
@@ -365,7 +382,7 @@
 
     function editionCard(item) {
         const href = pdfHref(item.edition_id, 1, '');
-        return el('a', {
+        const card = el('a', {
             class: 'lib-card', href,
             onclick: event => {
                 if (event.metaKey || event.ctrlKey || event.shiftKey || event.button) return;
@@ -379,6 +396,27 @@
             el('span', { class: 'lib-card-meta', text: `共 ${item.pages} 页 · ${formatBytes(item.bytes)}` }),
             el('span', { class: 'lib-badges' }, badgeNodes(item.badges, item.status, item.platform_current)),
         ]);
+        const others = item.other_held_editions || [];
+        if (!others.length) return card;
+        // One card per book.  Another file held for the same book is a different version:
+        // it is named here and opened on its own, never mixed into this card.
+        const cell = el('div', { class: 'lib-card-cell' }, card);
+        for (const other of others) {
+            const day = dayOf(other.acquired_at);
+            const label = other.platform_current === false
+                ? `另有较早取得的版本${day ? `（${day}）` : ''}`
+                : '另有其他版本';
+            cell.append(el('a', {
+                class: 'lib-link lib-card-other', href: pdfHref(other.edition_id, 1, ''),
+                text: `${label} · 共 ${other.pages} 页 · 打开`,
+                onclick: event => {
+                    if (event.metaKey || event.ctrlKey || event.shiftKey || event.button) return;
+                    event.preventDefault();
+                    openEdition(other.edition_id, 1, { push: true });
+                },
+            }));
+        }
+        return cell;
     }
 
     function showGrid(push) {
@@ -581,6 +619,7 @@
         showSideTab('outline');
         syncPdfUrl(Boolean(options.push));
         if (options.notice) d.vNotices.append(notice('warn', options.notice));
+        pdf.via = options.via || '';
 
         const ctl = pdf.openCtl = new AbortController();
         const retry = () => openEdition(editionId, pdf.page, { query: pdf.query });
@@ -604,7 +643,7 @@
         d.vTitle.textContent = edition.title;
         d.vMeta.textContent = `${[edition.stage, edition.subject].filter(Boolean).join(' · ')} · ${editionLine(edition)} · 共 ${edition.pages} 页`;
         d.vBadges.append.apply(d.vBadges, badgeNodes(edition.badges, edition.status, edition.platform_current));
-        renderViewerSources(edition);
+        renderViewerSources(edition, pdf.via);
         if (edition.status === 'superseded') d.vNotices.append(notice('warn', '此版次已被较新的版次取代，内容与页码可能与现行教材不同。'));
         if (edition.status === 'pending-verification') d.vNotices.append(notice('warn', '此版次尚待核对，信息可能不完整。'));
         d.searchInput.disabled = d.searchBtn.disabled = !edition.searchable;
@@ -691,21 +730,51 @@
             other.update_time ? `平台更新于 ${monthOf(other.update_time) || other.update_time}` : ''].filter(Boolean).join('，');
     }
 
-    function renderViewerSources(edition) {
+    function renderViewerSources(edition, via) {
         const d = pdf.dom;
         clear(d.vSources);
         const notCurrent = edition.platform_current === false;
+        const acquired = edition.acquired_at || (edition.source && edition.source.retrieved_at);
+        const siblings = edition.other_held_editions || [];
+        const other = siblings[0] || null;
+        const mine = roleText(edition.platform_current, acquired);
         if (edition.file) {
-            // This button always delivers THIS edition from this site, nothing else.
+            // This button always delivers THIS file from this site, nothing else.
+            const tag = other && mine ? mine.replace(/（.*$/, '') + ' · ' : (notCurrent ? '此版次 · ' : '');
             d.vDownload.href = edition.file.download_url;
             d.vDownload.setAttribute('download', edition.file.filename);
-            d.vDownload.textContent = `⬇ 下载本册 PDF（本站 · ${notCurrent ? '此版次 · ' : ''}${formatBytes(edition.file.bytes)}）`;
+            d.vDownload.textContent = `⬇ 下载本册 PDF（本站 · ${tag}${formatBytes(edition.file.bytes)}）`;
             d.vDownload.classList.remove('hidden');
         }
         const label = edition.edition_label || '本版次';
-        if (notCurrent) {
-            const got = monthOf(edition.source && edition.source.retrieved_at);
-            const newer = edition.newer_edition;
+        if (other) {
+            // Two files of this book are held here.  Say which one is open and offer the other.
+            // There is no page-to-page map between them: switching always starts at page 1.
+            const theirs = roleText(other.platform_current, other.acquired_at) || '另一版本';
+            let text = '';
+            if (via && edition.preview_default === false) {
+                text += `${via === 'search' ? '此检索结果' : '此旧链接'}打开的是${mine || '非默认显示的版本'}：`
+                    + `${via === 'search' ? '检索结果' : '旧链接'}的页码只在这一份文件上有逐页对应。本书默认显示的是另一份：${theirs}。`;
+            } else {
+                text += `本书在本站有两份文件，是不同版本。当前打开的是：${mine || '其中一份'}，共 ${edition.pages} 页。另一份：${theirs}，共 ${other.pages} 页。`;
+            }
+            text += '两份文件之间没有逐页对应，页码不能互用。';
+            const target = other.platform_current === true ? '平台现行文件' : (other.platform_current === false ? '较早取得的版本' : '另一版本');
+            d.vNotices.append(notice(edition.preview_default === false || notCurrent ? 'warn' : 'info', text, [
+                el('a', {
+                    class: 'lib-btn', href: pdfHref(other.edition_id, 1, ''), text: `切换到${target}（从第 1 页）`,
+                    onclick: event => {
+                        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button) return;
+                        event.preventDefault();
+                        openEdition(other.edition_id, 1, {
+                            push: true,
+                            notice: '已切换到另一份文件。两份文件之间没有逐页对应，页码不沿用，已从第 1 页打开。',
+                        });
+                    },
+                })]));
+        } else if (notCurrent) {
+            const got = monthOf(acquired);
+            const newer = edition.newer_edition && edition.newer_edition.holding !== 'learn-only' ? edition.newer_edition : null;
             const actions = [];
             if (newer && newer.download_row_id) {
                 actions.push(el('a', {
@@ -733,13 +802,15 @@
                 text: `${source.label} · ${label}（新标签页）`,
             }));
         }
-        for (const other of edition.other_editions || []) {
-            if (edition.newer_edition && other.edition_id === edition.newer_edition.edition_id) continue;
-            const text = `其他版次：${other.edition_label || other.title}${other.status === 'superseded' ? '（旧版）' : ''}`;
-            d.vSources.append(other.previewable
+        const shown = new Set(siblings.map(item => item.edition_id));
+        for (const item of edition.other_editions || []) {
+            if (shown.has(item.edition_id)) continue;
+            if (edition.newer_edition && item.edition_id === edition.newer_edition.edition_id) continue;
+            const text = `其他版次：${item.edition_label || item.title}${item.status === 'superseded' ? '（旧版）' : ''}`;
+            d.vSources.append(item.previewable
                 ? el('a', {
-                    class: 'lib-link', href: pdfHref(other.edition_id, 1, ''), text: text + ' · 预览',
-                    onclick: event => { event.preventDefault(); openEdition(other.edition_id, 1, { push: true }); },
+                    class: 'lib-link', href: pdfHref(item.edition_id, 1, ''), text: text + ' · 预览',
+                    onclick: event => { event.preventDefault(); openEdition(item.edition_id, 1, { push: true }); },
                 })
                 : el('span', { class: 'lib-muted', text }));
         }
@@ -1006,7 +1077,7 @@
     async function runBookSearch(query, silent) {
         const d = pdf.dom;
         const edition = pdf.edition;
-        if (!edition || !edition.searchable || !edition.legacy || !edition.legacy.sun_book_key) return;
+        if (!edition || !edition.searchable || !edition.search_book_key) return;
         if (pdf.searchCtl) pdf.searchCtl.abort();
         pdf.query = query;
         syncPdfUrl(false);
@@ -1023,14 +1094,14 @@
         d.hits.append(el('p', { class: 'lib-muted', text: '检索中…' }));
         if (pdf.doc) renderPage();   // highlight on the current page right away
         try {
-            const params = { q: query, book_key: edition.legacy.sun_book_key, source: 'textbook', limit: RESOLVE_BATCH };
+            const params = { q: query, book_key: edition.search_book_key, source: 'textbook', limit: RESOLVE_BATCH };
             if (edition.stage === '高中' || edition.stage === '初中') params.phase = edition.stage;
             const data = await api('/api/search', params, ctl.signal);
             if (seq !== pdf.openSeq || ctl.signal.aborted) return;
             const results = [];
             for (const group of data.groups || []) {
                 for (const r of group.results || []) {
-                    if (r.book_key === edition.legacy.sun_book_key && Number.isInteger(r.section) && r.section >= 0) results.push(r);
+                    if (r.book_key === edition.search_book_key && Number.isInteger(r.section) && r.section >= 0) results.push(r);
                 }
             }
             if (!results.length) {
@@ -1325,38 +1396,60 @@
         });
     }
 
+    function sourceRole(source) {
+        if (source.platform_current === true) return '平台现行文件';
+        if (source.platform_current === false) {
+            const day = dayOf(source.acquired_at);
+            return '较早取得' + (day ? ` ${day}` : '');
+        }
+        return '';
+    }
+
     function downloadCard(row) {
         const state = el('div', { class: 'lib-dl-state', 'aria-live': 'polite' });
         const actions = el('div', { class: 'lib-dl-actions' });
         const sources = (row.sources || []).filter(s => s.same_origin || externalUrl(s.url));
         const usable = sources.filter(s => s.available !== false);
-        const primary = usable[0];
+        // Every file held on this site gets its OWN labelled button (平台现行文件 / 较早取得):
+        // no single button ever picks between two files.
+        const local = usable.filter(s => s.kind === 'vps');
+        const primary = local.length ? null : usable[0];
         const others = row.other_editions || [];
-        const notCurrent = row.platform_current === false;
-        if (!primary) {
+        const notCurrent = row.platform_current === false && local.length <= 1;
+        const describe = s => s.label + (sourceRole(s) ? `（${sourceRole(s)}）` : '') + (s.available === false ? '（暂不可用）' : '');
+        if (!local.length && !primary) {
             actions.append(el('button', { class: 'lib-btn lib-btn-primary', type: 'button', disabled: true, text: '暂无下载来源' }));
             state.textContent = sources.length ? '已登记的来源目前都不可用。' : '本册尚未取得文件，暂时无法下载。';
         } else {
-            actions.append(sourceControl(row, primary, state, true));
-            const rest = sources.filter(s => s !== primary);
+            for (const source of local) {
+                const group = el('div', { class: 'lib-dl-source' }, [sourceControl(row, source, state, true)]);
+                const facts = [formatBytes(source.bytes), source.pages ? `${source.pages} 页` : ''].filter(Boolean).join(' · ');
+                if (facts) group.append(el('span', { class: 'lib-dl-source-facts', text: facts }));
+                if (source.previewable !== false && source.edition_id) group.append(previewLink(source.edition_id, '预览'));
+                actions.append(group);
+            }
+            if (primary) actions.append(sourceControl(row, primary, state, true));
+            const rest = sources.filter(s => s !== primary && local.indexOf(s) === -1);
             if (rest.length) {
                 actions.append(el('details', { class: 'lib-menu' }, [
                     el('summary', { class: 'lib-btn', text: '其他来源' }),
                     el('div', { class: 'lib-menu-list' }, rest.map(s => s.available === false
-                        ? el('span', { class: 'lib-muted', text: `${s.label}（暂不可用）` })
+                        ? el('span', { class: 'lib-muted', text: describe(s) })
                         : sourceControl(row, s, state, false))),
                 ]));
             }
-            state.textContent = '来源：' + sources.map(s => s.label + (s.available === false ? '（暂不可用）' : '')).join('、')
-                + (primary.same_origin ? '' : ' · 将在新标签页打开，由浏览器显示下载进度');
+            state.textContent = '来源：' + sources.map(describe).join('、')
+                + (local.length ? '' : ' · 将在新标签页打开，由浏览器显示下载进度');
         }
-        if (row.previewable && row.edition_id) actions.append(previewLink(row.edition_id, '可预览'));
 
         // Which file is this?  Two files of one book never share a card, and each says what it is.
         const chips = [];
         if (notCurrent) chips.push(el('span', { class: 'lib-badge lib-badge-warn', text: '非平台现行版', title: '本站保存的这一版次不是官方平台目前提供的文件' }));
         if (!row.edition_id && others.length) chips.push(el('span', { class: 'lib-badge', text: '官方平台现行文件 · 未存于本站' }));
         const lines = [];
+        if (local.length >= 2) {
+            lines.push(el('p', { class: 'lib-dl-meta lib-dl-edition-note', text: '本站保存了这本书的两份文件，是不同版本，页数与页码不能互用；请按按钮上的标注选择。' }));
+        }
         if (notCurrent) {
             const got = monthOf(row.retrieved_at);
             const newer = row.newer_edition;
@@ -1402,12 +1495,14 @@
 
     function sourceControl(row, source, state, isPrimary) {
         const cls = isPrimary ? 'lib-btn lib-btn-primary lib-dl-btn' : 'lib-btn';
-        const label = isPrimary ? '⬇ 下载' : `从${source.label}下载`;
+        const role = sourceRole(source);
+        const tag = source.label + (role ? ' · ' + role : '');
+        const label = isPrimary ? '⬇ 下载' : `从${source.label}下载${role ? `（${role}）` : ''}`;
         if (!source.same_origin) {
             return el('a', { class: cls, href: externalUrl(source.url) || '#', target: '_blank', rel: 'noopener noreferrer' },
-                [label, isPrimary ? el('small', { text: source.label }) : null]);
+                [label, isPrimary ? el('small', { text: tag }) : null]);
         }
-        const button = el('button', { class: cls, type: 'button' }, [label, isPrimary ? el('small', { text: source.label }) : null]);
+        const button = el('button', { class: cls, type: 'button' }, [label, isPrimary ? el('small', { text: tag }) : null]);
         button.addEventListener('click', () => startInlineDownload(row, source, state, button));
         return button;
     }
@@ -1565,7 +1660,7 @@
                             event.stopPropagation();
                             if (event.metaKey || event.ctrlKey || event.shiftKey || event.button) return;
                             event.preventDefault();
-                            openEdition(result.edition_id, result.pdf_page, { push: true, query });
+                            openEdition(result.edition_id, result.pdf_page, { push: true, query, via: 'search' });
                         },
                     }));
                     if (otherPrinting) actions.append(el('span', { class: 'lib-open-note', text: OTHER_PRINTING_NOTE }));
@@ -1588,9 +1683,10 @@
         try {
             const data = await api('/api/library/legacy', { kind, ref, page });
             if (data.available && data.exact) {
-                openEdition(data.edition_id, data.pdf_page, {});
+                openEdition(data.edition_id, data.pdf_page, { via: 'legacy' });
             } else if (data.available) {
                 openEdition(data.edition_id, 1, {
+                    via: 'legacy',
                     notice: data.reason === 'no-page'
                         ? '已从旧链接打开本册。'
                         : '旧链接中的页码无法确切对应到这份 PDF，已打开第 1 页。请用目录或册内检索定位。',
@@ -1634,6 +1730,19 @@
             else if (name === 'downloads') enterDownloads(false);
             else setUrl(name === 'search' ? {} : { view: name }, true);
         });
+    });
+
+    // In-page links to one of the two tabs (e.g. 「教材 PDF 下载」 on the 真题 view): switch
+    // without a reload.  The href (?view=…) still works on its own.
+    document.addEventListener('click', event => {
+        if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.button) return;
+        const link = event.target && event.target.closest ? event.target.closest('a[data-lib-view]') : null;
+        const name = link && link.dataset.libView;
+        if (name !== 'pdf' && name !== 'downloads') return;
+        if (!activateView(name)) return;
+        event.preventDefault();
+        if (name === 'pdf') enterPdf(false); else enterDownloads(false);
+        window.scrollTo(0, 0);
     });
 
     window.addEventListener('popstate', route);

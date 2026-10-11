@@ -71,6 +71,31 @@
 
 检索文字与 PDF 的关系（审查 M1）：`text_identity` 为 `page-aligned-other-printing` 时，「在 PDF 中打开」改为「在 PDF 中打开对应页」并附注「检索文字来自较早印次，可能与此 PDF 的文字略有出入，以 PDF 为准」；册内检索结果一律标为「检索库片段」，不当作 PDF 页面的引文；页面上的高亮只来自 PDF 自己的文字层，找不到时明说「本页 PDF 文字层中没有找到」。
 
+### 修订 3（`holding`、`preview_default`、`reader_books`、同书两份文件）
+
+旧发行版（没有这些字段）照旧载入，行为不变。
+
+| 字段 | 规则 |
+| --- | --- |
+| `holding` | `"sun"`／`"learn-only"`／`null`。只有 `"sun"` 且有 `storage.vps` 的版次可预览、可作为「本站」来源、可出现在旧链接与检索链接的结果里。`"learn-only"` 记录只是资讯：不进书目、不出现在下载来源、文件端点回 `404`，即使 `LIBRARY_PREVIEW_POLICY=present` 且磁盘上刚好有同哈希的文件也一样。`storage.learn` 不是本站的下载来源 |
+| `preview_default` | 书目每个 `work_id` 只出一张卡片：`preview_default: true` 的那个版次。同一 `work_id` 另有本站已存版次时，卡片下方注明「另有较早取得的版本（取得日期）· 共 N 页 · 打开」。按 `edition_id` 直接打开任何已存版次仍然可以 |
+| `catalog.reader_books[]` | 旧链接（JC `#book=`）与检索结果的「在 PDF 中打开」**只**经由这份清单找到版次（`sun_book_key`／`jc_short_key` → `edition_id`），再读该版次页对应表里 `legacy_image_index` 所在的那一行。不读 `legacy.offset`（可能为 `null`），也不经由只带 `legacy.alias_candidate` 的版次。发行版没有这份清单时才退回各版次自己的 `legacy.sun_book_key` |
+| `legacy.alias_candidate` | 只用于一件事：打开这个版次本身时，册内检索以候选书的 `book_key` 查询，并用**这个版次自己的**页对应行定位（详情里的 `search_book_key`） |
+| 页对应行的 `legacy_basis` | 透传到 `/pages`（`same-bytes`、`image+text`、`image-match`、`text-anchor`、`between-anchors`…），仅供诊断；`legacy_score` 不外送。`legacy_image_index` 为 `null` 仍然表示「没有链接」 |
+| `newer_edition_id`／`supersedes_edition_id` | 同一本书在本站的两份文件互相指向；界面两边各自标明，不合并 |
+| 下载行的 `sources[]` | 可有两个 `vps`（各带 `edition_id`、`platform_current`）。每个已存版次各成一个来源，网址仍由已载入的版次推得；指向 `learn-only` 或未存版次的 `vps` 项被丢弃；指向不存在的版次则整个发行版无效 |
+| 取得日期 | `source.learn_acquired_at`（文件来自 learn 发行版时，是该发行版自己的取得时间）优先，否则 `source.retrieved_at`；API 字段名 `acquired_at` |
+
+载入时另外拒绝的情形：同一 `work_id` 有两个 `preview_default: true`；`preview_default: true` 的版次本站没有文件；`holding: "sun"` 却没有 `storage.vps`；`holding` 不是上列取值；`preview_default` 不是布尔值；`reader_books` 指向不存在的版次。
+
+界面上的结果：
+
+- 阅读器在同一本书有两份文件时，固定显示一条说明：当前打开的是「平台现行文件」还是「较早取得（取得于 YYYY-MM-DD）」、各自页数，以及「切换到…（从第 1 页）」。两份文件之间没有逐页对应，切换一律从第 1 页开始并说明原因，页码不沿用。
+- 旧链接或检索链接落在非默认版次时（修订 3 有 34 本：20 本初中、14 本高中），说明改为「此旧链接／此检索结果打开的是较早取得…：页码只在这一份文件上有逐页对应。本书默认显示的是另一份：平台现行文件」，并提供切换。
+- 整本书没有任何可对应页的两本（北师大英语选必二、选必三）：旧链接打开第 1 页并提示页码无法对应；检索结果不出现「在 PDF 中打开」。
+- 下载分页里，同一行的两份本站文件各有自己的按钮，标「本站 · 平台现行文件」「本站 · 较早取得 YYYY-MM-DD」，各带大小、页数与预览链接；官方平台来源收在「其他来源」并标「平台现行文件」。没有任何一个按钮会在两份文件之间替读者选择。
+- `/api/library/release` 的 `counts` 新增 `preview_cards`（书目卡片数）、`learn_only`、`reader_books`。修订 3 实测：224 个版次、190 个可预览、150 张卡片、34 个 learn-only、144 本 reader book。
+
 任何一项校验失败，整个发行版不载入；`/api/library/release` 的 `reason`／`pending_error` 给出原因（不含本机路径）。
 
 ## 3. 页码
@@ -214,7 +239,8 @@ python scripts/dev_library_server.py --release-dir <…/releases/<id>> --pdf-dir
 - `scripts/stage_clean_release.py` 的 `RELEASE_FILES`＋`RELEASE_TREES`（整棵 `frontend/vendor/pdfjs`，逐档对照 `VENDOR.json`）与 `scripts/build_release_manifest.py` 的 `SOURCE_ASSETS`＋`SOURCE_TREES` 是发布内容的两份清单；`tests/library/test_release_bundle.py` 把清单原样铺到临时目录后在子进程 `import main`，并检查四个页面、样式表、脚本（含 `library.js` 拼出的 PDF.js 路径）引用的每个本地文件都在里面，也检查 `backend/`、`frontend/` 下每个受版本控制的文件都在清单内。新增运行期文件而没加进清单，测试会红。
 - `release_manifest.json` 必须在最后一次改动代码之后重新生成。持有运行期数据（`data/index`）的机器照旧执行 `python scripts/build_release_manifest.py`；只改了代码、手边没有运行期数据时用 `python scripts/build_release_manifest.py --reuse-runtime-from release_manifest.json`：重算全部源码条目，运行期条目原样沿用并在档内注明（`runtime_assets_carried_from`），`deploy_vps.sh` 仍会在 VPS 上逐项核对。运行期数据有变动时不得用这个参数。
 - `deploy_vps.sh` 在停掉现行容器之前，会在候选映像内确认前端文件齐全、PDF.js 目录与 `VENDOR.json` 逐档相符、`import ai_guard, library` 成功。
-- 页脚版本：`frontend/assets/version.json` 为 `2026.10.10-r38`，`app.js` 的后备值 `DEFAULT_FRONTEND_VERSION` 同步；资源缓存键 `?v=20261010a`。之后再改 `library.js`／`library.css` 须同时更换四个页面里的缓存键。
+- 页脚版本：`frontend/assets/version.json` 为 `2026.10.11-r39`，`app.js` 的后备值 `DEFAULT_FRONTEND_VERSION` 同步。资源缓存键：`app.js`、`library.js`、`library.css` 为 `?v=20261011a`（`index.html`、`chuzhong.html`）；未改动的 `ai-client.js`、`dict.js` 仍是 `20261010a`。之后再改这三个文件须同时更换页面里的缓存键（`tests/library/test_release_bundle.py` 会检查三者同键、且与版本档一致）。
+- `--reuse-runtime-from` 会把上一份清单里 `runtime_assets_*` 的说明（例如 `runtime_assets_measured_from`，含主机上实读的哈希）连同运行期条目一起带过来。
 
 ## 10. 排错
 

@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.10.10-r38",
-  "updated_at": "2026-10-10",
+  "frontend_refactor_version": "2026.10.11-r39",
+  "updated_at": "2026-10-11",
   "history": [
+    {
+      "version": "2026.10.11-r39",
+      "date": "2026-10-11",
+      "summary": "PDF 预览 shows one card per book (the preview-default file) and names any other held file of the same book; the viewer says which file is open (平台现行文件 / 较早取得 with its date) and switches to the other from page 1; old links and search links resolve through the catalog's reader-book list and page-map rows only; 教材下载 gives each file held on this site its own labelled button; the 真题 page's textbook link opens the in-site 教材下载 tab; asset cache key 20261011a for app.js, library.js, library.css"
+    },
     {
       "version": "2026.10.10-r38",
       "date": "2026-10-10",

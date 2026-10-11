@@ -67,6 +67,7 @@ STATUSES = ("active", "superseded", "pending-verification")
 CORPUS_RELATIONS = ("same-bytes", "aligned", "partial", "different-edition", "none")
 SEARCHABLE_RELATIONS = ("same-bytes", "aligned", "partial")
 TEXT_IDENTITIES = ("same-file", "page-aligned-other-printing")
+HOLDINGS = ("sun", "learn-only")   # release revision 3; absent / null in older releases
 STAGE_ORDER = {"小学": 0, "初中": 1, "高中": 2}
 SOURCE_LABELS = {"vps": "本站", "drive": "云端硬盘", "upstream": "官方平台"}
 SOURCE_ORDER = ("vps", "drive", "upstream")
@@ -243,6 +244,7 @@ class PageMap:
     by_jks: Mapping[int, int]
     printed_verified_pages: int
     legacy_mapped_pages: int
+    bases: tuple = ()   # per page: how the legacy row was established (diagnostic), or None
 
     def row(self, pdf_page: int) -> dict:
         printed, verified, legacy, ocr, jks = self.rows[pdf_page - 1]
@@ -252,6 +254,7 @@ class PageMap:
             "printed_label": printed if verified else None,
             "printed_verified": bool(verified),
             "legacy_image_index": legacy,
+            "legacy_basis": (self.bases[pdf_page - 1] if self.bases and legacy is not None else None),
             "ocr_page": ocr,
         }
         return out
@@ -279,6 +282,9 @@ class Edition:
     page_map: Optional[PageMap]
     haystack: str
     order: int
+    # Book key for scoping the in-book search of THIS edition: its own reader book, or the
+    # book named by legacy.alias_candidate (rows of this edition only; never used for links).
+    search_book_key: Optional[str] = None
 
     @property
     def sha12(self) -> str:
@@ -290,7 +296,7 @@ class Edition:
 
     @property
     def searchable(self) -> bool:
-        return bool(self.sun_book_key) and self.corpus_relation in SEARCHABLE_RELATIONS
+        return bool(self.search_book_key) and self.corpus_relation in SEARCHABLE_RELATIONS
 
     def file_url(self, download: bool = False) -> str:
         url = f"/files/pdf/{self.edition_id}/{self.sha12}/{quote(self.filename, safe='')}"
@@ -394,6 +400,7 @@ def _parse_page_map(raw: Any, edition_id: str, pages: int, sha256: str) -> PageM
     if not isinstance(rows_raw, list) or len(rows_raw) != pages:
         raise ReleaseError(f"page map length does not equal PDF page count: {edition_id}")
     rows = []
+    bases: list = []
     by_legacy: dict[int, int] = {}
     by_jks: dict[int, int] = {}
     verified_count = 0
@@ -424,6 +431,7 @@ def _parse_page_map(raw: Any, edition_id: str, pages: int, sha256: str) -> PageM
         if verified:
             verified_count += 1
         rows.append((printed, verified, legacy, ocr, jks))
+        bases.append(_opt_str(item.get("legacy_basis"), 40))
     return PageMap(
         version=version,
         rows=tuple(rows),
@@ -431,6 +439,7 @@ def _parse_page_map(raw: Any, edition_id: str, pages: int, sha256: str) -> PageM
         by_jks=by_jks,
         printed_verified_pages=verified_count,
         legacy_mapped_pages=len(by_legacy),
+        bases=tuple(bases),
     )
 
 
@@ -477,9 +486,22 @@ def _build_edition(raw: Any, order: int, release_dir: Path, listed: set[str], se
             raise ReleaseError(f"active edition without a PDF: {edition_id}")
         pdf, sha256, pages, size = {}, "", 0, 0
     storage = raw.get("storage") if isinstance(raw.get("storage"), dict) else {}
+    # `holding` (revision 3) says whose bytes these are.  Only "sun" may ever be previewed or
+    # offered as a 本站 source; "learn-only" records are informational.
+    declares_holding = "holding" in raw
+    holding = raw.get("holding")
+    if holding is not None and holding not in HOLDINGS:
+        raise ReleaseError(f"invalid holding: {edition_id}")
     has_vps = has_pdf and isinstance(storage.get("vps"), dict)
-    if has_pdf and not has_vps and settings.preview_policy == "present":
+    if holding == "sun" and not has_vps:
+        raise ReleaseError(f"holding is sun but storage.vps is missing: {edition_id}")
+    if declares_holding and holding != "sun":
+        has_vps = False
+    elif has_pdf and not has_vps and settings.preview_policy == "present":
         has_vps = (settings.pdf_root / f"{sha256}.pdf").is_file()
+    preview_default = raw.get("preview_default")
+    if preview_default is not None and not isinstance(preview_default, bool):
+        raise ReleaseError(f"preview_default must be boolean: {edition_id}")
     drive = _drive_source(storage.get("drive"))
     upstream = storage.get("upstream") if isinstance(storage.get("upstream"), dict) else {}
     legacy = raw.get("legacy") if isinstance(raw.get("legacy"), dict) else {}
@@ -572,6 +594,12 @@ def _build_edition(raw: Any, order: int, release_dir: Path, listed: set[str], se
             "page_map_version": _opt_str(processing.get("page_map_version"), 80),
         },
         "legacy": {"sun_book_key": sun_book_key, "jc_short_key": jc_short_key, "jks_slug": jks_slug},
+        "holding": holding,
+        "preview_default": preview_default,
+        # When this file was obtained (the learn release's own acquisition time when the
+        # bytes came from there, else our retrieval time).
+        "acquired_at": _opt_str(source.get("learn_acquired_at"), 40) or _opt_str(source.get("retrieved_at"), 40),
+        "in_grid": False,   # set by load_release
         "storage": {
             "vps": has_vps,
             "drive": drive,
@@ -579,7 +607,12 @@ def _build_edition(raw: Any, order: int, release_dir: Path, listed: set[str], se
         },
     }
     haystack = " ".join(filter(None, [title, volume, publisher, edition_label, subject, stage])).lower()
+    candidate = legacy.get("alias_candidate") if isinstance(legacy.get("alias_candidate"), dict) else {}
+    candidate_key = candidate.get("sun_book_key")
+    if not isinstance(candidate_key, str) or not (0 < len(candidate_key) <= MAX_BOOK_KEY_CHARS):
+        candidate_key = None
     return Edition(
+        search_book_key=sun_book_key or candidate_key,
         edition_id=edition_id, record=record, stage=stage, subject=subject, title=title,
         region=region, status=status, sha256=sha256, pages=pages, size=size, has_vps=has_vps,
         filename=filename, sun_book_key=sun_book_key, jc_short_key=jc_short_key, jks_slug=jks_slug,
@@ -606,10 +639,12 @@ def _build_download(raw: Any, editions: Mapping[str, Edition], settings: Setting
         size = None
 
     by_kind: dict[str, dict] = {}
+    # 本站 sources: one per HELD edition named by the row (its own edition and every `vps`
+    # entry).  Each keeps its own edition id and platform_current flag so the page can label
+    # them separately; URLs are always derived from the loaded release, never from the row.
+    local: dict[str, Edition] = {}
     if edition is not None and edition.has_vps:
-        # The URL is always derived from the loaded release, never from the row.
-        by_kind["vps"] = {"kind": "vps", "label": SOURCE_LABELS["vps"], "url": edition.file_url(download=True),
-                          "same_origin": True, "available": True, "bytes": edition.size}
+        local[edition.edition_id] = edition
         if size is None:
             size = edition.size
     raw_sources = raw.get("sources") if isinstance(raw.get("sources"), list) else []
@@ -621,7 +656,15 @@ def _build_download(raw: Any, editions: Mapping[str, Edition], settings: Setting
             continue
         kind = item.get("kind")
         if kind == "vps":
-            continue  # only the derived entry above is ever offered
+            ref = item.get("edition_id")
+            if ref is None:
+                continue  # old shape: the row's own edition, handled above
+            held = editions.get(ref) if isinstance(ref, str) else None
+            if held is None:
+                raise ReleaseError(f"download source points to unknown edition: {str(ref)[:96]}")
+            if held.has_vps:   # a learn-only or unplaced file is never a source of this site
+                local.setdefault(held.edition_id, held)
+            continue
         if kind == "drive":
             drive = _drive_source({**item, "shared": item.get("shared", False)})
             if drive is None and edition is not None:
@@ -640,12 +683,22 @@ def _build_download(raw: Any, editions: Mapping[str, Edition], settings: Setting
             if url is None:
                 dropped[0] += 1
             else:
-                by_kind.setdefault("upstream", {"kind": "upstream", "label": SOURCE_LABELS["upstream"], "url": url,
-                                                 "same_origin": False, "available": item.get("available", True) is not False})
+                by_kind.setdefault("upstream", {
+                    "kind": "upstream", "label": SOURCE_LABELS["upstream"], "url": url, "same_origin": False,
+                    "available": item.get("available", True) is not False,
+                    "platform_current": item.get("platform_current") if isinstance(item.get("platform_current"), bool) else None})
         else:
             dropped[0] += 1
     if "drive" not in by_kind and edition is not None and edition.record["storage"]["drive"]:
         by_kind["drive"] = dict(edition.record["storage"]["drive"])
+    vps_sources = [
+        {"kind": "vps", "label": SOURCE_LABELS["vps"], "url": held.file_url(download=True), "same_origin": True,
+         "available": True, "bytes": held.size, "pages": held.pages, "edition_id": held.edition_id,
+         "edition_label": held.record["edition_label"], "platform_current": held.record["platform_current"],
+         "acquired_at": held.record["acquired_at"], "previewable": held.previewable}
+        # the platform's current file first, the earlier one after it
+        for held in sorted(local.values(), key=lambda e: (e.record["platform_current"] is False, e.order))
+    ]
 
     stage = _opt_str(raw.get("stage"), 20)
     subject = _opt_str(raw.get("subject"), 40)
@@ -669,15 +722,17 @@ def _build_download(raw: Any, editions: Mapping[str, Edition], settings: Setting
         "platform_current": edition.record["platform_current"] if edition else None,
         "retrieved_at": edition.record["source"]["retrieved_at"] if edition else None,
         "newer_edition": None,   # filled by load_release
-        "sources": [by_kind[kind] for kind in SOURCE_ORDER if kind in by_kind],
-        # Other files held for the same source id are different editions: listed, never merged.
+        "sources": vps_sources + [by_kind[kind] for kind in SOURCE_ORDER if kind in by_kind],
+        # Other files held for the same source id that are NOT offered above are different
+        # editions with their own row: listed, never merged.
         "other_editions": [
             {"edition_id": other.edition_id, "edition_label": other.record["edition_label"],
              "status": other.status, "previewable": other.previewable,
              "platform_current": other.record["platform_current"],
              "retrieved_at": other.record["source"]["retrieved_at"]}
             for other in (editions.get(i) for i in (raw.get("held_other_edition_ids") or [])[:8] if isinstance(i, str))
-            if other is not None and (edition is None or other.edition_id != edition.edition_id)
+            if other is not None and other.edition_id not in local and other.record["holding"] != "learn-only"
+            and (edition is None or other.edition_id != edition.edition_id)
         ],
     }
     haystack = " ".join(filter(None, [title, edition_label, publisher, subject, stage])).lower()
@@ -722,11 +777,13 @@ def load_release(catalog_root: Path, settings: Settings, release_id: Optional[st
         raise ReleaseError("unsupported catalog schema")
 
     catalog = _read_json(release_dir / "catalog.json", MAX_CATALOG_JSON_BYTES)
+    reader_books = None
     if isinstance(catalog, dict):
         if _contract(catalog) not in (None, SCHEMA):
             raise ReleaseError("unsupported catalog schema")
         if catalog.get("release_id") not in (None, release_id):
             raise ReleaseError("catalog.json belongs to another release")
+        reader_books = catalog.get("reader_books")
         catalog = catalog.get("editions")
     if not isinstance(catalog, list):
         raise ReleaseError("catalog.json has no editions list")
@@ -744,6 +801,25 @@ def load_release(catalog_root: Path, settings: Settings, release_id: Optional[st
             if ref is not None and (ref not in editions or ref == edition.edition_id):
                 edition.record[key] = None
 
+    # One card per work in the preview grid: the edition marked preview_default.
+    uses_default = any(e.record["preview_default"] is not None for e in editions.values())
+    defaults: dict[str, str] = {}
+    for edition in editions.values():
+        if edition.record["preview_default"] is True:
+            work = edition.record["work_id"] or "\x00" + edition.edition_id
+            if work in defaults:
+                raise ReleaseError(f"two preview_default editions in one work: {defaults[work]} / {edition.edition_id}")
+            if not edition.has_vps:
+                raise ReleaseError(f"preview_default edition is not held on this site: {edition.edition_id}")
+            defaults[work] = edition.edition_id
+    for edition in editions.values():
+        listed_in_grid = edition.previewable and edition.status == "active"
+        if listed_in_grid and uses_default and edition.record["preview_default"] is not True:
+            # shown only if its work has no default at all (never the case in a valid release)
+            listed_in_grid = (edition.record["work_id"] or "") not in defaults
+        edition.record["in_grid"] = listed_in_grid
+        edition.record["default_edition_id"] = defaults.get(edition.record["work_id"] or "") if uses_default else None
+
     downloads_raw = _read_json(release_dir / "downloads.json", MAX_CATALOG_JSON_BYTES)
     if isinstance(downloads_raw, dict):
         if downloads_raw.get("release_id") not in (None, release_id):
@@ -760,6 +836,7 @@ def load_release(catalog_root: Path, settings: Settings, release_id: Optional[st
     # serves a different file under the same id) is listed as its own row: different
     # editions are never merged into one entry.
     referenced = {row.record["edition_id"] for row in downloads if row.record["edition_id"]}
+    referenced |= {src["edition_id"] for row in downloads for src in row.record["sources"] if src["kind"] == "vps"}
     for edition in editions.values():
         if edition.has_vps and edition.edition_id not in referenced:
             downloads.append(_build_download({
@@ -782,27 +859,51 @@ def load_release(catalog_root: Path, settings: Settings, release_id: Optional[st
     downloads.sort(key=lambda row: (STAGE_ORDER.get(row.stage or "", 9), row.subject or "", row.record["title"],
                                     row.record["platform_current"] is False))
 
+    # Old links and search links name a reader book.  Which edition owns a reader book is
+    # read from catalog.reader_books when the release has it (never from legacy.offset, and
+    # never from an edition that only carries legacy.alias_candidate).  Releases without the
+    # list fall back to the editions' own legacy.sun_book_key.
     sun_pairs, short_pairs, jks_pairs = [], [], []
+    if isinstance(reader_books, list):
+        for item in reader_books:
+            if not isinstance(item, dict):
+                raise ReleaseError("reader_books entry is not an object")
+            key, owner, short = item.get("sun_book_key"), item.get("edition_id"), item.get("jc_short_key")
+            if not isinstance(key, str) or not (0 < len(key) <= MAX_BOOK_KEY_CHARS):
+                raise ReleaseError("reader_books entry without sun_book_key")
+            if owner is None:
+                continue
+            if not isinstance(owner, str) or owner not in editions:
+                raise ReleaseError(f"reader book points to unknown edition: {str(owner)[:96]}")
+            sun_pairs.append((key, owner))
+            short_pairs.append((short_key_for(key), owner))
+            if isinstance(short, str) and SHORT_KEY_RE.fullmatch(short):
+                short_pairs.append((short, owner))
+    else:
+        for edition in editions.values():
+            if edition.sun_book_key:
+                sun_pairs.append((edition.sun_book_key, edition.edition_id))
+                short_pairs.append((short_key_for(edition.sun_book_key), edition.edition_id))
+            if edition.jc_short_key:
+                short_pairs.append((edition.jc_short_key, edition.edition_id))
     for edition in editions.values():
-        if edition.sun_book_key:
-            sun_pairs.append((edition.sun_book_key, edition.edition_id))
-            short_pairs.append((short_key_for(edition.sun_book_key), edition.edition_id))
-        if edition.jc_short_key:
-            short_pairs.append((edition.jc_short_key, edition.edition_id))
         if edition.jks_slug:
             jks_pairs.append((edition.jks_slug, edition.edition_id))
 
     previewable = [e for e in editions.values() if e.previewable]
     by_stage: dict[str, int] = {}
     for edition in previewable:
-        if edition.status != "active":
-            continue  # the grid lists active editions only
+        if not edition.record["in_grid"]:
+            continue  # the grid lists one active, held edition per work
         by_stage[edition.stage or "未标注"] = by_stage.get(edition.stage or "未标注", 0) + 1
     summary = {
         "counts": {
             "editions": len(editions),
             "previewable": len(previewable),
             "active_previewable": sum(1 for e in previewable if e.status == "active"),
+            "preview_cards": sum(1 for e in previewable if e.record["in_grid"]),
+            "learn_only": sum(1 for e in editions.values() if e.record["holding"] == "learn-only"),
+            "reader_books": len({key for key, _ in sun_pairs}),
             "downloads": len(downloads),
             "downloads_on_site": sum(1 for row in downloads if any(s["kind"] == "vps" for s in row.record["sources"])),
             "downloads_on_drive": sum(1 for row in downloads if any(s["kind"] == "drive" for s in row.record["sources"])),
@@ -1029,6 +1130,9 @@ def _edition_card(edition: Edition) -> dict:
         "bytes": edition.size,
         "platform_current": record["platform_current"],
         "newer_edition_id": record["newer_edition_id"],
+        "holding": record["holding"],
+        "preview_default": record["preview_default"],
+        "acquired_at": record["acquired_at"],
         "badges": {
             "searchable": edition.searchable and bool(page_map and page_map.legacy_mapped_pages > 0),
             "corpus_relation": edition.corpus_relation,
@@ -1056,7 +1160,24 @@ def _edition_brief(editions: Mapping[str, Edition], downloads, edition_id: Optio
         "publisher": other.record["publisher"], "status": other.status, "pages": other.pages or None,
         "previewable": other.previewable, "platform_current": other.record["platform_current"],
         "update_time": other.record["source"]["update_time"], "download_row_id": row_id,
+        "holding": other.record["holding"], "preview_default": other.record["preview_default"],
+        "acquired_at": other.record["acquired_at"],
     }
+
+
+def _held_siblings(release: "Release", edition: Edition) -> list[dict]:
+    """Other editions of the same work whose file is held here (never learn-only records)."""
+    work = edition.record["work_id"]
+    if not work:
+        return []
+    return [
+        {"edition_id": other.edition_id, "edition_label": other.record["edition_label"], "pages": other.pages,
+         "platform_current": other.record["platform_current"], "preview_default": other.record["preview_default"],
+         "acquired_at": other.record["acquired_at"], "status": other.status}
+        for other in release.editions.values()
+        if other.record["work_id"] == work and other.edition_id != edition.edition_id
+        and other.previewable and other.status == "active"
+    ][:6]
 
 
 def _parse_range(header: Optional[str], size: int):
@@ -1167,6 +1288,13 @@ class Library:
         found = [release.editions[i] for i in ids]
         return [e for e in found if e.previewable and e.status == "active"]
 
+    @staticmethod
+    def _which(edition: Edition) -> dict:
+        """Tell the page which edition a link landed on, so it can say so."""
+        default_id = edition.record.get("default_edition_id")
+        return {"preview_default": edition.record["preview_default"],
+                "default_edition_id": default_id if default_id != edition.edition_id else None}
+
     def _resolve_one(self, release: Release, ids: tuple[str, ...], section: int) -> dict:
         if not ids:
             return {"available": False, "reason": "unknown-book"}
@@ -1183,7 +1311,7 @@ class Library:
         if len(hits) == 1:
             edition, pdf_page = hits[0]
             return {"available": True, "edition_id": edition.edition_id, "pdf_page": pdf_page,
-                    "text_identity": edition.record["corpus"]["text_identity"]}
+                    "text_identity": edition.record["corpus"]["text_identity"], **self._which(edition)}
         if len(hits) > 1:
             return {"available": False, "reason": "ambiguous"}
         return {"available": False, "reason": "page-not-mapped"}
@@ -1223,15 +1351,18 @@ class Library:
             start = _int_param(offset, "offset", 0, 0, MAX_OFFSET)
             size = _int_param(limit, "limit", DEFAULT_EDITIONS_LIMIT, 1, MAX_LIST_LIMIT)
             release = lib._release()
+            # one card per work: the preview-default edition (releases without the field list
+            # every active held edition, as before)
             pool = [e for e in release.editions.values()
-                    if e.previewable and e.status == "active"
+                    if e.record["in_grid"]
                     and (not phase or e.stage == phase) and (not region or e.region == region)]
             subjects = _counts(e.subject for e in pool)
             rows = [e for e in pool if (not subject or e.subject == subject) and _matches(e.haystack, terms)]
             return lib._json({
                 "total": len(rows), "offset": start, "limit": size,
                 "subjects": subjects,
-                "editions": [_edition_card(e) for e in rows[start:start + size]],
+                "editions": [{**_edition_card(e), "other_held_editions": _held_siblings(release, e)}
+                             for e in rows[start:start + size]],
             }, release)
 
         @router.get("/api/library/editions/{edition_id}")
@@ -1247,6 +1378,11 @@ class Library:
                 "corpus": edition.record["corpus"],
                 "processing": edition.record["processing"],
                 "legacy": edition.record["legacy"],
+                # book key for the in-book search box (own reader book, or the alias candidate's)
+                "search_book_key": edition.search_book_key if edition.searchable else None,
+                "other_held_editions": _held_siblings(release, edition),
+                "default_edition_id": (edition.record.get("default_edition_id")
+                                       if edition.record.get("default_edition_id") != edition.edition_id else None),
                 "previewable": edition.previewable,
                 "searchable": edition.searchable and bool(page_map and page_map.legacy_mapped_pages > 0),
                 "file": ({"url": edition.file_url(), "download_url": edition.file_url(download=True),
@@ -1277,7 +1413,7 @@ class Library:
                      "previewable": other.previewable}
                     for other in release.editions.values()
                     if edition.record["work_id"] and other.record["work_id"] == edition.record["work_id"]
-                    and other.edition_id != edition.edition_id
+                    and other.edition_id != edition.edition_id and other.record["holding"] != "learn-only"
                 ][:12],
             })
             return lib._json({"edition": payload}, release)
@@ -1299,7 +1435,8 @@ class Library:
             last = min(last, edition.pages)
             if edition.page_map is None:
                 rows = [{"pdf_page": n, "printed_label": None, "printed_verified": False,
-                         "legacy_image_index": None, "ocr_page": None} for n in range(first, last + 1)]
+                         "legacy_image_index": None, "legacy_basis": None, "ocr_page": None}
+                        for n in range(first, last + 1)]
             else:
                 rows = [edition.page_map.row(n) for n in range(first, last + 1)]
             return lib._json({"edition_id": edition.edition_id, "pages": edition.pages, "from": first, "to": last,
@@ -1396,13 +1533,13 @@ class Library:
                     edition, pdf_page = hits[0]
                     return lib._json({"available": True, "exact": True, "kind": kind,
                                       "edition_id": edition.edition_id, "pdf_page": pdf_page,
-                                      "title": edition.title}, release)
+                                      "title": edition.title, **lib._which(edition)}, release)
             if len(candidates) != 1:
                 return lib._json({"available": False, "exact": False, "kind": kind, "reason": "ambiguous"}, release)
             edition = candidates[0]
             reason = "no-page" if not has_page else ("bad-page" if not page_valid else "page-not-mapped")
             return lib._json({"available": True, "exact": False, "kind": kind, "edition_id": edition.edition_id,
-                              "pdf_page": 1, "title": edition.title, "reason": reason}, release)
+                              "pdf_page": 1, "title": edition.title, "reason": reason, **lib._which(edition)}, release)
 
         def _filter_downloads(release: Release, stage, subject, publisher, region, terms):
             return [row for row in release.downloads

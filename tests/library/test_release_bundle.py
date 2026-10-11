@@ -93,8 +93,9 @@ class ReleaseBundleTests(unittest.TestCase):
     def local_refs(self, text: str) -> set[str]:
         refs = set()
         for value in re.findall(r"""(?:href|src)\s*=\s*["']([^"'#]+)["']""", text):
-            if re.match(r"^(?:[a-z]+:)?//|^[a-z]+:", value) or value.startswith("/") and not value.startswith(("/assets/", "/vendor/")):
-                continue
+            if re.match(r"^(?:[a-z]+:)?//|^[a-z]+:", value) or value.startswith("?") \
+                    or value.startswith("/") and not value.startswith(("/assets/", "/vendor/")):
+                continue   # external, in-page (?view=…) or another page
             refs.add(value.split("?", 1)[0].lstrip("/"))
         return refs
 
@@ -185,6 +186,29 @@ class ReleaseBundleTests(unittest.TestCase):
         for relative in self.files:
             self.assertFalse(relative.endswith((".pyc", ".env", ".pem", ".key")), relative)
             self.assertNotIn("__pycache__", relative)
+
+
+class PageHookTests(unittest.TestCase):
+    """The few lines the library tabs own in the existing pages."""
+
+    def test_changed_assets_share_one_new_cache_key(self):
+        for page in ("index.html", "chuzhong.html"):
+            html = (ROOT / "frontend" / page).read_text(encoding="utf-8")
+            keys = {name: re.search(re.escape(name) + r"\?v=([0-9a-z]+)", html).group(1)
+                    for name in ("assets/app.js", "assets/library.js", "assets/library.css")}
+            self.assertEqual(len(set(keys.values())), 1, keys)
+            self.assertNotIn(keys["assets/app.js"], ("20260507a", "20261010a"), page)
+        version = json.loads((ROOT / "frontend" / "assets" / "version.json").read_text(encoding="utf-8"))
+        app_js = (ROOT / "frontend" / "assets" / "app.js").read_text(encoding="utf-8")
+        self.assertIn(f"const DEFAULT_FRONTEND_VERSION = '{version['frontend_refactor_version']}';", app_js)
+        self.assertEqual(version["history"][0]["version"], version["frontend_refactor_version"])
+
+    def test_no_page_sends_readers_to_the_standalone_download_site(self):
+        for page in PAGES:
+            html = (ROOT / "frontend" / page).read_text(encoding="utf-8")
+            self.assertNotIn("jks.bdfz.net", html, page)
+        index = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('href="?view=downloads" data-lib-view="downloads"', index)
 
 
 class DeployScriptStaticTests(unittest.TestCase):

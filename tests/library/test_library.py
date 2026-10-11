@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -358,7 +359,7 @@ class PageTests(Base):
         body = self.get(f"/api/library/editions/{self.eid('e1')}/pages").json()
         self.assertEqual((body["from"], body["to"], body["pages"]), (1, 12, 12))
         self.assertEqual(body["rows"][0], {"pdf_page": 1, "printed_label": None, "printed_verified": False,
-                                           "legacy_image_index": 0, "ocr_page": 1})
+                                           "legacy_image_index": 0, "legacy_basis": None, "ocr_page": 1})
         self.assertEqual(body["rows"][2]["printed_label"], "1")
         self.assertTrue(body["rows"][2]["printed_verified"])
 
@@ -371,8 +372,10 @@ class PageTests(Base):
         body = self.get(f"/api/library/editions/{self.eid('e2')}/pages", params={"from": "2", "to": "3"}).json()
         self.assertFalse(body["page_map_available"])
         self.assertEqual(body["rows"], [
-            {"pdf_page": 2, "printed_label": None, "printed_verified": False, "legacy_image_index": None, "ocr_page": None},
-            {"pdf_page": 3, "printed_label": None, "printed_verified": False, "legacy_image_index": None, "ocr_page": None}])
+            {"pdf_page": 2, "printed_label": None, "printed_verified": False, "legacy_image_index": None,
+             "legacy_basis": None, "ocr_page": None},
+            {"pdf_page": 3, "printed_label": None, "printed_verified": False, "legacy_image_index": None,
+             "legacy_basis": None, "ocr_page": None}])
 
     def test_caps(self):
         url = f"/api/library/editions/{self.eid('e1')}/pages"
@@ -426,7 +429,7 @@ class ResolveTests(Base):
         body = self.get("/api/library/resolve", params={"items": f"{key}.0,{key}.99,{other}.2,ffffffffffff.3"}).json()
         self.assertEqual(body["results"], [
             {"item": f"{key}.0", "available": True, "edition_id": self.eid("e1"), "pdf_page": 1,
-             "text_identity": "page-aligned-other-printing"},
+             "text_identity": "page-aligned-other-printing", "preview_default": None, "default_edition_id": None},
             {"item": f"{key}.99", "available": False, "reason": "page-not-mapped"},
             {"item": f"{other}.2", "available": False, "reason": "ambiguous"},
             {"item": "ffffffffffff.3", "available": False, "reason": "unknown-book"}])
@@ -958,7 +961,10 @@ class GeneratorShapeTests(Base):
 
         files = {
             "catalog.json": {"contract": "sun-catalog-v1", "release_id": cls.RID, "generated_at": "2026-10-10T10:15:00Z",
-                             "region_default": "CN", "editions": [a, b, c], "reader_books": []},
+                             "region_default": "CN", "editions": [a, b, c],
+                             "reader_books": [{"sun_book_key": synthetic.REAL_SUN_KEY, "edition_id": cls.id_a,
+                                               "jc_short_key": library.short_key_for(synthetic.REAL_SUN_KEY),
+                                               "candidate_edition_ids": [], "content_decision": None}]},
             "downloads.json": {"contract": "sun-catalog-v1/downloads", "release_id": cls.RID, "groups": [], "not_enumerated": [],
                                "rows": [row(cls.SID_A, cls.id_a), row(cls.SID_B, None, held_other_edition_ids=[cls.id_b], title=None),
                                         row(cls.SID_C, None)]},
@@ -1122,7 +1128,8 @@ class RevisionTwoTests(Base):
         self.assertEqual(body["newer_edition"], {
             "edition_id": self.new_id, "title": "义务教育教科书·物理 八年级 上册", "edition_label": "人教版",
             "publisher": "人民教育出版社", "status": "pending-verification", "pages": None, "previewable": False,
-            "platform_current": True, "update_time": "2026-08-18T00:00:00Z", "download_row_id": self.SID})
+            "platform_current": True, "update_time": "2026-08-18T00:00:00Z", "download_row_id": self.SID,
+            "holding": None, "preview_default": None, "acquired_at": "2026-03-15T08:09:07Z"})
         # the page of a not-current edition offers this site's file only: no upstream link under its name
         self.assertTrue(body["file"]["download_url"].startswith(f"/files/pdf/{self.old_id}/"))
         self.assertEqual(body["sources"], [])
@@ -1179,6 +1186,487 @@ class RevisionTwoTests(Base):
         for text in texts:
             self.assertNotIn("最新", text)
             self.assertNotRegex(text, r"(?i)\blatest\b")
+
+
+# ── Release revision 3: holding / preview_default / reader_books / two held files ──
+
+R3_REAL_DIR = Path(os.environ.get("SUN_R3_RELEASE_DIR",
+                                  "/private/tmp/cf-task-sun-consolidation-20261010/catalog-release/20261011T015939Z-4fbb031a"))
+R3_REAL_PDFS = Path(os.environ.get("SUN_R3_PDF_DIR", "/private/tmp/cf-task-sun-consolidation-20261010/acquire/pdf-all-r3"))
+OLD_REAL_DIR = R3_REAL_DIR.parent / "20261010T121722Z-14ed33c8"
+BSD_KEYS = ("630f59af8868", "669bd1a43680")   # 北师大 英语 选必二、选必三: no legacy page is mappable
+
+
+class RevisionThreeTests(Base):
+    """A hand-built release in the shape of revision 3."""
+
+    S1 = "11110000-1111-4222-8333-444444444444"   # 初中 物理: two held files
+    S2 = "22220000-1111-4222-8333-444444444444"   # 高中 语文: held file + learn-only record
+    S3 = "33330000-1111-4222-8333-444444444444"   # a reader book whose file is another edition
+    BSD_KEY = "高中_英语_样例_不可对应"
+
+    @classmethod
+    def r3_parts(cls):
+        info = cls.info
+        old_pdf, new_pdf, cur_pdf, bsd_pdf = info["e3"]["pdf"], info["e7"]["pdf"], info["e1"]["pdf"], info["e2"]["pdf"]
+        ids = {
+            "old": f"cn-{cls.S1}-{old_pdf['sha256'][:12]}", "new": f"cn-{cls.S1}-{new_pdf['sha256'][:12]}",
+            "cur": f"cn-{cls.S2}-{cur_pdf['sha256'][:12]}", "bsd": f"cn-{cls.S3}-{bsd_pdf['sha256'][:12]}",
+            # the learn-only record deliberately names bytes that DO exist in the PDF directory
+            "learn": f"cn-{cls.S2}-{info['e4']['pdf']['sha256'][:12]}",
+        }
+
+        def edition(key, sid, pdf, work, **over):
+            record = {
+                "edition_id": ids[key], "work_id": work, "region": "CN", "stage": "初中", "subject": "物理",
+                "title": "义务教育教科书·物理 八年级 上册", "volume": None, "publisher": "人民教育出版社", "edition_label": "人教版",
+                "holding": "sun", "preview_default": True, "platform_current": True, "newer_edition_id": None,
+                "supersedes_edition_id": None, "metadata_basis": "smartedu-details", "coexists_reason": None,
+                "source": {"provider": "smartedu", "source_id": sid, "id_basis": "x", "retrieved_at": "2026-10-11T01:16:19Z",
+                           "update_time": None, "online_time": None, "platform_current": True},
+                "pdf": dict(pdf), "storage": {"vps": {"path": f"pdf/{pdf['sha256']}.pdf"}, "drive": None, "learn": None,
+                                              "upstream": {"available": True, "url": f"https://jks-ai.bdfz.net/pdf/{sid}"}},
+                "legacy": {"sun_book_key": None, "jc_short_key": None, "jks_slug": None, "alias_candidate": None,
+                           "basis": None, "offset": None},
+                "corpus": {"relation": "none", "basis": "x", "coverage": None, "text_identity": None},
+                "processing": {}, "status": "active",
+            }
+            for name, value in over.items():
+                if isinstance(value, dict) and isinstance(record.get(name), dict):
+                    record[name] = {**record[name], **value}
+                else:
+                    record[name] = value
+            return record
+
+        old = edition("old", cls.S1, old_pdf, "cnw-1", preview_default=False, platform_current=False, newer_edition_id=ids["new"],
+                      source={"retrieved_at": "2026-03-15T08:08:00Z", "platform_current": False},
+                      # a misleading offset on purpose: pages must come from the rows, never from this
+                      legacy={"sun_book_key": synthetic.SECOND_SUN_KEY, "basis": "bytes:source-pdf", "offset": 3,
+                              "jc_short_key": library.short_key_for(synthetic.SECOND_SUN_KEY)},
+                      corpus={"relation": "same-bytes", "basis": "bytes", "coverage": 1.0, "text_identity": "same-file"})
+        new = edition("new", cls.S1, new_pdf, "cnw-1", supersedes_edition_id=ids["old"],
+                      legacy={"alias_candidate": {"sun_book_key": synthetic.SECOND_SUN_KEY,
+                                                  "jc_short_key": library.short_key_for(synthetic.SECOND_SUN_KEY), "basis": "x"}},
+                      corpus={"relation": "aligned", "basis": "content", "coverage": 1.0,
+                              "text_identity": "page-aligned-other-printing"})
+        cur = edition("cur", cls.S2, cur_pdf, "cnw-2", stage="高中", subject="语文", title="普通高中教科书·语文 必修 上册",
+                      supersedes_edition_id=ids["learn"],
+                      legacy={"sun_book_key": synthetic.REAL_SUN_KEY, "basis": "content:per-page-comparison", "offset": None,
+                              "jc_short_key": library.short_key_for(synthetic.REAL_SUN_KEY)},
+                      corpus={"relation": "partial", "basis": "content", "coverage": 0.9,
+                              "text_identity": "page-aligned-other-printing"})
+        learn = edition("learn", cls.S2, info["e4"]["pdf"], "cnw-2", stage="高中", subject="语文",
+                        title="普通高中教科书·语文 必修 上册", holding="learn-only", preview_default=False, platform_current=False,
+                        newer_edition_id=ids["cur"],
+                        source={"retrieved_at": None, "learn_acquired_at": "2026-07-15T10:24:45+00:00", "platform_current": False},
+                        storage={"vps": None, "learn": {"asset_id": "8094f5f9ded8045b", "key": "books/8094f5f9ded8045b/book.pdf"},
+                                 "upstream": {"available": False, "url": None}})
+        bsd = edition("bsd", cls.S3, bsd_pdf, "cnw-3", stage="高中", subject="英语", title="普通高中教科书·英语 选择性必修 第二册",
+                      legacy={"sun_book_key": cls.BSD_KEY, "basis": "identifier:jc-content-id",
+                              "jc_short_key": library.short_key_for(cls.BSD_KEY)},
+                      corpus={"relation": "different-edition", "basis": "content", "coverage": None, "text_identity": None})
+
+        def page_map(key, pdf, rows):
+            return {"contract": "sun-catalog-v1/page-map", "edition_id": ids[key], "pdf_sha256": pdf["sha256"], "pages": rows}
+
+        def row(n, legacy=None, basis=None, score=None):
+            return {"pdf_page": n, "printed_label": None, "printed_verified": False, "legacy_image_index": legacy,
+                    "legacy_basis": basis, "legacy_score": score, "ocr_page": None, "text_layer": "text"}
+
+        maps = {
+            ids["old"]: page_map("old", old_pdf, [row(n, n - 1, "same-bytes") for n in range(1, 7)]),
+            # the newer file has one page added in front: legacy index i is on pdf page i + 2
+            ids["new"]: page_map("new", new_pdf, [row(1)] + [row(n, n - 2, "image+text", 0.95) for n in range(2, 8)]),
+            # offsets change inside the book and two pages are not proven
+            ids["cur"]: page_map("cur", cur_pdf, [row(1, 0, "image-match", 0.9), row(2, 1, "text-anchor"), row(3), row(4, 2, "between-anchors"),
+                                                  row(5, 3, "image+text", 0.97), row(6)] + [row(n, n - 2, "image-match", 0.9) for n in range(7, 13)]),
+            ids["bsd"]: page_map("bsd", bsd_pdf, [row(n) for n in range(1, 9)]),
+        }
+        reader_books = [
+            {"sun_book_key": synthetic.SECOND_SUN_KEY, "jc_short_key": library.short_key_for(synthetic.SECOND_SUN_KEY),
+             "edition_id": ids["old"], "candidate_edition_ids": [ids["new"]], "content_decision": None},
+            {"sun_book_key": synthetic.REAL_SUN_KEY, "jc_short_key": library.short_key_for(synthetic.REAL_SUN_KEY),
+             "edition_id": ids["cur"], "candidate_edition_ids": [], "content_decision": None},
+            {"sun_book_key": cls.BSD_KEY, "jc_short_key": library.short_key_for(cls.BSD_KEY),
+             "edition_id": ids["bsd"], "candidate_edition_ids": [], "content_decision": None},
+        ]
+
+        def dl(sid, edition_id, title, stage, subject, sources, held_other=()):
+            return {"source_id": sid, "stage": stage, "subject": subject, "title": title, "edition_label": "人教版",
+                    "publisher": "人民教育出版社", "cover": None, "size_bytes": 1234, "sources": sources, "edition_id": edition_id,
+                    "held_other_edition_ids": list(held_other)}
+
+        rows = [
+            dl(cls.S1, ids["new"], "义务教育教科书·物理 八年级 上册", "初中", "物理", [
+                {"kind": "upstream", "edition_id": ids["new"], "platform_current": True, "url": f"https://jks-ai.bdfz.net/pdf/{cls.S1}"},
+                {"kind": "vps", "edition_id": ids["new"], "platform_current": True, "path": "pdf/x.pdf"},
+                {"kind": "vps", "edition_id": ids["old"], "platform_current": False, "path": "pdf/y.pdf"}], [ids["old"]]),
+            dl(cls.S2, ids["cur"], "普通高中教科书·语文 必修 上册", "高中", "语文", [
+                {"kind": "upstream", "edition_id": ids["cur"], "platform_current": True, "url": f"https://jks-ai.bdfz.net/pdf/{cls.S2}"},
+                {"kind": "vps", "edition_id": ids["cur"], "platform_current": True, "path": "pdf/z.pdf"},
+                # must never become a source of this site
+                {"kind": "vps", "edition_id": ids["learn"], "platform_current": False, "path": "pdf/l.pdf"}], [ids["learn"]]),
+        ]
+        return ids, [old, new, cur, learn, bsd], rows, maps, reader_books
+
+    @classmethod
+    def write_r3(cls, name, mutate=None):
+        ids, editions, rows, maps, reader_books = cls.r3_parts()
+        if mutate:
+            mutate(ids, editions, rows, maps, reader_books)
+        root = cls.tmp / name / "catalog"
+        files = {
+            "catalog.json": {"contract": "sun-catalog-v1", "release_id": name, "generated_at": "2026-10-11T01:59:39Z",
+                             "region_default": "CN", "editions": editions, "reader_books": reader_books},
+            "downloads.json": {"contract": "sun-catalog-v1/downloads", "release_id": name, "rows": rows},
+            "RELEASE.json": {"contract": "sun-catalog-v1", "release_id": name, "generated_at": "2026-10-11T01:59:39Z"},
+        }
+        for edition_id, payload in maps.items():
+            files[f"page-maps/{edition_id}.json"] = payload
+        release_dir = root / "releases" / name
+        (release_dir / "page-maps").mkdir(parents=True)
+        lines = []
+        for rel, payload in sorted(files.items()):
+            data = (json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=1) + "\n").encode("utf-8")
+            (release_dir / rel).write_bytes(data)
+            lines.append(f"{hashlib.sha256(data).hexdigest()}  {rel}")
+        (release_dir / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        synthetic.set_current(root, name)
+        return root, ids
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.r3_root, cls.ids = cls.write_r3("r3-fixture")
+        # "present" would promote any file found in the PDF directory: learn-only must stay out even then
+        app, cls.r3_lib = cls.make_app({"LIBRARY_CATALOG_ROOT": str(cls.r3_root), "LIBRARY_PREVIEW_POLICY": "present"})
+        cls.r3 = TestClient(app)
+
+    def rejected(self, name, mutate):
+        root, _ = self.write_r3(name, mutate)
+        settings = library.Settings.from_env(self.data_root, {"LIBRARY_CATALOG_ROOT": str(root), "LIBRARY_PDF_ROOT": str(self.pdf_dir)})
+        state = library.LibraryState(settings, FakeClock())
+        self.assertIsNone(state.get(), name)
+        return state.error
+
+    # 1. holding
+    def test_counts(self):
+        body = self.r3.get("/api/library/release").json()
+        self.assertTrue(body["available"], self.r3_lib.state.error)
+        counts = body["counts"]
+        self.assertEqual((counts["editions"], counts["previewable"], counts["preview_cards"], counts["learn_only"], counts["reader_books"]),
+                         (5, 4, 3, 1, 3))
+        self.assertEqual(body["coverage"]["previewable_by_stage"], {"初中": 1, "高中": 2})
+
+    def test_learn_only_record_is_never_served_listed_or_offered(self):
+        learn = self.ids["learn"]
+        self.assertTrue((self.pdf_dir / f"{self.info['e4']['pdf']['sha256']}.pdf").is_file())   # the bytes are even present
+        detail = self.r3.get(f"/api/library/editions/{learn}").json()["edition"]
+        self.assertEqual((detail["previewable"], detail["file"], detail["holding"], detail["other_held_editions"][0]["edition_id"]),
+                         (False, None, "learn-only", self.ids["cur"]))
+        self.assertEqual(self.r3.get(f"/files/pdf/{learn}/{learn[-12:]}/a.pdf").status_code, 404)
+        listed = [e["edition_id"] for e in self.r3.get("/api/library/editions").json()["editions"]]
+        self.assertNotIn(learn, listed)
+        cur = self.r3.get(f"/api/library/editions/{self.ids['cur']}").json()["edition"]
+        self.assertEqual(cur["other_held_editions"], [])
+        self.assertNotIn(learn, [o["edition_id"] for o in cur["other_editions"]])
+        rows = self.r3.get("/api/library/downloads", params={"limit": "60"}).json()["downloads"]
+        for row in rows:
+            for source in row["sources"]:
+                self.assertNotEqual(source.get("edition_id") if source["kind"] == "vps" else None, learn)
+            self.assertNotIn(learn, [o["edition_id"] for o in row["other_editions"]])
+            self.assertNotEqual(row["row_id"], learn)
+        self.assertNotIn("books/8094f5f9ded8045b", json.dumps(rows))   # storage.learn is not a download source here
+
+    # 2. one card per work
+    def test_grid_has_one_card_per_work_and_names_the_other_held_file(self):
+        body = self.r3.get("/api/library/editions").json()
+        cards = {e["edition_id"]: e for e in body["editions"]}
+        self.assertEqual(set(cards), {self.ids["new"], self.ids["cur"], self.ids["bsd"]})
+        self.assertEqual(body["total"], 3)
+        other = cards[self.ids["new"]]["other_held_editions"]
+        self.assertEqual([(o["edition_id"], o["platform_current"], o["acquired_at"], o["pages"], o["preview_default"]) for o in other],
+                         [(self.ids["old"], False, "2026-03-15T08:08:00Z", 6, False)])
+        self.assertEqual(cards[self.ids["cur"]]["other_held_editions"], [])
+        self.assertTrue(all(card["preview_default"] is True and card["holding"] == "sun" for card in cards.values()))
+        # the non-default file still opens directly by id
+        self.assertEqual(self.r3.get(f"/api/library/editions/{self.ids['old']}").status_code, 200)
+        self.assertEqual(self.r3.get(f"/files/pdf/{self.ids['old']}/{self.ids['old'][-12:]}/a.pdf", headers={"Range": "bytes=0-3"}).content, b"%PDF")
+
+    # 3. the pair
+    def test_pair_is_described_from_both_sides(self):
+        old = self.r3.get(f"/api/library/editions/{self.ids['old']}").json()["edition"]
+        new = self.r3.get(f"/api/library/editions/{self.ids['new']}").json()["edition"]
+        self.assertEqual((old["platform_current"], old["preview_default"], old["acquired_at"], old["default_edition_id"]),
+                         (False, False, "2026-03-15T08:08:00Z", self.ids["new"]))
+        self.assertEqual((new["platform_current"], new["preview_default"], new["default_edition_id"]), (True, True, None))
+        self.assertEqual(old["newer_edition"]["edition_id"], self.ids["new"])
+        self.assertEqual(new["supersedes_edition"]["edition_id"], self.ids["old"])
+        self.assertEqual([o["edition_id"] for o in old["other_held_editions"]], [self.ids["new"]])
+        self.assertEqual([o["edition_id"] for o in new["other_held_editions"]], [self.ids["old"]])
+        learn = self.r3.get(f"/api/library/editions/{self.ids['learn']}").json()["edition"]
+        self.assertEqual(learn["acquired_at"], "2026-07-15T10:24:45+00:00")   # the learn release's own acquisition time
+
+    # 4. old links and search links
+    def test_links_resolve_through_reader_books_and_rows_only(self):
+        key = library.short_key_for(synthetic.SECOND_SUN_KEY)
+        for section in range(6):
+            single = self.r3.get("/api/library/resolve", params={"book_key": synthetic.SECOND_SUN_KEY, "section": str(section)}).json()
+            # the owner (older, byte-proven) file; not the newer file that only carries alias_candidate
+            # (its row for the same index is one page later), and not legacy.offset (3)
+            self.assertEqual((single["available"], single["edition_id"], single["pdf_page"]), (True, self.ids["old"], section + 1))
+            self.assertEqual((single["preview_default"], single["default_edition_id"], single["text_identity"]),
+                             (False, self.ids["new"], "same-file"))
+        batch = self.r3.get("/api/library/resolve", params={"items": f"{key}.2,{key}.6"}).json()["results"]
+        self.assertEqual([(r["available"], r.get("edition_id"), r.get("pdf_page"), r.get("reason")) for r in batch],
+                         [(True, self.ids["old"], 3, None), (False, None, None, "page-not-mapped")])
+        legacy = self.r3.get("/api/library/legacy", params={"kind": "jc", "ref": synthetic.SECOND_SUN_KEY, "page": "4"}).json()
+        self.assertEqual((legacy["exact"], legacy["edition_id"], legacy["pdf_page"], legacy["preview_default"], legacy["default_edition_id"]),
+                         (True, self.ids["old"], 5, False, self.ids["new"]))
+        downgraded = self.r3.get("/api/library/legacy", params={"kind": "jc", "ref": synthetic.SECOND_SUN_KEY, "page": "40"}).json()
+        self.assertEqual((downgraded["available"], downgraded["exact"], downgraded["pdf_page"], downgraded["reason"],
+                          downgraded["default_edition_id"]), (True, False, 1, "page-not-mapped", self.ids["new"]))
+
+    def test_rows_with_changing_offsets_and_gaps(self):
+        expect = {0: 1, 1: 2, 2: 4, 3: 5, 5: 7, 10: 12}
+        for section, page in expect.items():
+            body = self.r3.get("/api/library/resolve", params={"book_key": synthetic.REAL_SUN_KEY, "section": str(section)}).json()
+            self.assertEqual((body["available"], body["edition_id"], body["pdf_page"], body["preview_default"], body["default_edition_id"]),
+                             (True, self.ids["cur"], page, True, None), section)
+            self.assertEqual(body["text_identity"], "page-aligned-other-printing")
+        for section in (4, 11, 500):   # index 4 lies between proven rows and is still not guessed
+            body = self.r3.get("/api/library/resolve", params={"book_key": synthetic.REAL_SUN_KEY, "section": str(section)}).json()
+            self.assertEqual((body["available"], body["reason"]), (False, "page-not-mapped"), section)
+        rows = self.r3.get(f"/api/library/editions/{self.ids['cur']}/pages").json()["rows"]
+        self.assertEqual([r["legacy_basis"] for r in rows[:6]], ["image-match", "text-anchor", None, "between-anchors", "image+text", None])
+        self.assertNotIn("legacy_score", rows[0])
+
+    def test_unmappable_book_answers_not_mapped_for_any_page(self):
+        for section in (0, 1, 7, 99):
+            body = self.r3.get("/api/library/resolve", params={"book_key": self.BSD_KEY, "section": str(section)}).json()
+            self.assertEqual((body["available"], body["reason"]), (False, "page-not-mapped"), section)
+        legacy = self.r3.get("/api/library/legacy", params={"kind": "jc", "ref": self.BSD_KEY, "page": "12"}).json()
+        self.assertEqual((legacy["available"], legacy["exact"], legacy["edition_id"], legacy["pdf_page"], legacy["reason"]),
+                         (True, False, self.ids["bsd"], 1, "page-not-mapped"))
+        detail = self.r3.get(f"/api/library/editions/{self.ids['bsd']}").json()["edition"]
+        self.assertEqual((detail["searchable"], detail["search_book_key"], detail["corpus"]["text_identity"]), (False, None, None))
+
+    def test_in_book_search_of_the_newer_file_uses_its_own_rows(self):
+        new = self.r3.get(f"/api/library/editions/{self.ids['new']}").json()["edition"]
+        self.assertEqual((new["searchable"], new["search_book_key"], new["legacy"]["sun_book_key"]),
+                         (True, synthetic.SECOND_SUN_KEY, None))
+        self.assertEqual(new["corpus"]["text_identity"], "page-aligned-other-printing")
+        body = self.r3.get("/api/library/resolve", params={"edition_id": self.ids["new"], "sections": "0,5,6"}).json()
+        self.assertEqual([(r["available"], r["pdf_page"]) for r in body["results"]], [(True, 2), (True, 7), (False, None)])
+
+    # 6. downloads
+    def test_two_local_files_are_two_labelled_sources(self):
+        rows = {r["row_id"]: r for r in self.r3.get("/api/library/downloads", params={"limit": "60"}).json()["downloads"]}
+        self.assertEqual(set(rows), {self.ids["new"], self.ids["cur"], self.ids["bsd"]})   # no merged or duplicate rows
+        pair = rows[self.ids["new"]]["sources"]
+        self.assertEqual([(s["kind"], s.get("edition_id"), s["platform_current"]) for s in pair],
+                         [("vps", self.ids["new"], True), ("vps", self.ids["old"], False), ("upstream", None, True)])
+        self.assertEqual([s["acquired_at"] for s in pair[:2]], ["2026-10-11T01:16:19Z", "2026-03-15T08:08:00Z"])
+        self.assertEqual([s["pages"] for s in pair[:2]], [7, 6])
+        self.assertNotEqual(pair[0]["url"], pair[1]["url"])
+        for source, key in zip(pair[:2], ("new", "old")):
+            self.assertTrue(source["url"].startswith(f"/files/pdf/{self.ids[key]}/"))
+        self.assertNotIn("path", json.dumps(pair))
+        self.assertEqual(rows[self.ids["new"]]["other_editions"], [])
+        single = rows[self.ids["cur"]]["sources"]
+        self.assertEqual([(s["kind"], s.get("edition_id")) for s in single], [("vps", self.ids["cur"]), ("upstream", None)])
+        self.assertEqual([s["kind"] for s in rows[self.ids["bsd"]]["sources"]], ["vps"])   # held file without a row of its own
+
+    # 7. validation
+    def test_rejected_releases(self):
+        def two_defaults(ids, editions, rows, maps, reader_books):
+            editions[0]["preview_default"] = True
+        def sun_without_file(ids, editions, rows, maps, reader_books):
+            editions[2]["storage"]["vps"] = None
+        def bad_holding(ids, editions, rows, maps, reader_books):
+            editions[2]["holding"] = "elsewhere"
+        def default_not_held(ids, editions, rows, maps, reader_books):
+            editions[3]["preview_default"] = True
+            editions[2]["preview_default"] = False
+        def reader_book_unknown(ids, editions, rows, maps, reader_books):
+            reader_books[0]["edition_id"] = "cn-nope-000000000000"
+        def source_unknown(ids, editions, rows, maps, reader_books):
+            rows[0]["sources"][2]["edition_id"] = "cn-nope-000000000000"
+        def default_not_boolean(ids, editions, rows, maps, reader_books):
+            editions[2]["preview_default"] = "yes"
+        self.assertIn("two preview_default editions in one work", self.rejected("r3-bad-1", two_defaults))
+        self.assertIn("holding is sun but storage.vps is missing", self.rejected("r3-bad-2", sun_without_file))
+        self.assertIn("invalid holding", self.rejected("r3-bad-3", bad_holding))
+        self.assertIn("preview_default edition is not held on this site", self.rejected("r3-bad-4", default_not_held))
+        self.assertIn("reader book points to unknown edition", self.rejected("r3-bad-5", reader_book_unknown))
+        self.assertIn("download source points to unknown edition", self.rejected("r3-bad-6", source_unknown))
+        self.assertIn("preview_default must be boolean", self.rejected("r3-bad-7", default_not_boolean))
+
+    def test_reader_books_list_wins_over_edition_fields(self):
+        # an edition that claims the book in its own record but is not the reader-book owner gets no links
+        def mutate(ids, editions, rows, maps, reader_books):
+            editions[1]["legacy"]["sun_book_key"] = synthetic.SECOND_SUN_KEY
+        root, ids = self.write_r3("r3-owner", mutate)
+        app, _ = self.make_app({"LIBRARY_CATALOG_ROOT": str(root)})
+        body = TestClient(app).get("/api/library/resolve", params={"book_key": synthetic.SECOND_SUN_KEY, "section": "2"}).json()
+        self.assertEqual((body["edition_id"], body["pdf_page"]), (ids["old"], 3))
+
+
+@unittest.skipUnless((R3_REAL_DIR / "catalog.json").is_file() and R3_REAL_PDFS.is_dir(),
+                     "the real revision-3 release / PDF directory is not on this machine")
+class RealRevisionThreeTests(unittest.TestCase):
+    """Read-only checks against the release WS-A built (nothing is written next to it)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp(prefix="sun-r3-real-"))
+        root = cls.tmp / "catalog"
+        (root / "releases").mkdir(parents=True)
+        (root / "releases" / R3_REAL_DIR.name).symlink_to(R3_REAL_DIR, target_is_directory=True)
+        (root / "CURRENT").write_text(R3_REAL_DIR.name + "\n", encoding="utf-8")
+        app = FastAPI()
+        cls.lib = library.install(app, data_root=cls.tmp, frontend_dir=None, clock=FakeClock(), env={
+            "PDF_SERVE_MODE": "direct", "LIBRARY_PDF_ROOT": str(R3_REAL_PDFS), "LIBRARY_RATE_JSON_BURST": "100000",
+            "LIBRARY_RATE_PDF_BURST": "100000"})   # default policy: catalog (storage.vps as recorded)
+        cls.client = TestClient(app)
+        cls.release = cls.lib.state.get()
+        cls.catalog = json.loads((R3_REAL_DIR / "catalog.json").read_text(encoding="utf-8"))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_counts(self):
+        self.assertIsNotNone(self.release, self.lib.state.error)
+        counts = self.client.get("/api/library/release").json()["counts"]
+        self.assertEqual((counts["editions"], counts["previewable"], counts["preview_cards"], counts["learn_only"],
+                          counts["reader_books"], counts["page_maps"]), (224, 190, 150, 34, 144, 190))
+
+    def all_cards(self):
+        cards, offset = [], 0
+        while True:
+            body = self.client.get("/api/library/editions", params={"limit": "60", "offset": str(offset)}).json()
+            cards += body["editions"]
+            offset += 60
+            if offset >= body["total"]:
+                return cards, body["total"]
+
+    def test_grid_is_150_default_cards_one_per_work(self):
+        cards, total = self.all_cards()
+        self.assertEqual((total, len(cards)), (150, 150))
+        self.assertEqual(len({c["work_id"] for c in cards}), 150)
+        self.assertTrue(all(c["preview_default"] is True and c["holding"] == "sun" for c in cards))
+        with_other = [c for c in cards if c["other_held_editions"]]
+        self.assertEqual(len(with_other), 40)
+        for card in with_other:
+            self.assertEqual(len(card["other_held_editions"]), 1)
+            other = card["other_held_editions"][0]
+            self.assertIs(other["platform_current"], False)
+            self.assertTrue(other["acquired_at"])
+            self.assertIs(card["platform_current"], True)
+        for phase, expected in (("高中", None), ("初中", None)):
+            body = self.client.get("/api/library/editions", params={"phase": phase, "limit": "1"}).json()
+            self.assertEqual(body["total"], sum(1 for c in cards if c["stage"] == phase))
+
+    def test_learn_only_records_never_surface(self):
+        learn = [e["edition_id"] for e in self.catalog["editions"] if e.get("holding") == "learn-only"]
+        self.assertEqual(len(learn), 34)
+        cards, _ = self.all_cards()
+        self.assertFalse({c["edition_id"] for c in cards} & set(learn))
+        for edition_id in learn[:6]:
+            detail = self.client.get(f"/api/library/editions/{edition_id}").json()["edition"]
+            self.assertEqual((detail["previewable"], detail["file"]), (False, None))
+            sha12 = self.release.editions[edition_id].sha12
+            self.assertEqual(self.client.get(f"/files/pdf/{edition_id}/{sha12}/a.pdf").status_code, 404)
+        local = [s["edition_id"] for row in self.release.downloads for s in row.record["sources"] if s["kind"] == "vps"]
+        self.assertFalse(set(local) & set(learn))
+        # every held file is offered exactly once, under its own edition
+        self.assertEqual(len(local), 190)
+        self.assertEqual(len(set(local)), 190)
+        for edition_id in set(self.release.by_sun_key[k][0] for k in self.release.by_sun_key):
+            self.assertNotIn(edition_id, learn)
+
+    def test_all_144_reader_books_resolve_to_a_held_edition_through_rows(self):
+        self.assertEqual(len(self.catalog["reader_books"]), 144)
+        owners_not_default = 0
+        unmapped_books = []
+        for book in self.catalog["reader_books"]:
+            self.assertEqual(self.release.by_sun_key[book["sun_book_key"]], (book["edition_id"],))
+            self.assertEqual(self.release.by_short_key[book["jc_short_key"]], (book["edition_id"],))
+            edition = self.release.editions[book["edition_id"]]
+            self.assertTrue(edition.previewable, book["edition_id"])
+            self.assertEqual(edition.sun_book_key, book["sun_book_key"])   # never an alias-candidate edition
+            owners_not_default += edition.record["preview_default"] is not True
+            rows = json.loads((R3_REAL_DIR / "page-maps" / f"{book['edition_id']}.json").read_text(encoding="utf-8"))["pages"]
+            mapped = [(r["legacy_image_index"], r["pdf_page"]) for r in rows if r["legacy_image_index"] is not None]
+            if not mapped:
+                unmapped_books.append(book["jc_short_key"])
+                continue
+            for index, page in (mapped[0], mapped[len(mapped) // 2], mapped[-1]):
+                body = self.client.get("/api/library/resolve", params={"items": f"{book['jc_short_key']}.{index}"}).json()["results"][0]
+                self.assertEqual((body["available"], body["edition_id"], body["pdf_page"]), (True, book["edition_id"], page), book["jc_short_key"])
+                self.assertEqual(body["preview_default"], edition.record["preview_default"])
+            taken = {index for index, _ in mapped}
+            missing = next((i for i in range(max(taken) + 2) if i not in taken), None)
+            body = self.client.get("/api/library/resolve", params={"book_key": book["sun_book_key"], "section": str(missing)}).json()
+            self.assertEqual((body["available"], body["reason"]), (False, "page-not-mapped"), book["jc_short_key"])
+        self.assertEqual(sorted(unmapped_books), sorted(BSD_KEYS))
+        self.assertEqual(owners_not_default, 34)   # 20 初中 + 14 高中 books whose links land on the earlier file
+
+    def test_the_two_unmappable_books_answer_not_mapped(self):
+        for key in BSD_KEYS:
+            for section in (0, 1, 17, 60, 132, 400):
+                body = self.client.get("/api/library/resolve", params={"items": f"{key}.{section}"}).json()["results"][0]
+                self.assertEqual((body["available"], body["reason"]), (False, "page-not-mapped"), (key, section))
+            book = next(b for b in self.catalog["reader_books"] if b["jc_short_key"] == key)
+            legacy = self.client.get("/api/library/legacy", params={"kind": "jc", "ref": book["sun_book_key"], "page": "9"}).json()
+            self.assertEqual((legacy["available"], legacy["exact"], legacy["pdf_page"], legacy["reason"]), (True, False, 1, "page-not-mapped"))
+
+    def test_owner_and_default_differ_for_the_yuwen_9a_pair(self):
+        pair = [e for e in self.catalog["editions"] if "语文九年级上册" in (e["title"] or "") and e["holding"] == "sun"]
+        self.assertEqual(len(pair), 2)
+        old = next(e for e in pair if e["platform_current"] is False)
+        new = next(e for e in pair if e["platform_current"] is True)
+        link = self.client.get("/api/library/legacy", params={"kind": "jc", "ref": old["legacy"]["sun_book_key"], "page": "20"}).json()
+        self.assertEqual((link["exact"], link["edition_id"], link["pdf_page"], link["preview_default"], link["default_edition_id"]),
+                         (True, old["edition_id"], 21, False, new["edition_id"]))
+        detail = self.client.get(f"/api/library/editions/{new['edition_id']}").json()["edition"]
+        self.assertEqual([o["edition_id"] for o in detail["other_held_editions"]], [old["edition_id"]])
+        self.assertEqual(detail["search_book_key"], old["legacy"]["sun_book_key"])   # in-book search via its own rows
+        self.assertEqual(detail["corpus"]["text_identity"], "page-aligned-other-printing")
+
+    def test_download_rows_with_two_local_files(self):
+        doubles = [row.record for row in self.release.downloads if sum(1 for s in row.record["sources"] if s["kind"] == "vps") == 2]
+        self.assertEqual(len(doubles), 40)
+        for record in doubles:
+            local = [s for s in record["sources"] if s["kind"] == "vps"]
+            self.assertEqual([s["platform_current"] for s in local], [True, False])
+            self.assertNotEqual(local[0]["edition_id"], local[1]["edition_id"])
+            self.assertTrue(all(s["acquired_at"] for s in local))
+            self.assertEqual(record["other_editions"], [])
+        self.assertFalse([row.record["row_id"] for row in self.release.downloads
+                          if sum(1 for s in row.record["sources"] if s["kind"] == "vps") > 2])
+        self.assertNotIn("xue.bdfz.net", json.dumps([row.record for row in self.release.downloads]))
+
+    def test_a_held_file_is_served_by_range(self):
+        cards, _ = self.all_cards()
+        card = cards[0]
+        response = self.client.get(f"/files/pdf/{card['edition_id']}/{card['edition_id'][-12:]}/x.pdf", headers={"Range": "bytes=0-4"})
+        self.assertEqual((response.status_code, response.content), (206, b"%PDF-"))
+
+    @unittest.skipUnless((OLD_REAL_DIR / "catalog.json").is_file(), "the live release directory is not on this machine")
+    def test_the_live_release_still_loads(self):
+        tmp = self.tmp / "old" / "catalog"
+        (tmp / "releases").mkdir(parents=True)
+        (tmp / "releases" / OLD_REAL_DIR.name).symlink_to(OLD_REAL_DIR, target_is_directory=True)
+        (tmp / "CURRENT").write_text(OLD_REAL_DIR.name + "\n", encoding="utf-8")
+        settings = library.Settings.from_env(self.tmp, {"LIBRARY_CATALOG_ROOT": str(tmp)})
+        release = library.load_release(tmp, settings)
+        counts = release.summary["counts"]
+        self.assertEqual(counts["reader_books"], 144)
+        self.assertEqual(counts["preview_cards"], counts["active_previewable"])   # no preview_default field: every held file is a card
+        self.assertGreater(counts["previewable"], 100)
+        self.assertEqual(counts["learn_only"], 0)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
