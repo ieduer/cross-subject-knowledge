@@ -108,7 +108,19 @@ class Fixture:
             {"ti_format": "pdf", "ti_file_flag": "source", "ti_size": "1000"}]}})
         write_json(root / "plan.json", self.plan)
 
+    def make_covers(self) -> Path:
+        """A cover file pair for every held PDF of the plan (content is irrelevant to the builder)."""
+        covers = self.root / "covers"
+        covers.mkdir(exist_ok=True)
+        for e in json.loads((self.root / "plan.json").read_text())["editions"]:
+            if e.get("pdf") and e.get("holding", "sun") == "sun":
+                for w in (240, 480):
+                    (covers / f"{e['pdf']['sha256']}-{w}.webp").write_bytes(
+                        b"RIFF\x00\x00\x00\x00WEBP" + f"{e['pdf']['sha256']}:{w}".encode())
+        return covers
+
     def build(self, out: Path, *extra) -> Path:
+        extra = (*extra, "--covers", str(self.make_covers()))
         rc = build_catalog.main(["--plan", str(self.root / "plan.json"), "--page-maps", str(self.pm),
                                  "--downloads", str(self.dl), "--details", str(self.det), "--out", str(out),
                                  *extra])

@@ -515,6 +515,28 @@ def image_check_same_bytes(score_rows: list[dict], cal: dict) -> dict:
             "confirmed": len(informative) >= 5 and elsewhere == 0 and len(ok) >= 0.95 * len(informative)}
 
 
+def legacy_unmapped(mapped: dict[int, int], legacy_pages: int | None) -> list[dict] | None:
+    """Legacy indexes without a row, each with a HINT to the nearest mapped legacy index.
+
+    The hint is not a mapping: it carries the neighbour's own legacy index and PDF page plus the
+    distance, so that an old link can degrade to "the nearest page we can show" with a notice. Ties
+    go to the earlier neighbour. None when the legacy page count is unknown; the hint is None when
+    the edition has no mapped row at all.
+    """
+    if legacy_pages is None:
+        return None
+    known = sorted(mapped)
+    out = []
+    for li in range(legacy_pages):
+        if li in mapped:
+            continue
+        near = min(known, key=lambda k: (abs(k - li), k)) if known else None
+        out.append({"legacy_image_index": li,
+                    "nearest_mapped": {"legacy_image_index": near, "pdf_page": mapped[near],
+                                       "distance": abs(near - li)} if near is not None else None})
+    return out
+
+
 # --- assembly -------------------------------------------------------------------------------
 
 def build_page_map(edition_id: str, sha256: str, text_rec: dict, legacy: dict) -> dict:
@@ -533,6 +555,13 @@ def build_page_map(edition_id: str, sha256: str, text_rec: dict, legacy: dict) -
         legacy_ev = {"method": "same-bytes", "accepted": True, "offset": 0, "relation": "same-bytes",
                      "pdf_pages": n, "legacy_pages": legacy_pages,
                      "image_check": legacy.get("image_check")}
+    elif mode == "reassembled":
+        # The PDF was built from the legacy images, one per page: exact by construction.
+        if legacy_pages != n:
+            raise ValueError(f"{edition_id}: reassembled PDF has {n} pages, the image set {legacy_pages}")
+        rows_legacy = {p: (p - 1, "reassembled") for p in range(1, n + 1)}
+        legacy_ev = {"method": "reassembled", "accepted": True, "offset": 0, "relation": "legacy-image-source",
+                     "pdf_pages": n, "legacy_pages": legacy_pages}
     elif mode == "content":
         index = build_shingle_index([p.get("text") or "" for p in page_recs])
         corpus = legacy.get("corpus_texts") or {}
@@ -569,6 +598,8 @@ def build_page_map(edition_id: str, sha256: str, text_rec: dict, legacy: dict) -
         })
     mapped = sum(1 for r in pages if r["legacy_image_index"] is not None)
     return {
+        "legacy_unmapped": legacy_unmapped({r["legacy_image_index"]: r["pdf_page"] for r in pages
+                                            if r["legacy_image_index"] is not None}, legacy_pages),
         "contract": "sun-catalog-v1/page-map",
         "page_map_version": PAGE_MAP_VERSION,
         "edition_id": edition_id,

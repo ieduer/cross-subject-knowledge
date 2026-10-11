@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import Any, Iterable
 
 CONTRACT = "sun-catalog-v1"
-TOOL_VERSION = "2026.10.10-2"
+TOOL_VERSION = "2026.10.11-4"
 EXTRACTOR_VERSION = "pymupdf-text-v2"
-PAGE_MAP_VERSION = "page-map-v2"
+PAGE_MAP_VERSION = "page-map-v4"
 BROWSER_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"

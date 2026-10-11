@@ -39,7 +39,8 @@ NOT_ENUMERATED = [
 
 
 TEXT_IDENTITY = {"same-bytes": "same-file", "aligned": "page-aligned-other-printing",
-                 "partial": "page-aligned-other-printing"}
+                 "partial": "page-aligned-other-printing", "legacy-image-source": "legacy-images"}
+COVER_WIDTHS = (240, 480)
 CONTENT_BASIS = "content:per-page-comparison"
 
 
@@ -72,6 +73,10 @@ def corpus_block(ed: dict, pm: dict | None) -> dict:
                      f"informative pages match at the same position (min score {chk['min_score']})")
         return block("same-bytes", "the held PDF is the source file of the page images and corpus; "
                                    f"page counts equal ({ev['pdf_pages']})" + extra, 1.0, "bytes")
+    if ev["method"] == "reassembled":
+        return block("legacy-image-source", "the PDF is reassembled from the legacy page images themselves, one image "
+                                            f"per page ({ev['pdf_pages']} pages); PDF page N is legacy image N-1 by "
+                                            "construction", 1.0, "construction")
     if ev["method"] == "content":
         how = "+".join(x for x, used in (("image", ev.get("informative_image_pages") is not None),
                                          ("corpus-text", bool(ev.get("corpus_pages")))) if used) or "none"
@@ -107,7 +112,7 @@ def corpus_block(ed: dict, pm: dict | None) -> dict:
     return block("none", ev.get("reason") or spec.get("reason"), None, "not-possible")
 
 
-def finalize_edition(ed: dict, pm: dict | None, staged: set[str]) -> dict:
+def finalize_edition(ed: dict, pm: dict | None, staged: set[str], covers: dict | None = None) -> dict:
     rec = {k: v for k, v in ed.items() if k not in ("legacy_spec", "content_claim")}
     rec["legacy"] = dict(rec["legacy"])
     rec.setdefault("holding", "sun" if rec.get("pdf") else None)
@@ -122,6 +127,15 @@ def finalize_edition(ed: dict, pm: dict | None, staged: set[str]) -> dict:
     if rec.get("pdf") and rec["pdf"]["sha256"] in staged:
         # Relative to the server's textbook root; set only for files verified by hash in --vps-holdings.
         rec["storage"]["vps"] = {"path": f"pdf/{rec['pdf']['sha256']}.pdf"}
+    held_here = bool(rec.get("pdf")) and rec["holding"] == "sun"
+    c = (covers or {}).get(rec["pdf"]["sha256"]) if held_here else None
+    rec["cover"] = ({**{f"w{w}": f"covers/{rec['edition_id']}-{w}.webp" for w in COVER_WIDTHS},
+                     "sha256": {f"w{w}": c[w]["sha256"] for w in COVER_WIDTHS},
+                     "bytes": {f"w{w}": c[w]["bytes"] for w in COVER_WIDTHS}, "source_pdf_page": 1}
+                    if c else None)
+    rec["reassembly"] = (f"reassembly/{rec['edition_id']}.json"
+                         if rec.get("provenance") == "reassembled-from-legacy-images" else None)
+    rec["legacy"]["unmapped_pages"] = len(pm["legacy_unmapped"]) if pm and pm.get("legacy_unmapped") is not None else None
     if pm:
         pe = pm["printed"]["evidence"]
         rec["printed"] = {"verified": pm["printed"]["verified"], "labelled_pages": pm["printed"]["labelled_pages"],
@@ -200,6 +214,17 @@ def set_preview_default(editions: list[dict]) -> None:
         current = [e for e in group if e["platform_current"]]
         pick = sorted(current or group, key=lambda e: (e["source"].get("retrieved_at") or "", e["edition_id"]))[-1]
         pick["preview_default"] = True
+
+
+def load_covers(cover_dir: Path) -> dict[str, dict]:
+    """{pdf sha256: {width: {data, sha256, bytes}}} for PDFs that have every cover width rendered."""
+    out: dict[str, dict] = {}
+    for f in sorted(cover_dir.glob("*-*.webp")):
+        sha, w = f.stem.rsplit("-", 1)
+        if w.isdigit() and int(w) in COVER_WIDTHS:
+            data = f.read_bytes()
+            out.setdefault(sha, {})[int(w)] = {"data": data, "sha256": sha256_bytes(data), "bytes": len(data)}
+    return {s: v for s, v in out.items() if set(v) == set(COVER_WIDTHS)}
 
 
 def verify_vps_holdings(path: Path | None) -> tuple[set[str], str | None]:
@@ -305,6 +330,10 @@ def counts(editions: list[dict], page_maps: dict[str, dict], downloads: dict, pl
         "metadata_basis": dict(Counter(str(e.get("metadata_basis")) for e in editions)),
         "id_basis": dict(Counter(str(e["source"].get("id_basis")) for e in editions)),
         "storage_vps": sum(1 for e in editions if e["storage"]["vps"]),
+        "covers": sum(1 for e in editions if e.get("cover")),
+        "cover_bytes": sum(sum(e["cover"]["bytes"].values()) for e in editions if e.get("cover")),
+        "reassembled_editions": sum(1 for e in editions if e.get("reassembly")),
+        "legacy_unmapped_with_nearest_hint": sum(len(pm.get("legacy_unmapped") or []) for pm in page_maps.values()),
         "storage_learn": sum(1 for e in editions if e["storage"].get("learn")),
         "learn_only_editions": sum(1 for e in editions if e.get("holding") == "learn-only"),
         "held_editions_with_learn_alias": sum(1 for e in held if e["legacy"].get("learn_asset_id")),
@@ -402,7 +431,11 @@ def build(args) -> int:
     release_id = stamp.replace("-", "").replace(":", "") + "-" + input_hash[:8]
 
     plan_editions, decisions = resolve_content_claims(plan["editions"], page_maps)
-    editions = [finalize_edition(e, page_maps.get(e["edition_id"]), staged) for e in plan_editions]
+    covers = load_covers(Path(args.covers)) if args.covers else {}
+    if covers:
+        inputs["covers/*"] = sha256_text("\n".join(f"{s}:{w}:{v[w]['sha256']}" for s, v in sorted(covers.items())
+                                                    for w in COVER_WIDTHS))
+    editions = [finalize_edition(e, page_maps.get(e["edition_id"]), staged, covers) for e in plan_editions]
     editions.sort(key=lambda e: e["edition_id"])
     set_preview_default(editions)
     for pm_id in list(page_maps):
@@ -464,6 +497,17 @@ def build(args) -> int:
     }
     for eid, pm in sorted(page_maps.items()):
         files[f"page-maps/{eid}.json"] = dumps(pm).encode()
+    for e in editions:
+        if e["cover"]:
+            for w in COVER_WIDTHS:
+                files[e["cover"][f"w{w}"]] = covers[e["pdf"]["sha256"]][w]["data"]
+        if e["reassembly"]:
+            if not args.reassembly:
+                raise SystemExit("--reassembly is required: the plan has a reassembled edition")
+            side = read_json(Path(args.reassembly) / f"{e['pdf']['sha256']}.json")
+            if side["sha256"] != e["pdf"]["sha256"] or side["pages"] != e["pdf"]["pages"]:
+                raise SystemExit(f"reassembly record of {e['edition_id']} does not describe its PDF")
+            files[e["reassembly"]] = dumps({"edition_id": e["edition_id"], **side}).encode()
     sums = "".join(f"{sha256_bytes(data)}  {name}\n" for name, data in sorted(files.items()))
     files["SHA256SUMS"] = sums.encode()
 
@@ -494,6 +538,8 @@ def main(argv=None) -> int:
     p.add_argument("--details", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--stats", action="append", help="acquire-state.json / _ledger.json files to summarise")
+    p.add_argument("--covers", help="directory of <pdf sha256>-<width>.webp made by covers.py")
+    p.add_argument("--reassembly", help="directory of <pdf sha256>.json written by reassemble.py")
     p.add_argument("--vps-holdings", help="directory of <sha256>.pdf staged for the server; storage.vps is set "
                                           "only for files present there and verified by hash")
     return build(p.parse_args(argv))

@@ -400,6 +400,8 @@ def compare_local(local: dict, meta: dict | None) -> str:
 
 COEXIST_LEARN = ("the file bound in xue's learn release (acquired 2026-07-15) is catalogued beside the platform's "
                  "current file of the same SmartEdu id")
+COEXIST_REASSEMBLED = ("the earlier edition, reassembled from the legacy page images, is kept beside the platform's "
+                       "current file so that old page links stay exact")
 COEXIST = ("the file the corpus and page images were made from is kept beside the platform's current "
            "file of the same work")
 
@@ -635,6 +637,44 @@ def stage_editions(args) -> int:
                                   "jc_short_key": short, "subject": b["subject"]}
             editions.append(rec)
 
+    # --- editions reassembled from the legacy page images (owner decision R1/R2) -------------------
+    # Only for the listed books: the platform's file under the book's SmartEdu id is another edition,
+    # so a PDF made of the legacy images themselves becomes the edition that answers old page links.
+    for short, r in sorted(read_json(state / "reassembled.json", default={}).items()):
+        b = by_short[short]
+        cur = next(e for e in editions if e["legacy"].get("sun_book_key") == b["id"])
+        sid = cur["source"]["source_id"]
+        rec = base_record(None, {"stage": b["phase"], "subject": cur["subject"], "title": b["title"],
+                                 "edition_label": b.get("edition") or None, "basis": "jc-catalog"})
+        rec.update({
+            "edition_id": f"cn-{sid}-{r['sha256'][:12]}", "work_id": cur["work_id"],
+            "pdf": pdf_block(r["sha256"], r["md5"], r["bytes"]),
+            "source": source_block(sid, meta_of(sid), current=False, retrieved_at=None,
+                                   retrieved_via="reassembled:legacy-page-images",
+                                   sid_basis="identifier:jc-content-id", id_basis="reassembled-legacy-images"),
+            "status": "active", "provenance": "reassembled-from-legacy-images",
+            "platform_current": False, "newer_edition_id": cur["edition_id"], "supersedes_edition_id": None,
+            "coexists_reason": COEXIST_REASSEMBLED,
+            "storage": {"vps": None, "drive": None,
+                        "upstream": {"available": False, "url": None,
+                                     "note": "reassembled from the legacy page images; the platform serves "
+                                             "another edition under this id"}},
+            "legacy": {"sun_book_key": b["id"], "jc_short_key": short, "jks_slug": None,
+                       "basis": "reassembled:legacy-images", "in_sun_search": cur["legacy"]["in_sun_search"],
+                       "alias_candidate": None},
+            "legacy_spec": {"mode": "reassembled", "legacy_pages": b["pages"], "sun_book_key": b["id"],
+                            "jc_short_key": short, "subject": b["subject"]},
+        })
+        cur["supersedes_edition_id"] = rec["edition_id"]
+        cur["coexists_reason"] = COEXIST_REASSEMBLED
+        cur["legacy"].update({
+            "sun_book_key": None, "jc_short_key": None, "basis": None, "in_sun_search": False,
+            "alias_candidate": {"sun_book_key": b["id"], "jc_short_key": short,
+                                "basis": "platform-current file of the reader book's SmartEdu id "
+                                         "(identifier:jc-content-id); another edition than the legacy images"}})
+        holdings[r["sha256"]] = {"path": str(store / f"{r['sha256']}.pdf"), "origin": "reassembled", "bytes": r["bytes"]}
+        editions.append(rec)
+
     # --- files bound in xue's learn release ------------------------------------------------------
     learn = load_learn(inputs)
     cand_short = {i: k for k, v in read_json(state / "content-candidates.json", default={}).items() for i in v}
@@ -768,7 +808,8 @@ def stage_editions(args) -> int:
         ({"jc_short_key": e["legacy_spec"]["jc_short_key"], "sha256": e["pdf"]["sha256"],
           "legacy_pages": e["legacy_spec"]["legacy_pages"],
           "known_pairing": e["legacy_spec"]["mode"] == "same-bytes"}
-         for e in editions if e.get("pdf") and e.get("holding") == "sun" and e["legacy_spec"].get("jc_short_key")),
+         for e in editions if e.get("pdf") and e.get("holding") == "sun" and e["legacy_spec"].get("jc_short_key")
+         and e["legacy_spec"]["mode"] != "reassembled"),
         key=lambda c: (c["jc_short_key"], c["sha256"]))
     write_json(state / "plan.json", {
         "editions": editions, "comparisons": comparisons, "issues": issues, "newer_platform": newer_platform,

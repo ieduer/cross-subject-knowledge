@@ -23,19 +23,23 @@ from urllib.parse import urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import CONTRACT, SHA256_RE, UUID_RE, file_hashes, jc_short_key, read_json  # noqa: E402
 
-RELATIONS = {"same-bytes", "aligned", "partial", "different-edition", "none"}
+RELATIONS = {"same-bytes", "aligned", "partial", "different-edition", "none", "legacy-image-source"}
+REASSEMBLED = "reassembled-from-legacy-images"
+COVER_WIDTHS = ("w240", "w480")
 TEXT_IDENTITY = {"same-bytes": ("same-file",),
                  "aligned": ("page-aligned-other-printing", "same-edition-image-proven"),
-                 "partial": ("page-aligned-other-printing",), "different-edition": (None,), "none": (None,)}
+                 "partial": ("page-aligned-other-printing",), "different-edition": (None,), "none": (None,),
+                 "legacy-image-source": ("legacy-images",)}
 PROVEN_BASES = ("anchor", "text-anchor", "image-match", "image+text")
 TEXT_BASES = ("anchor", "text-anchor", "image+text")
 STATUSES = {"active", "superseded", "pending-verification"}
 LEGACY_BASES = {"identifier:jc-content-id", "identifier:jc-book-key", "bytes:source-pdf",
-                "content:per-page-comparison"}
+                "content:per-page-comparison", "reassembled:legacy-images"}
 SOURCE_ID_BASES = {"identifier:jc-content-id", "identifier:jks-slug", "bytes:sha256=learn-books", "bytes:md5=ti_md5",
                    "identifier:download", "identifier:learn-baseline"}
 ID_BASES = {"md5-size-current", "downloaded-by-id:md5-equal", "downloaded-by-id:size-only",
-            "baseline-join-unreproven", "platform-record", "learn-baseline-record"}
+            "baseline-join-unreproven", "platform-record", "learn-baseline-record",
+            "reassembled-legacy-images"}
 ASSET_RE = re.compile(r"^[0-9a-f]{16}$")
 
 
@@ -45,7 +49,7 @@ def is_held(e: dict) -> bool:
 EDITION_KEYS = {"edition_id", "work_id", "region", "stage", "subject", "title", "volume", "publisher",
                 "edition_label", "source", "pdf", "storage", "legacy", "corpus", "processing", "status",
                 "platform_current", "newer_edition_id", "supersedes_edition_id", "metadata_basis",
-                "preview_default", "holding"}
+                "preview_default", "holding", "cover"}
 SOURCE_KEYS = {"provider", "source_id", "catalog_module", "online_time", "update_time", "ti_md5", "ti_size",
                "retrieved_at", "retrieved_via", "id_basis"}
 PDF_KEYS = {"sha256", "bytes", "pages", "has_text_layer", "producer"}
@@ -143,6 +147,93 @@ def check_storage(e: dict, E) -> None:
         E(f"{eid}: upstream marked available for a file that is not the platform's current file")
 
 
+def check_cover(e: dict, release_dir: Path, E) -> None:
+    eid, cover = e["edition_id"], e["cover"]
+    if not is_held(e):
+        if cover is not None:
+            E(f"{eid}: cover on a record whose bytes are not held here")
+        return
+    if (not isinstance(cover, dict) or not isinstance(cover.get("sha256"), dict)
+            or any(cover.get(w) != f"covers/{eid}-{w[1:]}.webp" for w in COVER_WIDTHS)):
+        E(f"{eid}: a held edition needs cover.w240 / cover.w480 = covers/<edition_id>-<width>.webp with their SHA-256")
+        return
+    for w in COVER_WIDTHS:
+        f = release_dir / cover[w]
+        if not f.is_file():
+            E(f"{eid}: cover file {cover[w]} is missing from the release")
+        else:
+            data = f.read_bytes()
+            if hashlib.sha256(data).hexdigest() != cover["sha256"].get(w):
+                E(f"{eid}: cover {cover[w]} does not match the SHA-256 in the record")
+            elif data[:4] != b"RIFF" or data[8:12] != b"WEBP":
+                E(f"{eid}: cover {cover[w]} is not a WebP file")
+
+
+def check_unmapped(e: dict, pm: dict, E) -> None:
+    """Every legacy index is either a mapped row or an unmapped entry with a nearest-neighbour hint."""
+    eid, name = e["edition_id"], f"page-maps/{e['edition_id']}.json"
+    legacy_pages = ((pm.get("legacy") or {}).get("evidence") or {}).get("legacy_pages")
+    mapped = {r["legacy_image_index"]: r["pdf_page"] for r in pm.get("pages") or [] if r.get("legacy_image_index") is not None}
+    um = pm.get("legacy_unmapped")
+    owner = bool((e.get("legacy") or {}).get("sun_book_key"))
+    if um is None:
+        if owner or legacy_pages is not None:
+            E(f"{name}: legacy_unmapped is missing although the legacy page count is known")
+        return
+    idx = [u.get("legacy_image_index") for u in um]
+    if len(set(idx)) != len(idx) or set(idx) & set(mapped):
+        E(f"{name}: a legacy index is listed twice or is both mapped and unmapped")
+    if legacy_pages is not None and set(idx) | set(mapped) != set(range(legacy_pages)):
+        E(f"{name}: mapped rows and legacy_unmapped together do not cover legacy indexes 0..{legacy_pages - 1}")
+    if (e.get("legacy") or {}).get("unmapped_pages") != len(um):
+        E(f"{eid}: legacy.unmapped_pages differs from the page map")
+    known = sorted(mapped)
+    for u in um:
+        if "pdf_page" in u or "printed_label" in u:
+            E(f"{name}: an unmapped legacy index carries a page of its own")
+            break
+        hint, li = u.get("nearest_mapped"), u.get("legacy_image_index")
+        if not known:
+            if hint is not None:
+                E(f"{name}: nearest_mapped given although nothing is mapped")
+                break
+            continue
+        best = min(known, key=lambda k: (abs(k - li), k))
+        if (not isinstance(hint, dict) or hint.get("legacy_image_index") != best
+                or hint.get("pdf_page") != mapped[best] or hint.get("distance") != abs(best - li)):
+            E(f"{name}: nearest_mapped of legacy index {li} is not the nearest mapped row (ties: the earlier one)")
+            break
+
+
+def check_reassembled(e: dict, pm: dict, release_dir: Path, E) -> None:
+    eid = e["edition_id"]
+    is_re = e.get("provenance") == REASSEMBLED
+    relation = (e.get("corpus") or {}).get("relation")
+    if is_re != (relation == "legacy-image-source"):
+        E(f"{eid}: relation legacy-image-source and provenance {REASSEMBLED} must go together")
+        return
+    if not is_re:
+        if e.get("reassembly") is not None:
+            E(f"{eid}: reassembly record on an edition that was not reassembled")
+        return
+    rows = pm.get("pages") or []
+    if any(r.get("legacy_image_index") != r["pdf_page"] - 1 or r.get("legacy_basis") != "reassembled" for r in rows):
+        E(f"{eid}: a reassembled edition must map every page to legacy index pdf_page - 1 with basis 'reassembled'")
+    if e["pdf"].get("has_text_layer") is not False or e.get("platform_current") or e.get("preview_default"):
+        E(f"{eid}: a reassembled edition has no text layer, is not the platform's file and is not the preview default")
+    side_path = release_dir / str(e.get("reassembly"))
+    if e.get("reassembly") != f"reassembly/{eid}.json" or not side_path.is_file():
+        E(f"{eid}: reassembly/{eid}.json is missing")
+        return
+    side = read_json(side_path)
+    src = side.get("page_sources") or []
+    if (side.get("sha256") != e["pdf"].get("sha256") or side.get("pages") != len(rows) or len(src) != len(rows)
+            or [x.get("legacy_image_index") for x in src] != list(range(len(rows)))
+            or not all(SHA256_RE.match(str(x.get("source_sha256"))) for x in src)
+            or side.get("jc_short_key") != (e.get("legacy") or {}).get("jc_short_key")):
+        E(f"{eid}: the reassembly record does not list one verified source image per page of this PDF")
+
+
 def check_page_map(e: dict, pm: dict, E) -> None:
     eid = e["edition_id"]
     name = f"page-maps/{eid}.json"
@@ -196,7 +287,7 @@ def check_page_map(e: dict, pm: dict, E) -> None:
     if relation != lev.get("relation"):
         E(f"{eid}: corpus.relation {relation!r} differs from the page-map evidence {lev.get('relation')!r}")
     if legacy:
-        if relation not in ("same-bytes", "aligned", "partial") or not accepted:
+        if relation not in ("same-bytes", "aligned", "partial", "legacy-image-source") or not accepted:
             E(f"{eid}: legacy_image_index filled while corpus.relation is {relation!r} (mapping accepted: {accepted})")
         if not (leg.get("sun_book_key") or leg.get("alias_candidate")):
             E(f"{eid}: legacy_image_index filled but the edition names no legacy book")
@@ -220,7 +311,7 @@ def check_page_map(e: dict, pm: dict, E) -> None:
                     break
         if lev.get("method") == "content" and len(proven) < 8:
             E(f"{name}: fewer than 8 individually proven rows")
-    elif relation in ("same-bytes", "aligned", "partial"):
+    elif relation in ("same-bytes", "aligned", "partial", "legacy-image-source"):
         E(f"{eid}: corpus.relation {relation!r} without any mapped row")
     if relation == "same-bytes" and (len(legacy) != len(rows) or any(li != p - 1 for p, li, _ in legacy)):
         E(f"{eid}: same-bytes requires legacy_image_index == pdf_page - 1 on every page")
@@ -401,6 +492,7 @@ def validate(release_dir: Path, holdings=None) -> list[str]:
         if not is_held(e) and cor.get("relation") != "none":
             E(f"{eid}: corpus relation claimed without holding the PDF")
         check_storage(e, E)
+        check_cover(e, release_dir, E)
         if e["status"] == "active":
             active_by_work[e["work_id"]].append(e)
     for sha, n in all_shas.items():
@@ -477,6 +569,8 @@ def validate(release_dir: Path, holdings=None) -> list[str]:
             continue
         page_maps[eid] = read_json(pm_files[eid])
         check_page_map(e, page_maps[eid], E)
+        check_unmapped(e, page_maps[eid], E)
+        check_reassembled(e, page_maps[eid], release_dir, E)
 
     # --- downloads --------------------------------------------------------------------------
     ids: Counter = Counter()
