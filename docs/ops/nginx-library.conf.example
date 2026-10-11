@@ -33,6 +33,9 @@ limit_req_zone $binary_remote_addr zone=sun_library_img:10m rate=30r/s;
     location /_protected_pdf/ {
         internal;
         alias /srv/sun-textbooks/pdf/;
+        # nginx adds Accept-Ranges to 200 only; browsers that cached 206 chunks then answer HEAD
+        # from the cache without it. Send it on every answer.
+        add_header Accept-Ranges bytes always;
         types { application/pdf pdf; }
         default_type application/pdf;
         sendfile on;

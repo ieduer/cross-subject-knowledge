@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.10.11-r42",
+  "frontend_refactor_version": "2026.10.11-r43",
   "updated_at": "2026-10-11",
   "history": [
+    {
+      "date": "2026-10-11",
+      "version": "2026.10.11-r43",
+      "summary": "PDF 预览: a book that had been opened before no longer reports 服务器不支持分段读取 — the Range probe is never answered from the browser cache and the viewer reads the file under its own cache key; asset cache key 20261011e for library.js"
+    },
     {
       "version": "2026.10.11-r42",
       "date": "2026-10-11",
@@ -180,7 +185,7 @@
     {
       "version": "2026.03.06-r7",
       "date": "2026-03-06",
-        "summary": "AI chat now uses precomputed gaokao analysis and textbook summaries; gaokao link panels prioritize precomputed refs before live retrieval"
+      "summary": "AI chat now uses precomputed gaokao analysis and textbook summaries; gaokao link panels prioritize precomputed refs before live retrieval"
     },
     {
       "version": "2026.03.06-r6",

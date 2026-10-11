@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-10-11T03:49:41.981535+00:00",
-  "git_head": "c665e1166fae043eabd6c4ebb0a23c27cc20e9f0",
-  "frontend_version": "2026.10.11-r42",
+  "generated_at": "2026-10-11T08:04:51.177982+00:00",
+  "git_head": "f9abb60357b7dfb4d55bb0c4e8bfc98c0195d5ba",
+  "frontend_version": "2026.10.11-r43",
   "source_of_truth": {
     "local_workspace": "authoritative",
     "github": "authoritative_for_code_only_after_push",
@@ -116,7 +116,7 @@
       "kind": "source",
       "logical_path": "frontend/index.html",
       "size": 14505,
-      "sha256": "b22e3ad564adbfc3c13d4cf53bf8128fea154b70e038442a8af8fe4f676a54ce"
+      "sha256": "ca943dd956909558a09781f183bcb9742e8e1b15034f2bef4a31bb03c9df9608"
     },
     {
       "kind": "source",
@@ -128,7 +128,7 @@
       "kind": "source",
       "logical_path": "frontend/chuzhong.html",
       "size": 11136,
-      "sha256": "6cc7a6f97418aa4978082e313b2604fc6e1eb7674ad67a792a53b1cb5718474e"
+      "sha256": "19b8e7a832338140f7f41c6a7fc5c16670d9926a007e9f7d1f876b203f32cd50"
     },
     {
       "kind": "source",
@@ -181,14 +181,14 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/library.js",
-      "size": 100524,
-      "sha256": "8eee027384216270f88bbf2b6b7b51425a4b0ef03c1c00086c73180436ecff22"
+      "size": 101083,
+      "sha256": "ee833d5bc0845b62a05bfe3b8a04a40a07c0df5a80af138be7b5f73beb2d721e"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/version.json",
-      "size": 12931,
-      "sha256": "1330aecd76d6982f038df604febb43dc8df8b6715de779cc157e88a48fe5db9d"
+      "size": 13277,
+      "sha256": "78f6b72cef9e87b29d0731835a17645c014ae689089f3d77bbda04308d958d9d"
     },
     {
       "kind": "source",
@@ -1494,7 +1494,7 @@
     }
   ],
   "runtime_assets_carried_from": {
-    "generated_at": "2026-10-11T03:48:19.372320+00:00",
+    "generated_at": "2026-10-11T03:49:41.981535+00:00",
     "git_head": "c665e1166fae043eabd6c4ebb0a23c27cc20e9f0",
     "note": "runtime half not re-measured in this build; deploy_vps.sh verifies it on the VPS"
   },

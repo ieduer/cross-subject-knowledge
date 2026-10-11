@@ -677,9 +677,15 @@
         // fall back to downloading the whole book when Range is not supported.
         d.stageStatus.textContent = '正在连接文件…';
         try {
+            // The viewer reads the file through its own cache key (?rk=2). A browser that cached
+            // 206 chunks answers a later HEAD / first GET from that entry WITHOUT Accept-Ranges
+            // (nginx only added the header to 200s until r43), which made a book that had been
+            // opened once look like "no Range support". New entries carry the header on 206 too,
+            // and the probe itself never comes from the cache.
+            const viewUrl = edition.file.url + (edition.file.url.indexOf('?') < 0 ? '?' : '&') + 'rk=2';
             let probe;
             try {
-                probe = await fetch(edition.file.url, { method: 'HEAD', signal: ctl.signal, credentials: 'omit' });
+                probe = await fetch(viewUrl, { method: 'HEAD', signal: ctl.signal, credentials: 'omit', cache: 'no-store' });
             } catch (error) {
                 if (error && error.name === 'AbortError') return;
                 throw new LibError('network', '网络连接失败，无法读取 PDF，请重试。');
@@ -693,7 +699,7 @@
             if (seq !== pdf.openSeq) return;
             d.stageStatus.textContent = '正在打开 PDF…';
             const task = pdf.loadingTask = lib.getDocument({
-                url: edition.file.url,
+                url: viewUrl,
                 rangeChunkSize: RANGE_CHUNK,
                 disableAutoFetch: true,   // never fetch the rest of the book in the background
                 disableStream: true,      // page data comes from Range requests only
