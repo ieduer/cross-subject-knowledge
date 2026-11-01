@@ -530,7 +530,7 @@ Owner approval 2026-11-01 ("Approve as proposed"; plan `/Users/ylsuen/CF/reports
 - The overview (`/api/overview`) and follow-ups (`/api/chat`) set `Built.upstream = {"task_type": "synthesis"}`; dictionary and
   真题 builders do not. `_call_ai_service(prompt, task_type=...)` sends a synthesis request only when this site has a caller
   identity (`AI_INTERNAL_TOKEN` and `AI_SERVICE_PROJECT=sun.bdfz.net` in `/etc/sun/environment`): advanced `contents` form,
-  `generationConfig.maxOutputTokens` (`AI_SYNTHESIS_MAX_OUTPUT_TOKENS`, default 3072), no sampling fields (the Claude tier
+  `generationConfig.maxOutputTokens` (`AI_SYNTHESIS_MAX_OUTPUT_TOKENS`, default 6144: a 3072 cap cut a five-subject Claude overview on 2026-11-01, which the gateway billed and replaced with the free pool), no sampling fields (the Claude tier
   refuses temperature / top_k / top_p), `X-Task-Type: synthesis`. Without the identity it is the plain chat request of r44.
 - The gateway's synthesis lane is one Claude attempt (≤40 s) plus the free-pool fallback inside 60 s, so that call alone may
   wait `AI_SYNTHESIS_TIMEOUT_SEC` (default and hard maximum 65 s, `HARD_MAX_SYNTHESIS_DEADLINE_SEC`). Every other call keeps

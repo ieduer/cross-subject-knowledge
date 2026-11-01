@@ -201,7 +201,9 @@ AI_INTERNAL_TOKEN = os.getenv("AI_INTERNAL_TOKEN", "").strip()
 # Overview and follow-ups ask the gateway's synthesis lane (Claude first, free Gemini pool as fallback; owner approval
 # 2026-11-01). The lane needs this site's caller identity (token + project name); without it they stay plain chat.
 AI_SYNTHESIS_TASK_TYPE = "synthesis"
-AI_SYNTHESIS_MAX_OUTPUT_TOKENS = max(512, min(8192, int(os.getenv("AI_SYNTHESIS_MAX_OUTPUT_TOKENS", "3072"))))
+# Claude writes a five-subject overview in about 2,000-3,500 tokens; the gateway never serves a cut answer (it bills it and
+# falls back), so the cap must clear the longest overview. Gateway ceiling: APIS_T1_MAX_TOKENS 8192.
+AI_SYNTHESIS_MAX_OUTPUT_TOKENS = max(512, min(8192, int(os.getenv("AI_SYNTHESIS_MAX_OUTPUT_TOKENS", "6144"))))
 AI_SYNTHESIS_AVAILABLE = bool(AI_INTERNAL_TOKEN and AI_SERVICE_PROJECT)
 # AI is OFF unless AI_ENABLED=1, AI_SESSION_KEY and AI_DAILY_REQUEST_BUDGET are all set (docs/AI_GUARD.md).
 AI_GUARD_CONFIG = ai_guard.GuardConfig.from_env(state_root=STATE_ROOT)
