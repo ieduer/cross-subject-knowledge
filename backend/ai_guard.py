@@ -373,6 +373,8 @@ def validate_chat(payload: Any, cfg: GuardConfig) -> dict:
         "scope_subject": _optional_text(payload, "scope_subject", 40),
         "book_key": _optional_text(payload, "book_key", 200),
         "phase": _phase(payload),
+        # The records the overview cited, so a follow-up keeps them (same rules as the overview's ids).
+        "ids": _overview_ids(payload.get("ids")),
     }
 
 

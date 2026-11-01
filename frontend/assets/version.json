@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.11.01-r45",
+  "frontend_refactor_version": "2026.11.01-r46",
   "updated_at": "2026-11-01",
   "history": [
+    {
+      "date": "2026-11-01",
+      "version": "2026.11.01-r46",
+      "summary": "follow-ups keep the overview's evidence: the browser sends the ids of the records the overview cited (else the results on screen) and the server reloads them ahead of the follow-up's own retrieval, so a follow-up can cite the same pages; asset cache key 20261101b for app.js, library.js and library.css"
+    },
     {
       "date": "2026-11-01",
       "version": "2026.11.01-r45",

@@ -93,7 +93,11 @@ def tearDownModule():
         _TMP.cleanup()
 
 
-def fake_chat_context(query, user_message, history=None, *, scope_subject=None, book_key=None, phase=None):
+CHAT_IDS_SEEN = []
+
+
+def fake_chat_context(query, user_message, history=None, *, scope_subject=None, book_key=None, phase=None, ids=None):
+    CHAT_IDS_SEEN.append(ids)
     evidence = [{
         "id": 11, "subject": "物理", "title": "必修第一册", "book_key": "physics_b1", "section": 87, "logical_page": 92,
         "snippet": "物体加速度的大小跟它受到的作用力成正比。", "citation": "[物理·必修第一册·p92]", "text": "RAW " * 400,
@@ -380,6 +384,38 @@ class MainIntegrationTests(unittest.IsolatedAsyncioTestCase):
             con.close()
         self.assertEqual([row["id"] for row in found], [16356])
 
+    def test_follow_up_keeps_the_overview_evidence(self):
+        """Real SQL over a throwaway chunks table: the records the overview cited come first in a follow-up's
+        evidence and prompt context, ahead of (and deduplicated against) the turn's own retrieval."""
+        con = sqlite3.connect(main.DB_PATH)
+        con.row_factory = sqlite3.Row
+        try:
+            con.execute("DROP TABLE IF EXISTS chunks")
+            con.execute("""CREATE TABLE chunks (id INTEGER PRIMARY KEY, content_id TEXT, phase TEXT, subject TEXT, title TEXT,
+                           book_key TEXT, section INTEGER, logical_page INTEGER, text TEXT, source TEXT, year INTEGER, category TEXT)""")
+            con.executemany("INSERT INTO chunks VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [
+                (16355, None, "高中", "生物学", "普通高中教科书·生物学选择性必修2 生物与环境", "bio_s2", 63, 55,
+                 "流入某一营养级的能量，一部分在呼吸作用中以热能的形式散失，一部分用于生长、发育和繁殖。", "mineru", None, None),
+                (16356, None, "高中", "生物学", "普通高中教科书·生物学选择性必修2 生物与环境", "bio_s2", 64, 56,
+                 "能量在流动过程中逐级递减，与能量守恒定律矛盾吗？", "mineru", None, None),
+            ])
+            con.commit()
+            turn = {"query": "能量守恒", "retrieval_terms_used": ["能量"], "context_text": "【物理】\n[物理·必修第三册·p60] 新检索",
+                    "evidence": [{"id": 16356, "citation": "[生物学·重复·p56]"}, {"id": 21, "citation": "[物理·必修第三册·p60]"}],
+                    "summary": {"evidence_count": 2}}
+            merged = main._merge_prior_evidence(con, turn, [16355, 16356, 999999], phase="高中")
+            unchanged = main._merge_prior_evidence(con, turn, [], phase="高中")
+        finally:
+            con.execute("DROP TABLE IF EXISTS chunks")
+            con.commit()
+            con.close()
+        self.assertIs(unchanged, turn)
+        self.assertEqual([item["id"] for item in merged["evidence"]], [16355, 16356, 21], "overview records first, duplicate kept once")
+        self.assertTrue(merged["context_text"].startswith("【导读已用的原文】"))
+        self.assertIn("以热能的形式散失", merged["context_text"])
+        self.assertIn("[物理·必修第三册·p60] 新检索", merged["context_text"])
+        self.assertEqual((merged["summary"]["prior_evidence_count"], merged["summary"]["evidence_count"]), (2, 3))
+
     def test_overview_text_helpers(self):
         stem = main._gaokao_stem("4. 下列说法正确的是\nA. 甲\nB. 乙\n【解析】\n【详解】A 错误……")
         self.assertEqual(stem, "下列说法正确的是 A. 甲 B. 乙")
@@ -453,10 +489,11 @@ class MainIntegrationTests(unittest.IsolatedAsyncioTestCase):
         try:
             session = await self.client.post("/api/ai/session", headers=HEADERS, content=b"{}")
             self.assertEqual(session.status_code, 200)
-            chat = await self.post("/api/chat", {"query": "牛顿第二定律", "user_message": "车道", "phase": "高中"})
+            chat = await self.post("/api/chat", {"query": "牛顿第二定律", "user_message": "车道", "phase": "高中", "ids": [11, "supp:443409c8d697fbf3"]})
             dict_chat = await self.post("/api/dict/chat", {"headword": "之", "user_message": "车道"})
             self.assertEqual((chat.status_code, dict_chat.status_code), (200, 200), chat.text + dict_chat.text)
             self.assertEqual(self.upstream_kwargs[-2:], [{"task_type": "synthesis"}, {}])
+            self.assertEqual(CHAT_IDS_SEEN[-1], [11, "supp:443409c8d697fbf3"], "the overview ids reach the follow-up context")
         finally:
             await self.guard.drain_logs()
             con = sqlite3.connect(main.DB_PATH)

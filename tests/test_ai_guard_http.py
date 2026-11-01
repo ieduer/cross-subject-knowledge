@@ -199,6 +199,17 @@ class HttpGuardTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(refused.status_code, 400, bad)
         self.assertEqual(h.upstream_calls, 3)
 
+    async def test_chat_carries_the_overview_ids_under_the_same_rules(self):
+        h = self.harness(AI_RATE_BURST=100, AI_SESSION_RATE_BURST=100)
+        await h.session()
+        ok = await h.post("/api/chat", dict(CHAT, ids=[16356, "supp:443409c8d697fbf3", 16356]))
+        self.assertEqual(ok.status_code, 200, ok.text)
+        self.assertEqual(h.build_calls[-1][1]["ids"], [16356, "supp:443409c8d697fbf3"])
+        plain = await h.post("/api/chat", dict(CHAT, query="另一问"))
+        self.assertEqual((plain.status_code, h.build_calls[-1][1]["ids"]), (200, []))
+        for bad in (["16356"], [True], ["supp:XYZ"], list(range(1, 32))):
+            self.assertEqual((await h.post("/api/chat", dict(CHAT, ids=bad))).status_code, 400, bad)
+
     async def test_three_identical_concurrent_requests_one_upstream_call(self):
         h = self.harness()
         await h.session()

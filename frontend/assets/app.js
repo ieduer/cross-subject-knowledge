@@ -7,7 +7,7 @@ window._subjectMeta = {};
 // AI runs only on an explicit user action and only through this site's own server
 // (assets/ai-client.js → POST /api/chat). The browser never contacts a model gateway.
 const IMG_CDN = 'https://img.rdfzer.com';
-const DEFAULT_FRONTEND_VERSION = '2026.11.01-r45';
+const DEFAULT_FRONTEND_VERSION = '2026.11.01-r46';
 const FRONTEND_VERSION_FILE = '/assets/version.json';
 const AI_MEMORY_LIMIT = 12;
 const DOWNLOADABLE_LIBRARY_BOOKS = 316;
@@ -192,12 +192,22 @@ function getAIExecutionKey() {
     return [currentQuery, currentSubjectFilter || '', scope.scope_subject || '', scope.book_key || ''].join('|');
 }
 
+// The records the overview actually cited (else the results on screen): a follow-up keeps them as evidence.
+function followupEvidenceIds() {
+    const overview = aiConversation.find(msg => msg.kind === 'overview' && !msg.isError && Array.isArray(msg.sources));
+    const ids = overview ? overview.sources.map(src => src.id) : overviewResultIds(currentData);
+    return Array.from(new Set(ids))
+        .filter(id => (Number.isInteger(id) && id > 0) || (typeof id === 'string' && /^supp:[0-9a-f]{16}$/.test(id)))
+        .slice(0, 24);
+}
+
 function buildAIServerPayload(userMessage, history) {
     const scope = getCurrentAIScopePayload();
     return {
         query: currentQuery,
         user_message: userMessage,
         history,
+        ids: followupEvidenceIds(),
         phase: PHASE,
         ...(scope.scope_subject ? { scope_subject: scope.scope_subject } : {}),
         ...(scope.book_key ? { book_key: scope.book_key } : {}),

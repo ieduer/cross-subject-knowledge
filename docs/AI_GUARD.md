@@ -541,3 +541,11 @@ Owner approval 2026-11-01 ("Approve as proposed"; plan `/Users/ylsuen/CF/reports
 - Off: remove `AI_INTERNAL_TOKEN` from the environment file and recreate the container (r44 behaviour), or on the gateway
   remove `sun.bdfz.net` from `APIS_T1_CALLERS`. Daily bounds: this site's own 200 calls, and the gateway's 100 Claude attempts
   per UTC day for `sun.bdfz.net` (then the free pool answers).
+
+## 17. Follow-ups keep the overview's evidence (r46, 2026-11-01)
+
+A follow-up (`/api/chat`) now carries `ids`: the records the overview cited (its `context.evidence` ids; the results on
+screen when there is no overview), validated exactly like the overview's ids (at most 30, chunk id or `supp:<16 hex>`).
+`_merge_prior_evidence` reloads those rows (`_evidence_from_ids`, shared with the overview) and puts them first in the
+evidence and the prompt under 「导读已用的原文」, followed by the turn's own retrieval; a record present in both is kept once.
+The response evidence (citation buttons) holds up to 32 records. Without ids the follow-up is exactly r45.

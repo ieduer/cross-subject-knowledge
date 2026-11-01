@@ -4849,6 +4849,29 @@ def _build_chat_context_payload(
     )
 
 
+def _merge_prior_evidence(con, context_payload: dict, ids: list | None, *, phase: str | None = None) -> dict:
+    """A follow-up keeps the pages the overview already used: those records (reloaded by id) come first in the
+    evidence and the prompt, then this turn's own retrieval. Duplicate records are kept once."""
+    if not ids:
+        return context_payload
+    terms = list(dict.fromkeys([context_payload.get("query") or ""] + list(context_payload.get("retrieval_terms_used") or [])))
+    textbook_by_subject, gaokao_items = _evidence_from_ids(con, ids, [t for t in terms if t][:8], phase=phase)
+    prior = [item for items in textbook_by_subject.values() for item in items] + gaokao_items
+    if not prior:
+        return context_payload
+    seen = {item.get("id") for item in prior}
+    merged = dict(context_payload)
+    merged["evidence"] = prior + [item for item in (context_payload.get("evidence") or []) if item.get("id") not in seen]
+    lines = ["【导读已用的原文】（与下面本轮检索到的原文一样可以引用）"]
+    lines.extend(f"{item['citation']} {item['snippet']}" for item in prior)
+    merged["context_text"] = "\n".join(lines) + "\n\n" + (context_payload.get("context_text") or "（本轮检索无新增）")
+    summary = dict(context_payload.get("summary") or {})
+    summary["prior_evidence_count"] = len(prior)
+    summary["evidence_count"] = len(merged["evidence"])
+    merged["summary"] = summary
+    return merged
+
+
 def _build_chat_context_for_request(
     query: str,
     user_message: str,
@@ -4857,10 +4880,11 @@ def _build_chat_context_for_request(
     scope_subject: str | None = None,
     book_key: str | None = None,
     phase: str | None = None,
+    ids: list | None = None,
 ) -> dict:
     con = get_db()
     try:
-        return _build_chat_context_payload(
+        payload = _build_chat_context_payload(
             con,
             query,
             user_message,
@@ -4869,6 +4893,7 @@ def _build_chat_context_for_request(
             book_key=book_key,
             phase=phase,
         )
+        return _merge_prior_evidence(con, payload, ids, phase=phase)
     finally:
         con.close()
 
@@ -7485,12 +7510,13 @@ async def _ai_build_chat(fields: dict) -> ai_guard.Built:
             scope_subject=fields.get("scope_subject"),
             book_key=fields.get("book_key"),
             phase=fields.get("phase"),
+            ids=fields.get("ids"),
         )
     except HTTPException as exc:
         raise _ai_builder_error(exc) from exc
     prompt = _build_chat_prompt(query, user_message, context_payload, history=history)
-    # Citations shown to the user come from these retrieval records only.
-    evidence = ai_guard.sanitize_evidence(context_payload.get("evidence"))
+    # Citations shown to the user come from these retrieval records only (the overview's, then this turn's).
+    evidence = ai_guard.sanitize_evidence(context_payload.get("evidence"), limit=32, snippet_chars=OVERVIEW_EXCERPT_CHARS + 2)
     summary = context_payload.get("summary") or {}
 
     def finish(answer: str) -> dict:
@@ -7734,16 +7760,9 @@ def _supplemental_pages_by_id() -> dict:
     return {entry["id"]: entry for entry in _load_supplemental_textbook_pages() if entry.get("id")}
 
 
-def _build_overview_context_from_ids(con, query: str, ids: list, *, phase: str | None = None) -> dict:
-    """Overview evidence = the search results the reader is looking at, reloaded on the
-    server by id (chunk ids and supplemental page ids). Nothing but the ids comes from the client."""
-    clean_q = _clean_query_text(query)
-    if not clean_q:
-        raise HTTPException(400, "Invalid query")
-    query_analysis = _analyze_search_query(con, query)
-    terms = list(dict.fromkeys([clean_q] + list(query_analysis.get("retrieval_terms") or [])))[:8]
-    _, alias_hints = _expand_chat_search_terms(con, terms)
-
+def _evidence_from_ids(con, ids: list, terms: list[str], *, phase: str | None = None) -> tuple[dict, list]:
+    """Reload retrieved records by id (chunk ids, supplemental page ids) as cited evidence: textbook excerpts grouped
+    by subject in the given order (at most six subjects, three each) and exam stems. Only ids come from the client."""
     chunk_ids = [item for item in ids if isinstance(item, int)]
     chunk_rows = {}
     if chunk_ids:
@@ -7755,7 +7774,6 @@ def _build_overview_context_from_ids(con, query: str, ids: list, *, phase: str |
         ).fetchall():
             chunk_rows[row["id"]] = dict(row)
     supplemental = _supplemental_pages_by_id() if any(isinstance(item, str) for item in ids) else {}
-
     textbook_by_subject: dict[str, list] = {}
     gaokao_items = []
     for item_id in ids:
@@ -7795,6 +7813,20 @@ def _build_overview_context_from_ids(con, query: str, ids: list, *, phase: str |
             entry["base_title"] = row.get("base_title") or entry.get("base_title")
         entry["citation"] = f"[{row['subject']}·{_short_book_title(entry.get('base_title') or entry['title'], entry.get('edition'))}·p{logical_page}]"
         subject_items.append(entry)
+    return textbook_by_subject, gaokao_items
+
+
+def _build_overview_context_from_ids(con, query: str, ids: list, *, phase: str | None = None) -> dict:
+    """Overview evidence = the search results the reader is looking at, reloaded on the
+    server by id (chunk ids and supplemental page ids). Nothing but the ids comes from the client."""
+    clean_q = _clean_query_text(query)
+    if not clean_q:
+        raise HTTPException(400, "Invalid query")
+    query_analysis = _analyze_search_query(con, query)
+    terms = list(dict.fromkeys([clean_q] + list(query_analysis.get("retrieval_terms") or [])))[:8]
+    _, alias_hints = _expand_chat_search_terms(con, terms)
+
+    textbook_by_subject, gaokao_items = _evidence_from_ids(con, ids, terms, phase=phase)
 
     if not gaokao_items and phase != "初中":
         # Exam rows rarely make the first screen of results; look them up by the same terms.

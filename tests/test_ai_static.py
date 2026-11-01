@@ -174,6 +174,11 @@ class FrontendStaticTests(unittest.TestCase):
         # The overview integrates the results on screen: their ids, validated like the server does.
         payload = function_body(app, "function buildOverviewPayload() {")
         self.assertIn("ids: overviewResultIds(currentData),", payload)
+        chat_payload = function_body(app, "function buildAIServerPayload(userMessage, history) {")
+        self.assertIn("ids: followupEvidenceIds(),", chat_payload)
+        followup = function_body(app, "function followupEvidenceIds() {")
+        self.assertIn("msg.kind === 'overview' && !msg.isError", followup)
+        self.assertIn("/^supp:[0-9a-f]{16}$/", followup)
         ids = function_body(app, "function overviewResultIds(data) {")
         self.assertIn("/^supp:[0-9a-f]{16}$/", ids)
         self.assertIn(".slice(0, 24)", ids)
@@ -297,7 +302,7 @@ class MainSourceTests(unittest.TestCase):
 
     def test_builders_return_retrieval_based_citations(self):
         chat = MAIN[MAIN.index("async def _ai_build_chat("):MAIN.index("# ── Dictionary APIs")]
-        self.assertIn('evidence = ai_guard.sanitize_evidence(context_payload.get("evidence"))', chat)
+        self.assertIn('evidence = ai_guard.sanitize_evidence(context_payload.get("evidence"), limit=32, snippet_chars=OVERVIEW_EXCERPT_CHARS + 2)', chat)
         self.assertIn('"citation_check": ai_guard.check_citations(answer, evidence)', chat)
         self.assertEqual(chat.count("_build_chat_context_for_request"), 1, "one retrieval per question")
         gaokao = MAIN[MAIN.index("async def _ai_build_gaokao_chat("):MAIN.index("AI_GUARD = ai_guard.Guard(")]
