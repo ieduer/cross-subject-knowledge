@@ -136,11 +136,13 @@ def fake_overview_context(query, *, ids=None, scope_subject=None, book_key=None,
 class MainIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.calls = []
+        self.upstream_kwargs = []
         self.context_calls = 0
         self.answer = "加速度与合力成正比，见 [物理·必修第一册·p92]；另见 [物理·必修第一册·p1234]。"
 
-        async def upstream(prompt):
+        async def upstream(prompt, **kwargs):
             self.calls.append(prompt)
+            self.upstream_kwargs.append(kwargs)
             return self.answer
 
         def counted_context(*args, **kwargs):
@@ -405,6 +407,68 @@ class MainIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plain["citation"], "[真题·2020·卷别不详·物理]")
         self.assertNotIn("解析摘录", plain["snippet"], "the stem already names the concept")
 
+    async def test_synthesis_lane_request_shape_and_label(self):
+        """Overview and follow-ups ask the gateway's synthesis lane once this site has a caller identity;
+        without one (the test default) they stay plain chat. The label says who actually answered."""
+        self.assertFalse(main.AI_SYNTHESIS_AVAILABLE)
+        seen = []
+
+        def handler(request):
+            seen.append(request)
+            pool = "claude_credit_pool" if len(seen) == 1 else "google_primary_pool"
+            return httpx.Response(200, json={"answer": "整合", "source_api_provider_pool": pool, "model": "claude-sonnet-5-5" if len(seen) == 1 else "gemini-3.6-flash"})
+
+        real_post = main.ai_guard.post_upstream
+        captured = []
+
+        async def patched(url, payload, headers, **kwargs):
+            captured.append(kwargs)
+            return await real_post(url, payload, headers, transport=httpx.MockTransport(handler), **kwargs)
+
+        saved = (main.AI_SYNTHESIS_AVAILABLE, main.AI_INTERNAL_TOKEN, main.AI_SERVICE_PROJECT)
+        main.ai_guard.post_upstream = patched
+        main.AI_SYNTHESIS_AVAILABLE, main.AI_INTERNAL_TOKEN, main.AI_SERVICE_PROJECT = True, "caller-token-fixture", "sun.bdfz.net"
+        try:
+            first = await main._call_ai_service("PROMPT", task_type="synthesis")
+            second = await main._call_ai_service("PROMPT", task_type="synthesis")
+            plain = await main._call_ai_service("PROMPT")
+        finally:
+            main.ai_guard.post_upstream = real_post
+            main.AI_SYNTHESIS_AVAILABLE, main.AI_INTERNAL_TOKEN, main.AI_SERVICE_PROJECT = saved
+        self.assertEqual((first["provider"], second["provider"], plain["provider"]), ("Claude", "Gemini（备用）", "Gemini"))
+        body = json.loads(seen[0].content)
+        self.assertEqual(body, {"contents": [{"role": "user", "parts": [{"text": "PROMPT"}]}],
+                                "generationConfig": {"maxOutputTokens": main.AI_SYNTHESIS_MAX_OUTPUT_TOKENS}, "taskType": "synthesis"})
+        self.assertEqual((seen[0].headers["x-task-type"], seen[0].headers["x-project-name"], seen[0].headers["x-internal-token"]),
+                         ("synthesis", "sun.bdfz.net", "caller-token-fixture"))
+        self.assertEqual(json.loads(seen[2].content)["taskType"], main.AI_SERVICE_TASK_TYPE)
+        self.assertEqual((captured[0]["deadline_sec"], captured[0]["hard_max_sec"]), (65.0, 65.0))
+        self.assertEqual((captured[2]["deadline_sec"], captured[2]["hard_max_sec"]), (30.0, 30.0))
+        # The two builders that write from retrieved excerpts ask for the lane; dictionary and 真题 do not.
+        # Own budget file: test_real_app_flow spends the shared one.
+        saved_budget = self.guard.budget
+        budget_dir = tempfile.TemporaryDirectory()
+        self.guard.budget = main.ai_guard.BudgetStore(Path(budget_dir.name) / "budget.sqlite3")
+        self.guard._status_budget = None
+        try:
+            session = await self.client.post("/api/ai/session", headers=HEADERS, content=b"{}")
+            self.assertEqual(session.status_code, 200)
+            chat = await self.post("/api/chat", {"query": "牛顿第二定律", "user_message": "车道", "phase": "高中"})
+            dict_chat = await self.post("/api/dict/chat", {"headword": "之", "user_message": "车道"})
+            self.assertEqual((chat.status_code, dict_chat.status_code), (200, 200), chat.text + dict_chat.text)
+            self.assertEqual(self.upstream_kwargs[-2:], [{"task_type": "synthesis"}, {}])
+        finally:
+            await self.guard.drain_logs()
+            con = sqlite3.connect(main.DB_PATH)
+            try:
+                con.execute("DELETE FROM ai_chat_logs WHERE user_message = '' AND query = '' AND kind IN ('chat', 'dict') AND message_len = 2")
+                con.commit()
+            finally:
+                con.close()
+            self.guard.budget = saved_budget
+            self.guard._status_budget = None
+            budget_dir.cleanup()
+
     async def test_old_client_on_the_real_app(self):
         """A page still running the 035d2d4 script (no client marker) against the real app."""
         chat = await self.client.post("/api/chat", headers=OLD_CLIENT_HEADERS, content=json.dumps({"query": "牛顿第二定律", "user_message": "x", "history": []}).encode())
@@ -446,7 +510,7 @@ class MainIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         main.ai_guard.post_upstream = patched
         try:
-            self.assertEqual(await main._call_ai_service("PROMPT"), "好")
+            self.assertEqual(await main._call_ai_service("PROMPT"), {"answer": "好", "provider": main.AI_SERVICE_LABEL})
         finally:
             main.ai_guard.post_upstream = real_post
         self.assertEqual(len(seen), 1)

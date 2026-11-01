@@ -7,7 +7,7 @@ window._subjectMeta = {};
 // AI runs only on an explicit user action and only through this site's own server
 // (assets/ai-client.js → POST /api/chat). The browser never contacts a model gateway.
 const IMG_CDN = 'https://img.rdfzer.com';
-const DEFAULT_FRONTEND_VERSION = '2026.10.31-r44';
+const DEFAULT_FRONTEND_VERSION = '2026.11.01-r45';
 const FRONTEND_VERSION_FILE = '/assets/version.json';
 const AI_MEMORY_LIMIT = 12;
 const DOWNLOADABLE_LIBRARY_BOOKS = 316;
@@ -56,7 +56,7 @@ function setSearchAIProviderLabel(label) {
 
 function renderAIFootnote() {
     if (!aiFootnote) return;
-    aiFootnote.textContent = `由 ${aiProviderLabel} 依据下方检索到的${getAISourceLabel()}原文生成。点带下划线的出处可核对原文；AI 可能出错，以教材原文为准。`;
+    aiFootnote.textContent = `AI 依据下方检索到的${getAISourceLabel()}原文生成，每段回答标出所用模型。点带下划线的出处可核对原文；AI 可能出错，以教材原文为准。`;
 }
 
 const AI_PRECISION_PATTERNS = [
@@ -289,9 +289,10 @@ function setAISearchStage(stage) {
     renderAIConversation();
 }
 
-function renderAIContextSummary(summary, cached) {
-    if (!summary || !summary.coverage_line) return '';
-    return `<div class="ai-msg-context">${escHtml(summary.coverage_line)}${cached ? ' · 已缓存' : ''}</div>`;
+function renderAIContextSummary(msg) {
+    const parts = [msg.provider ? `由 ${msg.provider} 撰写` : '', msg.contextSummary?.coverage_line || '', msg.cached ? '已缓存' : ''].filter(Boolean);
+    if (!parts.length) return '';
+    return `<div class="ai-msg-context">${escHtml(parts.join(' · '))}</div>`;
 }
 
 // Models sometimes double the bracket ("[[物理·…·p60]"); the extra one is absorbed.
@@ -408,7 +409,7 @@ function renderAIMessage(msg, index, isLast) {
     }
     return `
         <article class="ai-msg assistant ${msg.kind === 'overview' ? 'overview' : ''}" data-index="${index}">
-            ${msg.kind === 'overview' ? renderAIContextSummary(msg.contextSummary, msg.cached) : ''}
+            ${renderAIContextSummary(msg.kind === 'overview' ? msg : { provider: msg.provider, cached: msg.cached })}
             <div class="ai-msg-text ai-rich">${renderAIRichText(msg.content, msg.sources)}</div>
             ${renderAICitationNote(msg.citationCheck)}
             <div class="ai-quote hidden"></div>
@@ -422,7 +423,7 @@ function renderAIPending() {
     if (aiPendingKind === 'overview') {
         return `
             <div class="ai-msg assistant pending">
-                <div class="ai-msg-text"><span class="ai-dots" aria-hidden="true"></span>AI 正在通读这些原文，整合导读（约 10–30 秒）…</div>
+                <div class="ai-msg-text"><span class="ai-dots" aria-hidden="true"></span>AI 正在通读这些原文，整合导读（约 10–60 秒）…</div>
                 ${aiLocalDigest}
                 ${cancel}
             </div>
@@ -587,6 +588,7 @@ function assistantReplyFrom(data, kind, userMessage) {
         role: 'assistant',
         kind,
         content,
+        provider: String(data.provider || ''),
         cached: Boolean(data.cached),
         contextSummary: contextPayload.summary || null,
         citationCheck: data.citation_check || null,

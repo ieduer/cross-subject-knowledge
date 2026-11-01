@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.10.31-r44",
-  "updated_at": "2026-10-31",
+  "frontend_refactor_version": "2026.11.01-r45",
+  "updated_at": "2026-11-01",
   "history": [
+    {
+      "date": "2026-11-01",
+      "version": "2026.11.01-r45",
+      "summary": "the overview and follow-ups go to the gateway's synthesis lane (Claude first, free Gemini pool as fallback; owner approval 2026-11-01) with this site's caller identity, a 65 s ceiling for that lane only and the documented request form without sampling fields; every answer is labelled with the model that actually wrote it (由 Claude 撰写 / Gemini（备用）); the dictionary and 真题 pages keep plain chat; asset cache key 20261101a for app.js, library.js and library.css"
+    },
     {
       "date": "2026-10-31",
       "version": "2026.10.31-r44",

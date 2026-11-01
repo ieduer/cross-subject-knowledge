@@ -315,6 +315,30 @@ class UpstreamTests(unittest.IsolatedAsyncioTestCase):
                 await self.call(lambda r, b=body: httpx.Response(200, json=b))
             self.assertEqual((ctx.exception.status, ctx.exception.code), (502, "ai_empty"))
 
+    async def test_detailed_answer_and_the_synthesis_ceiling(self):
+        body = {"answer": " 好 ", "source_api_provider_pool": "claude_credit_pool", "model": "claude-sonnet-5-5"}
+        self.assertEqual(await self.call(lambda r: httpx.Response(200, json=body), detailed=True),
+                         {"answer": "好", "pool": "claude_credit_pool", "model": "claude-sonnet-5-5"})
+        self.assertEqual(await self.call(lambda r: httpx.Response(200, json={"answer": "好", "model": 7}), detailed=True),
+                         {"answer": "好", "pool": "", "model": ""})
+        # The default ceiling stays 30 s; only the synthesis ceiling (65 s) may raise it, never beyond.
+        seen = []
+        real_wait_for = ai_guard.asyncio.wait_for
+
+        async def spy(coro, timeout):
+            seen.append(timeout)
+            return await real_wait_for(coro, timeout)
+
+        ai_guard.asyncio.wait_for = spy
+        try:
+            ok = lambda r: httpx.Response(200, json={"answer": "好"})
+            await self.call(ok, deadline_sec=120)
+            await self.call(ok, deadline_sec=120, hard_max_sec=ai_guard.HARD_MAX_SYNTHESIS_DEADLINE_SEC)
+            await self.call(ok, deadline_sec=120, hard_max_sec=500)
+        finally:
+            ai_guard.asyncio.wait_for = real_wait_for
+        self.assertEqual(seen, [30.0, 65.0, 65.0])
+
     async def test_no_retry_after_timeout(self):
         calls = []
 
@@ -436,6 +460,42 @@ class GuardFlowTests(unittest.IsolatedAsyncioTestCase):
         return Guard(cfg, upstream=upstream, log=self.logs.append, **kwargs)
 
     FIELDS = {"query": "牛顿第二定律", "user_message": "解释", "history": [], "phase": "高中"}
+
+    async def test_upstream_options_and_the_answering_provider(self):
+        seen = []
+
+        async def upstream(prompt, **kwargs):
+            seen.append(kwargs)
+            return {"answer": "整合", "provider": "Claude"}
+
+        guard = self.guard(upstream)
+
+        async def build():
+            return Built(prompt="P", finish=lambda answer: {"answer": answer, "provider": "Gemini"}, upstream={"task_type": "synthesis"})
+
+        result = await guard.handle("overview", {"query": "q"}, "s", build)
+        self.assertEqual((result["answer"], result["provider"]), ("整合", "Claude"))
+        self.assertEqual(seen, [{"task_type": "synthesis"}])
+        await guard.drain_logs()
+        self.assertEqual(self.logs[-1]["served_by"], "Claude")
+
+        async def plain(prompt):
+            return "纯文本"
+
+        guard2 = self.guard(plain)
+
+        async def build2():
+            return Built(prompt="P", finish=lambda answer: {"answer": answer, "provider": "Gemini"})
+
+        result2 = await guard2.handle("chat", {"query": "q2"}, "s", build2)
+        self.assertEqual((result2["answer"], result2["provider"]), ("纯文本", "Gemini"), "a plain upstream keeps the old shape")
+
+        async def empty(prompt, **kwargs):
+            return {"answer": "", "provider": "Claude"}
+
+        with self.assertRaises(AIGuardError) as ctx:
+            await self.guard(empty).handle("overview", {"query": "q3"}, "s", build)
+        self.assertEqual(ctx.exception.code, "ai_empty")
 
     async def test_three_identical_concurrent_requests_share_one_upstream_call(self):
         upstream = FakeUpstream(block=True)

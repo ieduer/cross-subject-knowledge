@@ -30,6 +30,9 @@ from typing import Any, Awaitable, Callable, Mapping, Optional
 
 # Hard ceilings that no env value can raise.
 HARD_MAX_UPSTREAM_DEADLINE_SEC = 30.0
+# Answers written from retrieved excerpts (overview, follow-ups) use the gateway's synthesis lane: one Claude attempt of up
+# to 40 s and the free-pool fallback inside 60 s. The caller waits that lane plus 5 s, never longer.
+HARD_MAX_SYNTHESIS_DEADLINE_SEC = 65.0
 HARD_MAX_RETRIES = 1
 MIN_SESSION_KEY_CHARS = 32
 SESSION_COOKIE = "sun_ai_session"
@@ -156,6 +159,7 @@ class GuardConfig:
     queue_wait_sec: float = 15.0
     # Upstream.
     upstream_deadline_sec: float = HARD_MAX_UPSTREAM_DEADLINE_SEC
+    synthesis_deadline_sec: float = HARD_MAX_SYNTHESIS_DEADLINE_SEC
     retries: int = 0
     # Answer cache.
     cache_ttl_sec: int = 600
@@ -199,6 +203,9 @@ class GuardConfig:
             queue_wait_sec=_env_float(env, "AI_QUEUE_WAIT_SEC", 15.0, lo=0.0, hi=60.0),
             upstream_deadline_sec=_env_float(
                 env, "AI_SERVICE_TIMEOUT_SEC", HARD_MAX_UPSTREAM_DEADLINE_SEC, lo=1.0, hi=HARD_MAX_UPSTREAM_DEADLINE_SEC
+            ),
+            synthesis_deadline_sec=_env_float(
+                env, "AI_SYNTHESIS_TIMEOUT_SEC", HARD_MAX_SYNTHESIS_DEADLINE_SEC, lo=1.0, hi=HARD_MAX_SYNTHESIS_DEADLINE_SEC
             ),
             retries=_env_int(env, "AI_SERVICE_RETRIES", 0, lo=0, hi=HARD_MAX_RETRIES),
             cache_ttl_sec=_env_int(env, "AI_CACHE_TTL_SEC", 600, lo=0, hi=86400),
@@ -650,8 +657,13 @@ async def post_upstream(
     max_bytes: int,
     retries: int = 0,
     transport: Any = None,
-) -> str:
-    """POST once and return the answer text.
+    hard_max_sec: float = HARD_MAX_UPSTREAM_DEADLINE_SEC,
+    detailed: bool = False,
+) -> Any:
+    """POST once and return the answer text (``detailed``: a dict with the answer and the
+    gateway's ``source_api_provider_pool`` / ``model``, which say who actually answered).
+
+    ``hard_max_sec`` may raise the ceiling only up to HARD_MAX_SYNTHESIS_DEADLINE_SEC.
 
     ``retries`` is capped at 1 and applies only to a connection that was never
     established (``httpx.ConnectError``): nothing was sent, so nothing can have
@@ -660,7 +672,8 @@ async def post_upstream(
     """
     import httpx
 
-    deadline = max(1.0, min(float(deadline_sec), HARD_MAX_UPSTREAM_DEADLINE_SEC))
+    ceiling = min(float(hard_max_sec), HARD_MAX_SYNTHESIS_DEADLINE_SEC)
+    deadline = max(1.0, min(float(deadline_sec), ceiling))
     attempts = 1 + max(0, min(int(retries), HARD_MAX_RETRIES))
 
     async def attempt() -> bytes:
@@ -712,7 +725,15 @@ async def post_upstream(
             answer = data["data"].get("answer")
     if not isinstance(answer, str) or not answer.strip():
         raise AIGuardError(502, "ai_empty")
-    return answer.strip()
+    if not detailed:
+        return answer.strip()
+    pool = data.get("source_api_provider_pool")
+    model = data.get("model")
+    return {
+        "answer": answer.strip(),
+        "pool": pool if isinstance(pool, str) else "",
+        "model": model if isinstance(model, str) else "",
+    }
 
 
 def cap_answer(answer: str, max_chars: int) -> str:
@@ -725,10 +746,12 @@ def cap_answer(answer: str, max_chars: int) -> str:
 
 @dataclass
 class Built:
-    """What a handler hands to the guard after server-side context assembly."""
+    """What a handler hands to the guard after server-side context assembly.
+    ``upstream`` holds keyword options for the upstream call (e.g. the task family)."""
     prompt: str
     finish: Callable[[str], dict]
     meta: dict = field(default_factory=dict)
+    upstream: dict = field(default_factory=dict)
 
 
 class _Entry:
@@ -744,7 +767,7 @@ class Guard:
         self,
         cfg: GuardConfig,
         *,
-        upstream: Callable[[str], Awaitable[str]],
+        upstream: Callable[..., Awaitable[Any]],
         log: Optional[Callable[[dict], None]] = None,
         budget: Optional[BudgetStore] = None,
         clock: Callable[[], float] = time.monotonic,
@@ -974,9 +997,18 @@ class Guard:
                     self._status_budget = None
                 self.counters["upstream_calls"] += 1
                 record["upstream_called"] = True
-                answer = cap_answer(await self._upstream(built.prompt), self.cfg.max_answer_chars)
+                # The upstream returns the answer text, or {"answer", "provider"} when it can say who answered.
+                raw = await (self._upstream(built.prompt, **built.upstream) if built.upstream else self._upstream(built.prompt))
+                provider = raw.get("provider") if isinstance(raw, dict) else None
+                text = raw.get("answer") if isinstance(raw, dict) else raw
+                if not isinstance(text, str) or not text.strip():
+                    raise AIGuardError(502, "ai_empty")
+                answer = cap_answer(text, self.cfg.max_answer_chars)
                 record["answer_chars"] = len(answer)
                 result = built.finish(answer)
+                if isinstance(provider, str) and provider:
+                    result["provider"] = provider
+                    record["served_by"] = provider
             self._cache_put(key, result)
             return result
         except AIGuardError as exc:
@@ -1077,7 +1109,7 @@ def write_chat_log(con: sqlite3.Connection, record: Mapping[str, Any], *, provid
             int(record.get("subject_count") or 0),
             int(record.get("evidence_count") or 0),
             int(record.get("gaokao_hit_count") or 0),
-            str(provider or "")[:40],
+            str(record.get("served_by") or provider or "")[:40],
             1 if outcome == "ok" else 0,
             None if outcome == "ok" else outcome,
             record.get("phase"),

@@ -198,6 +198,11 @@ AI_SERVICE_PROJECT = os.getenv("AI_SERVICE_PROJECT", "").strip()
 AI_SERVICE_TASK_TYPE = os.getenv("AI_SERVICE_TASK_TYPE", "chat").strip() or "chat"
 AI_SERVICE_THINKING_LEVEL = os.getenv("AI_SERVICE_THINKING_LEVEL", "low").strip() or "low"
 AI_INTERNAL_TOKEN = os.getenv("AI_INTERNAL_TOKEN", "").strip()
+# Overview and follow-ups ask the gateway's synthesis lane (Claude first, free Gemini pool as fallback; owner approval
+# 2026-11-01). The lane needs this site's caller identity (token + project name); without it they stay plain chat.
+AI_SYNTHESIS_TASK_TYPE = "synthesis"
+AI_SYNTHESIS_MAX_OUTPUT_TOKENS = max(512, min(8192, int(os.getenv("AI_SYNTHESIS_MAX_OUTPUT_TOKENS", "3072"))))
+AI_SYNTHESIS_AVAILABLE = bool(AI_INTERNAL_TOKEN and AI_SERVICE_PROJECT)
 # AI is OFF unless AI_ENABLED=1, AI_SESSION_KEY and AI_DAILY_REQUEST_BUDGET are all set (docs/AI_GUARD.md).
 AI_GUARD_CONFIG = ai_guard.GuardConfig.from_env(state_root=STATE_ROOT)
 _write_lock = threading.Lock()
@@ -4989,35 +4994,54 @@ def _build_chat_prompt(query: str, user_message: str, context_payload: dict, his
     return _build_chat_prompt_legacy(query, user_message, context_payload, history=history)
 
 
-async def _call_ai_service(prompt: str) -> str:
+def _served_by_label(result: dict, *, synthesis: bool) -> str:
+    """Who actually wrote the answer, from the gateway's own response fields."""
+    if result.get("pool") == "claude_credit_pool" or str(result.get("model") or "").startswith("claude-"):
+        return "Claude"
+    return f"{AI_SERVICE_LABEL}（备用）" if synthesis else AI_SERVICE_LABEL
+
+
+async def _call_ai_service(prompt: str, *, task_type: str = "chat") -> dict:
     """Single upstream attempt. Only ai_guard.Guard calls this, after admission,
     caps, dedup, the concurrency slot and the daily budget reservation."""
-    payload_obj = {
-        "prompt": prompt,
-        "model": AI_SERVICE_MODEL,
-        "taskType": AI_SERVICE_TASK_TYPE,
-        "thinkingLevel": AI_SERVICE_THINKING_LEVEL,
-    }
+    synthesis = task_type == AI_SYNTHESIS_TASK_TYPE and AI_SYNTHESIS_AVAILABLE
+    if synthesis:
+        # Advanced form without sampling fields: the Claude tier refuses temperature / top_k / top_p.
+        payload_obj = {
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {"maxOutputTokens": AI_SYNTHESIS_MAX_OUTPUT_TOKENS},
+            "taskType": AI_SYNTHESIS_TASK_TYPE,
+        }
+    else:
+        payload_obj = {
+            "prompt": prompt,
+            "model": AI_SERVICE_MODEL,
+            "taskType": AI_SERVICE_TASK_TYPE,
+            "thinkingLevel": AI_SERVICE_THINKING_LEVEL,
+        }
     headers = {
         "Accept": "application/json",
         "Origin": AI_SERVICE_ORIGIN,
         "Referer": AI_SERVICE_REFERER,
         "User-Agent": AI_SERVICE_USER_AGENT,
-        "X-Task-Type": AI_SERVICE_TASK_TYPE,
+        "X-Task-Type": AI_SYNTHESIS_TASK_TYPE if synthesis else AI_SERVICE_TASK_TYPE,
         "X-Thinking-Level": AI_SERVICE_THINKING_LEVEL,
     }
     if AI_SERVICE_PROJECT:
         headers["X-Project-Name"] = AI_SERVICE_PROJECT
     if AI_INTERNAL_TOKEN:
         headers["X-Internal-Token"] = AI_INTERNAL_TOKEN
-    return await ai_guard.post_upstream(
+    result = await ai_guard.post_upstream(
         AI_SERVICE_URL,
         payload_obj,
         headers,
-        deadline_sec=AI_GUARD_CONFIG.upstream_deadline_sec,
+        deadline_sec=AI_GUARD_CONFIG.synthesis_deadline_sec if synthesis else AI_GUARD_CONFIG.upstream_deadline_sec,
+        hard_max_sec=ai_guard.HARD_MAX_SYNTHESIS_DEADLINE_SEC if synthesis else ai_guard.HARD_MAX_UPSTREAM_DEADLINE_SEC,
         max_bytes=AI_GUARD_CONFIG.max_upstream_bytes,
         retries=AI_GUARD_CONFIG.retries,
+        detailed=True,
     )
+    return {"answer": result["answer"], "provider": _served_by_label(result, synthesis=synthesis)}
 
 
 # ── Search logs table ─────────────────────────────────────────────────
@@ -7489,6 +7513,7 @@ async def _ai_build_chat(fields: dict) -> ai_guard.Built:
             "evidence_count": summary.get("evidence_count") or len(evidence),
             "gaokao_hit_count": summary.get("gaokao_hit_count") or 0,
         },
+        upstream={"task_type": AI_SYNTHESIS_TASK_TYPE},
     )
 
 # ── Search overview: the first, automatic synthesis of one search ─────────────
@@ -7921,6 +7946,7 @@ async def _ai_build_overview(fields: dict) -> ai_guard.Built:
             "evidence_count": summary.get("evidence_count") or 0,
             "gaokao_hit_count": summary.get("gaokao_hit_count") or 0,
         },
+        upstream={"task_type": AI_SYNTHESIS_TASK_TYPE},
     )
 
 

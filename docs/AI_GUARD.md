@@ -522,3 +522,22 @@ the main search page only. Dictionary pages and the 真题 page are unchanged.
   before r44 the unordered `LIKE … LIMIT` kept the lowest row ids and dropped later-loaded subjects for common terms.
 - When AI is off, out of budget or failing, the panel shows the reason plus a retrieval-only digest built in the
   browser from the search response (no model call) and a 重试 button.
+
+## 16. Synthesis lane (r45, 2026-11-01)
+
+Owner approval 2026-11-01 ("Approve as proposed"; plan `/Users/ylsuen/CF/reports/operations/sun-claude-lane-20261101/PLAN.md`).
+
+- The overview (`/api/overview`) and follow-ups (`/api/chat`) set `Built.upstream = {"task_type": "synthesis"}`; dictionary and
+  真题 builders do not. `_call_ai_service(prompt, task_type=...)` sends a synthesis request only when this site has a caller
+  identity (`AI_INTERNAL_TOKEN` and `AI_SERVICE_PROJECT=sun.bdfz.net` in `/etc/sun/environment`): advanced `contents` form,
+  `generationConfig.maxOutputTokens` (`AI_SYNTHESIS_MAX_OUTPUT_TOKENS`, default 3072), no sampling fields (the Claude tier
+  refuses temperature / top_k / top_p), `X-Task-Type: synthesis`. Without the identity it is the plain chat request of r44.
+- The gateway's synthesis lane is one Claude attempt (≤40 s) plus the free-pool fallback inside 60 s, so that call alone may
+  wait `AI_SYNTHESIS_TIMEOUT_SEC` (default and hard maximum 65 s, `HARD_MAX_SYNTHESIS_DEADLINE_SEC`). Every other call keeps
+  the 30 s ceiling. The browser's 75 s client timeout covers both.
+- `post_upstream(..., detailed=True)` returns the answer with the gateway's `source_api_provider_pool` / `model`; the guard
+  copies the provider into the response (`provider`: `Claude`, `Gemini（备用）` for a synthesis answer the free pool wrote, or
+  `Gemini`) and into the server log row (`ai_chat_logs.provider`). The page labels each answer 「由 … 撰写」.
+- Off: remove `AI_INTERNAL_TOKEN` from the environment file and recreate the container (r44 behaviour), or on the gateway
+  remove `sun.bdfz.net` from `APIS_T1_CALLERS`. Daily bounds: this site's own 200 calls, and the gateway's 100 Claude attempts
+  per UTC day for `sun.bdfz.net` (then the free pool answers).
