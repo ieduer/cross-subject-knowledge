@@ -4880,10 +4880,10 @@ def _build_chat_prompt_legacy(query: str, user_message: str, context_payload: di
     _gaokao_instruction = ""
     if _phase == "初中":
         _gaokao_evidence = "考试真题证据：\n（初中暂无考试真题数据）"
-        _gaokao_instruction = "问题涉及考试时，可据教材证据提示可能的考查方向并注明「（推测）」；本站暂无初中真题数据。"
+        _gaokao_instruction = "只有用户问到考试时，才据教材证据提示可能的考查方向并注明「（推测）」；本站暂无初中真题数据。"
     else:
         _gaokao_evidence = f"高考证据（如有）：\n{context_payload.get('gaokao_text') or '（无）'}"
-        _gaokao_instruction = "问题涉及高考时，只根据真题证据说明考法并写出年份和卷别（不写题号，题库题号不是原卷题号）；没有真题证据就说明「本次检索没有命中相关真题」。"
+        _gaokao_instruction = "只有用户问到高考或考法时才谈真题：只根据真题证据说明考法并写出年份和卷别（不写题号，题库题号不是原卷题号），没有真题证据就说明「本次检索没有命中相关真题」；用户没问就不要提真题。"
 
     return f"""你是一位资深跨学科教育专家，面向{_display_phase}学生。用户当前搜索词是「{context_payload.get('query') or query}」。
 

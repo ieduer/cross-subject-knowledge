@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-01T04:34:17.306519+00:00",
-  "git_head": "e625916177be64d1fea244ee758fd9c90f792e54",
+  "generated_at": "2026-11-01T04:35:55.850165+00:00",
+  "git_head": "05abaab3ff2c983e2cb2930afa9ca982a3e6180e",
   "frontend_version": "2026.10.31-r44",
   "source_of_truth": {
     "local_workspace": "authoritative",
@@ -31,8 +31,8 @@
     {
       "kind": "source",
       "logical_path": "backend/main.py",
-      "size": 390470,
-      "sha256": "d6c87e978a547af7f72a47e4306bd09e42bd6bcc72288b616091ea86b29c7f10"
+      "size": 390536,
+      "sha256": "3a36bd930c3499cb9c3cecd425e84362c26db687dced5a6403672d862514fe34"
     },
     {
       "kind": "source",
@@ -1494,8 +1494,8 @@
     }
   ],
   "runtime_assets_carried_from": {
-    "generated_at": "2026-11-01T04:32:19.184849+00:00",
-    "git_head": "2a2d1ee6864a11f52c6f3cc55010e7f05588a8cc",
+    "generated_at": "2026-11-01T04:34:17.306519+00:00",
+    "git_head": "e625916177be64d1fea244ee758fd9c90f792e54",
     "note": "runtime half not re-measured in this build; deploy_vps.sh verifies it on the VPS",
     "corrections": [
       {
