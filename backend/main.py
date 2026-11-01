@@ -7535,6 +7535,32 @@ def _gaokao_stem(text: str | None, limit: int = OVERVIEW_GAOKAO_STEM_CHARS) -> s
     return _chat_excerpt(raw, limit=limit)
 
 
+def _gaokao_overview_item(row: dict, terms: list[str]) -> dict | None:
+    """One exam row as overview evidence: the stem, plus a short excerpt of the worked
+    solution when only the solution names the concept (it shows what the item tests)."""
+    stem = _gaokao_stem(row.get("text"))
+    if not stem:
+        return None
+    raw = row.get("text") or ""
+    match = _GAOKAO_SOLUTION_RE.search(raw)
+    hint = ""
+    if match and not any(term and term in stem for term in terms):
+        solution = raw[match.start():]
+        if any(term and term in solution for term in terms):
+            hint = _excerpt_around_terms(solution, terms, limit=120)
+    category = _normalize_gaokao_category(row.get("category"))
+    label = "·".join(str(part) for part in ("真题", row.get("year") or "年份不详", category or "卷别不详", row["subject"]))
+    return {
+        "id": row["id"],
+        "subject": row["subject"],
+        "year": row.get("year"),
+        "category": category,
+        "source": "gaokao",
+        "snippet": stem + (f"（解析摘录：{hint}）" if hint else ""),
+        "citation": f"[{label}]",
+    }
+
+
 def _excerpt_around_terms(text: str | None, terms: list[str], limit: int = OVERVIEW_EXCERPT_CHARS) -> str:
     """A window of original text around the first occurrence of the longest matching term."""
     cleaned = re.sub(r"!\[.*?\]\(.*?\)", " ", text or "")
@@ -7629,24 +7655,7 @@ def _build_overview_context_payload(
             evidence.append(item)
         groups.append({"subject": subject, "count": len(subject_rows), "items": selected})
 
-    gaokao_items = []
-    for row in gaokao_rows[:OVERVIEW_GAOKAO_LIMIT]:
-        stem = _gaokao_stem(row.get("text"))
-        if not stem:
-            continue
-        category = _normalize_gaokao_category(row.get("category"))
-        label = "·".join(str(part) for part in ("真题", row.get("year") or "年份不详", category or "卷别不详", row["subject"]))
-        gaokao_items.append(
-            {
-                "id": row["id"],
-                "subject": row["subject"],
-                "year": row.get("year"),
-                "category": category,
-                "source": "gaokao",
-                "snippet": stem,
-                "citation": f"[{label}]",
-            }
-        )
+    gaokao_items = [item for item in (_gaokao_overview_item(row, retrieval_terms) for row in gaokao_rows) if item][:OVERVIEW_GAOKAO_LIMIT]
 
     context_lines = []
     for group in groups:
@@ -7727,15 +7736,9 @@ def _build_overview_context_from_ids(con, query: str, ids: list, *, phase: str |
         if not row or (phase and row.get("phase") and row["phase"] != phase):
             continue
         if row.get("source") == "gaokao":
-            if len(gaokao_items) >= OVERVIEW_GAOKAO_LIMIT:
-                continue
-            stem = _gaokao_stem(row.get("text"))
-            if not stem:
-                continue
-            category = _normalize_gaokao_category(row.get("category"))
-            label = "·".join(str(part) for part in ("真题", row.get("year") or "年份不详", category or "卷别不详", row["subject"]))
-            gaokao_items.append({"id": row["id"], "subject": row["subject"], "year": row.get("year"), "category": category,
-                                 "source": "gaokao", "snippet": stem, "citation": f"[{label}]"})
+            item = _gaokao_overview_item(row, terms) if len(gaokao_items) < OVERVIEW_GAOKAO_LIMIT else None
+            if item:
+                gaokao_items.append(item)
             continue
         subject_items = textbook_by_subject.setdefault(row["subject"], [])
         if len(textbook_by_subject) > OVERVIEW_SUBJECT_LIMIT or len(subject_items) >= OVERVIEW_ITEMS_PER_SUBJECT:
@@ -7765,6 +7768,15 @@ def _build_overview_context_from_ids(con, query: str, ids: list, *, phase: str |
             entry["base_title"] = row.get("base_title") or entry.get("base_title")
         entry["citation"] = f"[{row['subject']}·{_short_book_title(entry.get('base_title') or entry['title'], entry.get('edition'))}·p{logical_page}]"
         subject_items.append(entry)
+
+    if not gaokao_items and phase != "初中":
+        # Exam rows rarely make the first screen of results; look them up by the same terms.
+        for row in _fetch_chat_rows_for_terms(con, terms[:3], source="gaokao", limit=OVERVIEW_GAOKAO_LIMIT * 2):
+            item = _gaokao_overview_item(row, terms)
+            if item:
+                gaokao_items.append(item)
+            if len(gaokao_items) >= OVERVIEW_GAOKAO_LIMIT:
+                break
 
     groups = [{"subject": subject, "count": len(items), "items": items} for subject, items in textbook_by_subject.items() if items]
     evidence = [item for group in groups for item in group["items"]]
@@ -7832,7 +7844,7 @@ def _build_overview_prompt(context_payload: dict) -> str:
         exam_rule = f"5. 「{exam}怎么考」：初中暂无真题数据，只能写「本站暂无初中真题数据」，可以据教材摘录提示一个可能的考查角度并注明「（推测）」。"
     else:
         exam_block = (
-            "高考真题摘录（只含题干；题库里的题号是数据集序号而非原卷题号，不要写题号）：\n"
+            "高考真题摘录（题干；括号里的「解析摘录」只用来判断这道题考什么，不是教材原文；题库里的题号是数据集序号而非原卷题号，不要写题号）：\n"
             + (context_payload.get("gaokao_text") or "（本次检索没有命中真题）")
         )
         exam_rule = (
@@ -7866,7 +7878,8 @@ def _build_overview_prompt(context_payload: dict) -> str:
 准确性规则：
 - 教材内容只能来自上面的摘录；引用标签只能原样使用已给出的，不得自造书名、页码或年份。
 - 需要摘录之外的知识时，只能是{display_phase}教材层面公认的内容，并在该句末标注「（教材外补充）」。
-- 检索扩展词、真题题干都不是教材原文，不能当作教材的说法引用。
+- 检索扩展词、真题题干和解析摘录都不是教材原文，不能当作教材的说法引用。
+- 数字、年份、名称、定律表述必须与摘录一致；不确定就不写，不要先写错再加注更正。
 - 不写空话套话，不夸大跨学科联系；总长度 450–700 字。"""
 
 

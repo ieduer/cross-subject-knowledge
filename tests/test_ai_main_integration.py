@@ -394,6 +394,16 @@ class MainIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(main._excerpt_around_terms("短文 ![img](a.png) 能量", ["能量"]), "短文 能量")
         self.assertEqual(main._short_book_title("普通高中教科书·物理必修 第三册", "人教版"), "物理必修 第三册（人教版）")
         self.assertEqual(main._short_book_title("普通高中教科书·物理必修 第三册（人教版）", "人教版"), "物理必修 第三册（人教版）")
+        hinted = main._gaokao_overview_item({"id": 1, "subject": "物理", "year": 2019, "category": "新课标Ⅲ",
+                                            "text": "5. 如图，线圈中感应电流的方向……\n【解析】楞次定律是能量守恒定律在电磁感应中的体现，故选 B"}, ["能量守恒"])
+        self.assertEqual(hinted["citation"], "[真题·2019·新课标III卷·物理]")
+        self.assertTrue(hinted["snippet"].startswith("如图，线圈中感应电流的方向"))
+        self.assertIn("（解析摘录：", hinted["snippet"])
+        self.assertIn("能量守恒定律", hinted["snippet"])
+        plain = main._gaokao_overview_item({"id": 2, "subject": "物理", "year": 2020, "category": "其他",
+                                           "text": "1. 关于能量守恒，下列说法正确的是\n【解析】能量守恒……"}, ["能量守恒"])
+        self.assertEqual(plain["citation"], "[真题·2020·卷别不详·物理]")
+        self.assertNotIn("解析摘录", plain["snippet"], "the stem already names the concept")
 
     async def test_old_client_on_the_real_app(self):
         """A page still running the 035d2d4 script (no client marker) against the real app."""
