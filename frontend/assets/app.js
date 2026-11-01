@@ -294,7 +294,8 @@ function renderAIContextSummary(summary, cached) {
     return `<div class="ai-msg-context">${escHtml(summary.coverage_line)}${cached ? ' · 已缓存' : ''}</div>`;
 }
 
-const AI_CITATION_RE = /\[([^\[\]\n]{2,120}?)\]/g;
+// Models sometimes double the bracket ("[[物理·…·p60]"); the extra one is absorbed.
+const AI_CITATION_RE = /\[{1,2}([^\[\]\n]{2,120}?)\]{1,2}/g;
 
 // Index of the retrieved record a citation label names, or -1. The label is compared
 // in its escaped form with the server's own citation strings (and, for a textbook page,
@@ -464,6 +465,7 @@ function showAIQuote(messageEl, src) {
         <button class="ai-quote-close" type="button" aria-label="收起">收起</button>
     `;
     box.classList.remove('hidden');
+    renderMath(box.querySelector('blockquote'));
     bindOpenPageButtons(box, '.ai-quote-open');
     const close = box.querySelector('.ai-quote-close');
     if (close) close.addEventListener('click', () => box.classList.add('hidden'));
@@ -495,6 +497,8 @@ function renderAIConversation() {
         html = `<div class="ai-msg assistant pending"><div class="ai-msg-text"><span class="ai-dots" aria-hidden="true"></span>正在检索${escHtml(DISPLAY_PHASE)}各科教材原文…</div></div>`;
     }
     aiContent.innerHTML = html;
+    // Formulas in answers ($…$) are typeset from the escaped text nodes; KaTeX runs with trust off.
+    aiContent.querySelectorAll('.ai-rich').forEach(el => renderMath(el));
 
     aiContent.querySelectorAll('article.ai-msg[data-index]').forEach(el => {
         const msg = aiConversation[Number(el.dataset.index)];
