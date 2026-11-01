@@ -7,32 +7,37 @@ window._subjectMeta = {};
 // AI runs only on an explicit user action and only through this site's own server
 // (assets/ai-client.js → POST /api/chat). The browser never contacts a model gateway.
 const IMG_CDN = 'https://img.rdfzer.com';
-const DEFAULT_FRONTEND_VERSION = '2026.10.11-r43';
+const DEFAULT_FRONTEND_VERSION = '2026.10.31-r44';
 const FRONTEND_VERSION_FILE = '/assets/version.json';
 const AI_MEMORY_LIMIT = 12;
 const DOWNLOADABLE_LIBRARY_BOOKS = 316;
 let latestStats = null;
 let aiProviderLabel = 'Gemini';
 
-// ── AI Chat (Memory + Copy) ───────────────────────────────
+// ── AI: overview first, then conversation ─────────────────
+// One explicit search → one guarded POST /api/overview through assets/ai-client.js.
+// After that only the user's own send / chip / 重试 starts a request (POST /api/chat).
+// The browser never contacts a model gateway. Answers are escaped first; the small
+// Markdown subset and the citation buttons are built on the escaped text, and a
+// citation only becomes clickable when it names a record the server retrieved.
 const aiPanel = document.getElementById('ai-panel');
-const aiBtn = document.getElementById('ai-btn');
-const aiResult = document.getElementById('ai-result');
 const aiContent = document.getElementById('ai-content');
 const aiFollowupInput = document.getElementById('ai-followup-input');
 const aiSendBtn = document.getElementById('ai-send-btn');
 const aiCopyBtn = document.getElementById('ai-copy-btn');
 const aiStarters = document.getElementById('ai-starters');
+const aiPanelQuery = document.getElementById('ai-panel-query');
+const aiFootnote = document.getElementById('ai-footnote');
 
 let aiConversation = [];
 let aiRequestPending = false;
+let aiPendingKind = '';
 let aiActiveRequest = null;      // { promise, cancel } of the single in-flight request
 let aiConversationEpoch = 0;     // bumped on every reset; answers from an older epoch are dropped
-const AI_BUTTON_LABEL_DEFAULT = 'AI 教材解读';
-const AI_BUTTON_LABEL_PRECISION = '让 AI 结合检索结果解答';
+let aiSearchStage = '';          // 'searching' while /api/search runs for the current conversation
+let aiLocalDigest = '';          // retrieval-only summary (no AI), shown while the overview loads or fails
 if (aiFollowupInput) aiFollowupInput.maxLength = 800;
 
-if (aiBtn) aiBtn.addEventListener('click', () => requestAISynthesis());
 if (aiSendBtn) aiSendBtn.addEventListener('click', () => requestAIFollowup());
 if (aiCopyBtn) aiCopyBtn.addEventListener('click', () => copyAIConversation());
 if (aiFollowupInput) {
@@ -46,8 +51,12 @@ if (aiFollowupInput) {
 
 function setSearchAIProviderLabel(label) {
     aiProviderLabel = label || 'Gemini';
-    const badge = document.querySelector('#ai-result .ai-model');
-    if (badge) badge.textContent = aiProviderLabel;
+    renderAIFootnote();
+}
+
+function renderAIFootnote() {
+    if (!aiFootnote) return;
+    aiFootnote.textContent = `由 ${aiProviderLabel} 依据下方检索到的${getAISourceLabel()}原文生成。点带下划线的出处可核对原文；AI 可能出错，以教材原文为准。`;
 }
 
 const AI_PRECISION_PATTERNS = [
@@ -227,49 +236,193 @@ function isStructuralFallbackTerm(term, precisionProfile = null) {
     return false;
 }
 
-function updateAIButtonLabel() {
-    if (!aiBtn) return;
-    const profile = currentQuery ? inferAIQueryProfile(currentQuery) : null;
-    const label = profile && profile.mode === 'precision_agent' ? AI_BUTTON_LABEL_PRECISION : AI_BUTTON_LABEL_DEFAULT;
-    const textNode = Array.from(aiBtn.childNodes).find(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
-    if (textNode) textNode.textContent = ` ${label}\n                    `;
+function buildOverviewPayload() {
+    const scope = getCurrentAIScopePayload();
+    return {
+        query: currentQuery,
+        phase: PHASE,
+        ...(scope.scope_subject ? { scope_subject: scope.scope_subject } : {}),
+        ...(scope.book_key ? { book_key: scope.book_key } : {}),
+    };
+}
+
+function shortBookTitle(title) {
+    return String(title || '').replace(/^(?:普通高中|义务教育)教科书[·・]/, '').trim();
+}
+
+// Retrieval-only digest of one search (no model call): what was found, where.
+function buildLocalDigest(data) {
+    const counts = data.subject_counts || {};
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    if (!entries.length) return '';
+    const total = entries.reduce((sum, [, count]) => sum + count, 0);
+    const groups = data.groups || [];
+    const items = entries.slice(0, 6).map(([subject, count]) => {
+        const group = groups.find(g => g.subject === subject);
+        const results = group ? group.results || [] : [];
+        const books = Array.from(new Set(results.filter(r => r.source !== 'gaokao').map(r => shortBookTitle(r.display_title || r.title)))).slice(0, 2);
+        const exam = results.filter(r => r.source === 'gaokao').length;
+        return `<li><strong>${escHtml(subject)}</strong> ${count} 段${books.length ? ` · ${escHtml(books.join('、'))}` : ''}${exam ? ` · 含真题 ${exam} 条` : ''}</li>`;
+    });
+    return `<div class="ai-digest"><p>「${escHtml(data.query || currentQuery)}」在 ${entries.length} 个学科共检索到 ${total} 段：</p><ul>${items.join('')}</ul></div>`;
+}
+
+function setAISearchStage(stage) {
+    aiSearchStage = stage || '';
+    renderAIConversation();
+}
+
+function renderAIContextSummary(summary, cached) {
+    if (!summary || !summary.coverage_line) return '';
+    return `<div class="ai-msg-context">${escHtml(summary.coverage_line)}${cached ? ' · 已缓存' : ''}</div>`;
+}
+
+const AI_CITATION_RE = /\[([^\[\]\n]{2,120}?)\]/g;
+
+// Index of the retrieved record a citation label names, or -1. The label is compared
+// in its escaped form with the server's own citation strings (and, for a textbook page,
+// with subject + page), so a citation the model made up never becomes a button.
+function matchAISource(escapedLabel, sources) {
+    const list = Array.isArray(sources) ? sources : [];
+    const exact = list.findIndex(src => src && src.citation && escHtml(src.citation) === `[${escapedLabel}]`);
+    if (exact >= 0) return exact;
+    const page = /[·・]\s*(?:p|P|第)\s*(\d{1,5})\s*页?$/.exec(escapedLabel);
+    if (!page) return -1;
+    const subject = escapedLabel.split(/[·・]/)[0].trim();
+    const pageNum = Number(page[1]);
+    return list.findIndex(src => src && src.source !== 'gaokao' && src.book_key
+        && Number(src.logical_page) === pageNum && escHtml(src.subject || '') === subject);
+}
+
+function renderAIInline(escapedText, sources) {
+    return escapedText
+        .replace(/\*\*([^*\n]+?)\*\*/g, '<strong>$1</strong>')
+        .replace(AI_CITATION_RE, (whole, label) => {
+            if (!/[·・]/.test(label)) return whole;
+            const index = matchAISource(label, sources);
+            if (index < 0) {
+                return `<span class="ai-cite unverified" title="未在本次检索证据中找到，请以原文为准">[${label}]</span>`;
+            }
+            return `<button type="button" class="ai-cite" data-src="${index}" title="点开核对原文">${label}</button>`;
+        });
+}
+
+// Escaped text first; then headings (###), "- " lists, "1." lists, **bold** and citations.
+function renderAIRichText(text, sources = []) {
+    const lines = escHtml(String(text || '')).split(/\r?\n/);
+    const out = [];
+    let list = '';
+    const closeList = () => {
+        if (list) out.push(`</${list}>`);
+        list = '';
+    };
+    for (const raw of lines) {
+        const line = raw.trim();
+        let m;
+        if (!line) {
+            closeList();
+        } else if ((m = /^#{1,4}\s*(.+)$/.exec(line))) {
+            closeList();
+            out.push(`<h4 class="ai-h">${renderAIInline(m[1].replace(/\*\*/g, ''), sources)}</h4>`);
+        } else if ((m = /^[-*•]\s+(.+)$/.exec(line))) {
+            if (list !== 'ul') { closeList(); out.push('<ul>'); list = 'ul'; }
+            out.push(`<li>${renderAIInline(m[1], sources)}</li>`);
+        } else if ((m = /^\d{1,2}\s*[.、．)]\s*(.+)$/.exec(line))) {
+            if (list !== 'ol') { closeList(); out.push('<ol>'); list = 'ol'; }
+            out.push(`<li>${renderAIInline(m[1], sources)}</li>`);
+        } else {
+            closeList();
+            out.push(`<p>${renderAIInline(line, sources)}</p>`);
+        }
+    }
+    closeList();
+    return out.join('');
+}
+
+// The numbered questions under 「值得追问」 become follow-up chips.
+function parseFollowupQuestions(text) {
+    const lines = String(text || '').split(/\r?\n/);
+    const start = lines.findIndex(line => /^#{1,4}\s*值得追问/.test(line.trim()));
+    if (start < 0) return [];
+    const questions = [];
+    for (const raw of lines.slice(start + 1)) {
+        const line = raw.trim();
+        if (/^#{1,4}\s/.test(line)) break;
+        const m = /^(?:\d{1,2}\s*[.、．)]|[-*•])\s*(.+)$/.exec(line);
+        if (!m) continue;
+        const question = m[1].replace(/\*\*/g, '').replace(AI_CITATION_RE, '').trim();
+        if (question && question.length <= 60) questions.push(question);
+    }
+    return questions.slice(0, 3);
+}
+
+function renderAISources(sources) {
+    if (!sources || !sources.length) return '';
+    return `
+        <details class="ai-msg-sources">
+            <summary>本次依据的原文 ${sources.length} 段</summary>
+            <div class="ai-source-list">
+                ${sources.map((src, index) => `
+                    <button class="ai-source-chip ${src.source === 'gaokao' ? 'exam' : ''}" type="button" data-src="${index}">
+                        ${escHtml(src.citation || `${src.subject || ''}·${src.title || ''}`)}
+                    </button>
+                `).join('')}
+            </div>
+        </details>
+    `;
+}
+
+function renderAICitationNote(check) {
+    if (!check || !check.unverified_count) return '';
+    return `<div class="ai-msg-context warn">有 ${Number(check.unverified_count)} 处出处未能在本次检索证据中核对（灰色标出），请以原文为准。</div>`;
+}
+
+function renderAIMessage(msg, index, isLast) {
+    if (msg.role === 'user') {
+        return `<div class="ai-msg user"><div class="ai-msg-text">${escHtml(msg.content)}</div></div>`;
+    }
+    if (msg.isError) {
+        const digest = msg.kind === 'overview' && aiLocalDigest ? aiLocalDigest : '';
+        const retry = msg.retry && isLast && !aiRequestPending
+            ? '<div class="ai-msg-actions"><button class="ai-followup-chip ai-retry-btn" type="button">重试</button></div>'
+            : '';
+        return `<div class="ai-msg assistant error"><div class="ai-msg-text">${escHtml(msg.content)}</div>${digest}${retry}</div>`;
+    }
+    return `
+        <article class="ai-msg assistant ${msg.kind === 'overview' ? 'overview' : ''}" data-index="${index}">
+            ${msg.kind === 'overview' ? renderAIContextSummary(msg.contextSummary, msg.cached) : ''}
+            <div class="ai-msg-text ai-rich">${renderAIRichText(msg.content, msg.sources)}</div>
+            ${renderAICitationNote(msg.citationCheck)}
+            <div class="ai-quote hidden"></div>
+            ${renderAISources(msg.sources)}
+        </article>
+    `;
+}
+
+function renderAIPending() {
+    const cancel = '<div class="ai-msg-actions"><button class="ai-followup-chip ai-cancel-btn" type="button">取消</button></div>';
+    if (aiPendingKind === 'overview') {
+        return `
+            <div class="ai-msg assistant pending">
+                <div class="ai-msg-text"><span class="ai-dots" aria-hidden="true"></span>AI 正在通读这些原文，整合导读（约 10–30 秒）…</div>
+                ${aiLocalDigest}
+                ${cancel}
+            </div>
+        `;
+    }
+    return `<div class="ai-msg assistant pending"><div class="ai-msg-text"><span class="ai-dots" aria-hidden="true"></span>正在结合原文思考…</div>${cancel}</div>`;
 }
 
 function renderAIStarters() {
-    updateAIButtonLabel();
     if (!aiStarters) return;
-    if (!currentQuery || !hasSearchResults()) {
+    const last = aiConversation[aiConversation.length - 1];
+    const prompts = !aiRequestPending && last && last.role === 'assistant' && !last.isError ? (last.followups || []) : [];
+    if (!prompts.length) {
         aiStarters.innerHTML = '';
         aiStarters.classList.add('hidden');
         return;
     }
-    const profile = inferAIQueryProfile(currentQuery);
-    const scope = getCurrentAIScopePayload();
-    const isCrossView = !scope.scope_subject && !scope.book_key && getCurrentAISubjectCount() >= 2 && profile.mode !== 'precision_agent';
-    let starters = [];
-    if (profile.mode === 'precision_agent') {
-        starters = [
-            `请只根据教材原文说明「${profile.target}」的${describePrecisionIntent(profile.intent)}，并给出最相关出处。`,
-            `「${profile.target}」的关键特征是什么？`,
-            `「${profile.target}」最容易和哪些概念混淆？`,
-            `如果要背「${profile.target}」，最短表述是什么？`,
-        ];
-    } else if (isCrossView) {
-        starters = [
-            `请先解释「${currentQuery}」在不同学科里的共同核心。`,
-            PHASE === '高中' ? `「${currentQuery}」在高考里最常见的考法是什么？` : `「${currentQuery}」在考试中最常见的考法是什么？`,
-            `围绕「${currentQuery}」最容易混淆的概念有哪些？`,
-            `如果我要复习「${currentQuery}」，应该按什么顺序串起来学？`,
-        ];
-    } else {
-        starters = [
-            `请只根据当前教材结果解释「${currentQuery}」的核心，并给出最相关出处。`,
-            `这组结果里最值得看的原文是哪几页？`,
-            `围绕「${currentQuery}」最容易混淆的概念有哪些？`,
-            `如果只看 3 条教材原文，应该先看哪几条？`,
-        ];
-    }
-    aiStarters.innerHTML = starters.map(text => `
+    aiStarters.innerHTML = `<span class="ai-starters-label">接着问</span>` + prompts.map(text => `
         <button class="ai-starter-chip" type="button" data-prompt="${escAttr(text)}">${escHtml(text)}</button>
     `).join('');
     aiStarters.classList.remove('hidden');
@@ -278,7 +431,28 @@ function renderAIStarters() {
     });
 }
 
-function bindOpenPageButtons(root, selector = '.ai-source-chip') {
+function showAIQuote(messageEl, src) {
+    const box = messageEl && messageEl.querySelector('.ai-quote');
+    if (!box || !src) return;
+    const isExam = src.source === 'gaokao';
+    const head = isExam
+        ? `${String(src.citation || '').replace(/^\[|\]$/g, '')} · 题干摘录（不含解析）`
+        : [src.subject, shortBookTitle(src.display_title || src.title), src.logical_page != null ? `书页 p${src.logical_page}` : ''].filter(Boolean).join(' · ');
+    box.innerHTML = `
+        <div class="ai-quote-head">${escHtml(head)}</div>
+        <blockquote>${escHtml(src.snippet || '（无摘录）')}</blockquote>
+        ${!isExam && src.book_key ? `<button class="ai-quote-open" type="button"
+            data-book-key="${escAttr(src.book_key)}" data-page="${Number(src.section) || 0}"
+            data-total-pages="${Number(src.total_pages) || 0}">📖 打开教材原页</button>` : ''}
+        <button class="ai-quote-close" type="button" aria-label="收起">收起</button>
+    `;
+    box.classList.remove('hidden');
+    bindOpenPageButtons(box, '.ai-quote-open');
+    const close = box.querySelector('.ai-quote-close');
+    if (close) close.addEventListener('click', () => box.classList.add('hidden'));
+}
+
+function bindOpenPageButtons(root, selector) {
     if (!root) return;
     root.querySelectorAll(selector).forEach(btn => {
         btn.addEventListener('click', () => {
@@ -292,132 +466,37 @@ function bindOpenPageButtons(root, selector = '.ai-source-chip') {
     });
 }
 
-function renderAIContextSummary(summary) {
-    if (!summary) return '';
-    const searchTerms = summary.search_terms_used || [];
-    const retrievalTerms = (summary.retrieval_terms_used || []).filter(term => !searchTerms.includes(term));
-    const intentLabel = {
-        definition: '定义',
-        comparison: '区别',
-        example: '例子',
-        reason: '原因',
-        process: '过程',
-    }[summary.query_intent] || '';
-    const tags = [
-        ...searchTerms.map(term =>
-            `<span class="ai-context-tag search">检索 ${escHtml(term)}</span>`
-        ),
-        ...retrievalTerms.slice(0, 4).map(term =>
-            `<span class="ai-context-tag retrieval">扩展 ${escHtml(term)}</span>`
-        ),
-        intentLabel ? `<span class="ai-context-tag search">${escHtml(intentLabel)}</span>` : '',
-        ...(summary.top_subjects || []).map(item =>
-            `<span class="ai-context-tag">${escHtml(item.subject)} ${item.count}</span>`
-        ),
-        summary.agent_rounds && summary.agent_rounds.length
-            ? `<span class="ai-context-tag retrieval">Agent ${summary.agent_rounds.length} 轮</span>`
-            : '',
-        summary.relation_hint_count > 0
-            ? `<span class="ai-context-tag relation">关系 ${summary.relation_hint_count}</span>`
-            : '',
-        summary.graph_hint_count > 0
-            ? `<span class="ai-context-tag relation">图谱 ${summary.graph_hint_count}</span>`
-            : '',
-        summary.gaokao_hit_count > 0
-            ? `<span class="ai-context-tag exam">真题 ${summary.gaokao_hit_count}</span>`
-            : '',
-    ].filter(Boolean);
-
-    return `
-        <div class="ai-msg-context">
-            <div class="ai-context-line">${escHtml(summary.coverage_line || '')}</div>
-            ${tags.length ? `<div class="ai-context-tags">${tags.join('')}</div>` : ''}
-        </div>
-    `;
-}
-
-function renderAISources(sources) {
-    if (!sources || !sources.length) return '';
-    return `
-        <div class="ai-msg-sources">
-            ${sources.slice(0, 6).map(src => `
-                <button class="ai-source-chip" type="button"
-                    data-book-key="${escAttr(src.book_key || '')}"
-                    data-page="${src.section ?? 0}"
-                    data-total-pages="${src.total_pages ?? 0}">
-                    ${escHtml(src.citation || `${src.subject}·${src.title}`)}
-                </button>
-            `).join('')}
-        </div>
-    `;
-}
-
-function renderAIFollowups(prompts) {
-    if (!prompts || !prompts.length) return '';
-    return `
-        <div class="ai-msg-followups">
-            ${prompts.slice(0, 4).map(prompt => `
-                <button class="ai-followup-chip" type="button" data-prompt="${escAttr(prompt)}">${escHtml(prompt)}</button>
-            `).join('')}
-        </div>
-    `;
-}
-
-function renderAICitationNote(check) {
-    if (!check || !check.unverified_count) return '';
-    return `<div class="ai-msg-context"><div class="ai-context-line">回答中有 ${Number(check.unverified_count)} 处页码未能在本次检索证据中核对，请以下方出处为准。</div></div>`;
-}
-
 function renderAIConversation() {
     if (!aiContent) return;
-    if (!aiConversation.length && !aiRequestPending) {
-        aiContent.innerHTML = '';
-        return;
-    }
+    if (aiPanelQuery) aiPanelQuery.textContent = currentQuery ? `「${currentQuery}」` : '';
+    renderAIFootnote();
     const lastIndex = aiConversation.length - 1;
-    const messagesHtml = aiConversation.map((msg, index) => `
-        <div class="ai-msg ${msg.role === 'user' ? 'user' : 'assistant'}">
-            <div class="ai-msg-role">${msg.role === 'user' ? '你' : 'AI'}</div>
-            ${msg.role === 'assistant' ? renderAIContextSummary(msg.contextSummary) : ''}
-            <div class="ai-msg-text">${escHtml(msg.content)}</div>
-            ${msg.role === 'assistant' ? renderAICitationNote(msg.citationCheck) : ''}
-            ${msg.role === 'assistant' ? renderAISources(msg.sources) : ''}
-            ${msg.isError && msg.retryMessage && index === lastIndex && !aiRequestPending
-                ? '<div class="ai-msg-followups"><button class="ai-followup-chip ai-retry-btn" type="button">重试</button></div>'
-                : ''}
-            ${msg.role === 'assistant' && !msg.isError && index === lastIndex && !aiRequestPending ? renderAIFollowups(msg.followups) : ''}
-        </div>
-    `).join('');
-    const pendingHtml = aiRequestPending ? `
-        <div class="ai-msg assistant">
-            <div class="ai-msg-role">AI</div>
-            <div class="ai-msg-text">正在结合检索结果生成解答…</div>
-            <div class="ai-msg-followups"><button class="ai-followup-chip ai-cancel-btn" type="button">取消</button></div>
-        </div>
-    ` : '';
-    aiContent.innerHTML = messagesHtml + pendingHtml
-        + `<span class="ai-source">📡 由 ${escHtml(aiProviderLabel)} 生成 · 数据来源：${escHtml(getAISourceLabel())}</span>`;
+    let html = aiConversation.map((msg, index) => renderAIMessage(msg, index, index === lastIndex)).join('');
+    if (aiRequestPending) {
+        html += renderAIPending();
+    } else if (!aiConversation.length && aiSearchStage === 'searching') {
+        html = `<div class="ai-msg assistant pending"><div class="ai-msg-text"><span class="ai-dots" aria-hidden="true"></span>正在检索${escHtml(DISPLAY_PHASE)}各科教材原文…</div></div>`;
+    }
+    aiContent.innerHTML = html;
 
-    // The answer above is plain escaped text. Page links exist only on these chips,
-    // which are built from the server's retrieval records (book_key / section), never from model text.
-    bindOpenPageButtons(aiContent, '.ai-source-chip');
-    aiContent.querySelectorAll('.ai-followup-chip[data-prompt]').forEach(btn => {
-        btn.addEventListener('click', () => sendAIMessage(btn.dataset.prompt));
+    aiContent.querySelectorAll('article.ai-msg[data-index]').forEach(el => {
+        const msg = aiConversation[Number(el.dataset.index)];
+        if (!msg) return;
+        el.querySelectorAll('.ai-cite[data-src], .ai-source-chip[data-src]').forEach(btn => {
+            btn.addEventListener('click', () => showAIQuote(el, (msg.sources || [])[Number(btn.dataset.src)]));
+        });
     });
     const cancelBtn = aiContent.querySelector('.ai-cancel-btn');
     if (cancelBtn) cancelBtn.addEventListener('click', () => cancelAIRequest());
     const retryBtn = aiContent.querySelector('.ai-retry-btn');
     if (retryBtn) retryBtn.addEventListener('click', () => retryLastAIMessage());
+    if (aiCopyBtn) aiCopyBtn.classList.toggle('hidden', !aiConversation.some(msg => !msg.isError));
+    renderAIStarters();
 }
 
-function setAIBusy(isBusy) {
+function setAIBusy(isBusy, kind = '') {
     aiRequestPending = isBusy;
-    if (aiBtn) {
-        aiBtn.disabled = isBusy;
-        aiBtn.classList.toggle('loading', isBusy);
-        const sparkle = aiBtn.querySelector('.ai-sparkle');
-        if (sparkle) sparkle.textContent = isBusy ? '⏳' : '✨';
-    }
+    aiPendingKind = isBusy ? kind : '';
     if (aiSendBtn) aiSendBtn.disabled = isBusy;
     if (aiFollowupInput) aiFollowupInput.disabled = isBusy;
     if (aiStarters) {
@@ -432,16 +511,16 @@ function cancelAIRequest() {
 function retryLastAIMessage() {
     if (aiRequestPending) return;
     const last = aiConversation[aiConversation.length - 1];
-    if (!last || !last.isError || !last.retryMessage) return;
-    const message = last.retryMessage;
+    if (!last || !last.isError || !last.retry) return;
+    const { kind, userMessage } = last.retry;
     aiConversation.pop();
     const previous = aiConversation[aiConversation.length - 1];
-    if (previous && previous.role === 'user' && previous.content === message) aiConversation.pop();
-    sendAIMessage(message);
+    if (kind === 'chat' && previous && previous.role === 'user' && previous.content === userMessage) aiConversation.pop();
+    runAIRequest(kind, userMessage);
 }
 
 function resetAIConversation() {
-    // A new search / subject is a new conversation: abort the in-flight request and
+    // A new search is a new conversation: abort the in-flight request and
     // make sure its answer can never be rendered into the new one.
     aiConversationEpoch += 1;
     if (aiActiveRequest) {
@@ -450,8 +529,9 @@ function resetAIConversation() {
     }
     setAIBusy(false);
     aiConversation = [];
+    aiLocalDigest = '';
+    aiSearchStage = '';
     if (aiContent) aiContent.innerHTML = '';
-    if (aiResult) aiResult.classList.add('hidden');
     if (aiFollowupInput) aiFollowupInput.value = '';
     if (aiCopyBtn) aiCopyBtn.classList.add('hidden');
     renderAIStarters();
@@ -459,32 +539,68 @@ function resetAIConversation() {
 
 function trimAIConversation() {
     if (aiConversation.length > AI_MEMORY_LIMIT) {
-        aiConversation = aiConversation.slice(-AI_MEMORY_LIMIT);
+        // Keep the overview: it is what later turns refer back to.
+        const head = aiConversation[0] && aiConversation[0].kind === 'overview' ? [aiConversation[0]] : [];
+        aiConversation = head.concat(aiConversation.slice(-(AI_MEMORY_LIMIT - head.length)));
     }
 }
 
-// Explicit user action only (button, starter chip, follow-up chip, send, retry).
-// Exactly one server request; no fallback, no race, no automatic retry.
-async function sendAIMessage(userMessage) {
-    if (!currentData || !currentQuery || aiRequestPending || !window.SunAI) return;
-    const groups = currentData.groups || [];
-    if (!groups.length) return;
-    const cleanMessage = (userMessage || '').trim();
-    if (!cleanMessage) return;
+function describeAIError(error, kind) {
+    const code = error && error.code;
+    if (error && error.cancelled) return kind === 'overview' ? '已取消 AI 整合。下面是检索概览：' : error.message;
+    if (code === 'AI_DISABLED') return 'AI 整合当前未开启。下面是检索概览，原文见「检索原文备查」：';
+    if (code === 'AI_BUDGET_EXHAUSTED') return '今天的 AI 额度已用完（北京时间早上 8 点恢复）。下面是检索概览，原文见「检索原文备查」：';
+    const message = (error && error.message) || '未知错误';
+    return kind === 'overview' ? `AI 整合这次没有完成：${message} 下面是检索概览：` : `请求失败：${message}`;
+}
 
-    const history = window.SunAI.boundedHistory(aiConversation);
+function assistantReplyFrom(data, kind, userMessage) {
+    const contextPayload = data.context || {};
+    setSearchAIProviderLabel(data.provider || aiProviderLabel);
+    const content = String(data.answer || '');
+    const asked = parseFollowupQuestions(content);
+    const followups = (asked.length ? asked : (contextPayload.suggested_questions || []))
+        .filter(prompt => prompt && prompt !== userMessage)
+        .slice(0, 3);
+    return {
+        role: 'assistant',
+        kind,
+        content,
+        cached: Boolean(data.cached),
+        contextSummary: contextPayload.summary || null,
+        citationCheck: data.citation_check || null,
+        followups,
+        // Citation buttons and source chips point only at these server retrieval records.
+        sources: (contextPayload.evidence || []).map(src => ({
+            ...src,
+            total_pages: (window._bookPages && window._bookPages[src.book_key]?.pages) || 0,
+        })),
+    };
+}
+
+// The single place that starts an AI request: exactly one server request,
+// no fallback, no race, no automatic retry.
+async function runAIRequest(kind, userMessage = '') {
+    if (!currentData || !currentQuery || aiRequestPending || !window.SunAI || !hasSearchResults()) return;
+    let path = `${API}/api/overview`;
+    let payload = buildOverviewPayload();
+    let cleanMessage = '';
+    if (kind !== 'overview') {
+        cleanMessage = String(userMessage || '').trim();
+        if (!cleanMessage) return;
+        const history = window.SunAI.boundedHistory(aiConversation);
+        aiConversation.push({ role: 'user', content: cleanMessage });
+        trimAIConversation();
+        if (aiFollowupInput) aiFollowupInput.value = '';
+        path = `${API}/api/chat`;
+        payload = buildAIServerPayload(cleanMessage, history);
+    }
     const epoch = aiConversationEpoch;
     const executionKey = getAIExecutionKey();
 
-    aiConversation.push({ role: 'user', content: cleanMessage });
-    trimAIConversation();
-    if (aiResult) aiResult.classList.remove('hidden');
-    if (aiCopyBtn) aiCopyBtn.classList.remove('hidden');
-    if (aiFollowupInput) aiFollowupInput.value = '';
-
-    const request = window.SunAI.ask(`${API}/api/chat`, buildAIServerPayload(cleanMessage, history));
+    const request = window.SunAI.ask(path, payload);
     aiActiveRequest = request;
-    setAIBusy(true);
+    setAIBusy(true, kind);
     renderAIConversation();
 
     let reply = null;
@@ -492,30 +608,13 @@ async function sendAIMessage(userMessage) {
         const data = await request.promise;
         if (epoch !== aiConversationEpoch) return;
         if (executionKey !== getAIExecutionKey()) {
-            reply = { role: 'assistant', isError: true, content: '检索范围已变化，本次回答未显示。', retryMessage: cleanMessage };
+            reply = { role: 'assistant', kind, isError: true, content: '检索范围已变化，本次回答未显示。', retry: { kind, userMessage: cleanMessage } };
         } else {
-            const contextPayload = data.context || {};
-            setSearchAIProviderLabel(data.provider || aiProviderLabel);
-            reply = {
-                role: 'assistant',
-                content: String(data.answer || ''),
-                contextSummary: contextPayload.summary || null,
-                citationCheck: data.citation_check || null,
-                followups: (contextPayload.suggested_questions || []).filter(prompt => prompt !== cleanMessage),
-                sources: (contextPayload.evidence || []).map(src => ({
-                    ...src,
-                    total_pages: (window._bookPages && window._bookPages[src.book_key]?.pages) || 0,
-                })),
-            };
+            reply = assistantReplyFrom(data, kind, cleanMessage);
         }
     } catch (e) {
         if (epoch !== aiConversationEpoch) return;
-        reply = {
-            role: 'assistant',
-            isError: true,
-            content: e && e.cancelled ? e.message : `请求失败：${(e && e.message) || '未知错误'}`,
-            retryMessage: cleanMessage,
-        };
+        reply = { role: 'assistant', kind, isError: true, content: describeAIError(e, kind), retry: { kind, userMessage: cleanMessage } };
     } finally {
         if (epoch === aiConversationEpoch) {
             if (aiActiveRequest === request) aiActiveRequest = null;
@@ -527,21 +626,13 @@ async function sendAIMessage(userMessage) {
     }
 }
 
-async function requestAISynthesis() {
-    if (!currentData || !currentQuery) return;
-    const groups = currentData.groups || [];
-    if (!groups.length) return;
-    const profile = inferAIQueryProfile(currentQuery);
-    const scope = getCurrentAIScopePayload();
-    if (profile.mode === 'precision_agent') {
-        await sendAIMessage(`请只根据教材原文说明「${profile.target}」的${describePrecisionIntent(profile.intent)}，并给出最相关出处。`);
-        return;
-    }
-    if (!scope.scope_subject && !scope.book_key && getCurrentAISubjectCount() >= 2) {
-        await sendAIMessage(`请先综合解读「${currentQuery}」，突出跨学科联系，并给出学习建议。`);
-        return;
-    }
-    await sendAIMessage(`请只根据当前教材结果解释「${currentQuery}」的核心，并给出最相关出处。`);
+// Started once by doSearch(), after the results of that explicit search are on screen.
+async function startSearchOverview() {
+    await runAIRequest('overview');
+}
+
+async function sendAIMessage(userMessage) {
+    await runAIRequest('chat', userMessage);
 }
 
 async function requestAIFollowup() {
@@ -551,23 +642,17 @@ async function requestAIFollowup() {
 
 async function copyAIConversation() {
     if (!aiConversation.length || !navigator.clipboard) return;
-    const text = aiConversation
-        .map(msg => `${msg.role === 'user' ? '你' : 'AI'}: ${msg.content}`)
+    const text = [`检索：${currentQuery}`]
+        .concat(aiConversation.filter(msg => !msg.isError).map(msg => `${msg.role === 'user' ? '你' : 'AI'}：${msg.content}`))
         .join('\n\n');
+    const label = aiCopyBtn ? aiCopyBtn.textContent : '';
     try {
         await navigator.clipboard.writeText(text);
-        if (aiCopyBtn) {
-            const prev = aiCopyBtn.textContent;
-            aiCopyBtn.textContent = '✓';
-            setTimeout(() => { aiCopyBtn.textContent = prev; }, 1200);
-        }
+        if (aiCopyBtn) aiCopyBtn.textContent = '已复制';
     } catch (_) {
-        if (aiCopyBtn) {
-            const prev = aiCopyBtn.textContent;
-            aiCopyBtn.textContent = '!';
-            setTimeout(() => { aiCopyBtn.textContent = prev; }, 1200);
-        }
+        if (aiCopyBtn) aiCopyBtn.textContent = '复制失败';
     }
+    if (aiCopyBtn) setTimeout(() => { aiCopyBtn.textContent = label; }, 1200);
 }
 
 // ── Footer Version ────────────────────────────────────────
@@ -663,10 +748,21 @@ filterImages.addEventListener('change', () => { if (currentQuery) doSearch(curre
 const searchInput = document.getElementById('search-input');
 const searchBtn = document.getElementById('search-btn');
 const resultsEl = document.getElementById('results');
-const crossHintEl = document.getElementById('cross-hint');
 const queryAnalysisEl = document.getElementById('query-analysis');
-const subjectTabsEl = document.getElementById('subject-tabs');
 const relatedBarEl = document.getElementById('related-bar');
+const evidenceSectionEl = document.getElementById('evidence-section');
+const evidenceSummaryEl = document.getElementById('evidence-summary');
+const evidenceToggleAllEl = document.getElementById('evidence-toggle-all');
+const GROUP_PREVIEW_COUNT = 6;
+
+if (evidenceToggleAllEl) {
+    evidenceToggleAllEl.addEventListener('click', () => {
+        const groups = Array.from(resultsEl.querySelectorAll('details.result-group'));
+        const open = !groups.every(group => group.open);
+        groups.forEach(group => { group.open = open; });
+        evidenceToggleAllEl.textContent = open ? '全部收起' : '全部展开';
+    });
+}
 
 searchBtn.addEventListener('click', () => doSearch(searchInput.value));
 searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(searchInput.value); });
@@ -769,12 +865,16 @@ async function doSearch(q, { subject = null } = {}) {
     currentQuery = q;
     currentSubjectFilter = subject || null;
     resetAIConversation();
+    document.body.classList.add('has-search');
 
-    resultsEl.innerHTML = '<div class="loading">搜索中…</div>';
-    crossHintEl.classList.add('hidden');
+    resultsEl.innerHTML = '<div class="loading">检索中…</div>';
+    if (evidenceSummaryEl) evidenceSummaryEl.textContent = '';
+    if (evidenceSectionEl) evidenceSectionEl.classList.remove('hidden');
     queryAnalysisEl.classList.add('hidden');
-    subjectTabsEl.classList.add('hidden');
     relatedBarEl.classList.add('hidden');
+    if (aiPanel) aiPanel.classList.remove('hidden');
+    setAISearchStage('searching');
+    const epoch = aiConversationEpoch;
 
     // Build search URL with advanced filters
     const params = new URLSearchParams({ q, limit: 100, phase: PHASE });
@@ -796,15 +896,20 @@ async function doSearch(q, { subject = null } = {}) {
         const res = await fetch(`${API}/api/search?${params}`);
         if (!res.ok) throw new Error('Search failed');
         const data = await res.json();
+        if (epoch !== aiConversationEpoch) return;   // a newer search has started
         currentData = data;
         if (!currentSubjectFilter) {
             currentOverviewData = data;
         }
-        renderResults(
-            currentData,
-            currentSubjectFilter,
-            currentOverviewData?.subject_counts || currentData.subject_counts || {},
-        );
+        aiLocalDigest = buildLocalDigest(data);
+        setAISearchStage('');
+        renderResults(currentData);
+        if (hasSearchResults()) {
+            // The one AI request this search makes: the overview of what it found.
+            startSearchOverview();
+        } else if (aiPanel) {
+            aiPanel.classList.add('hidden');
+        }
         // Load related concepts
         loadRelated(currentData, q);
         // Refresh trending after search (new query logged)
@@ -812,7 +917,10 @@ async function doSearch(q, { subject = null } = {}) {
         // Show concept subgraph for the search term
         loadSearchGraph(q);
     } catch (e) {
-        resultsEl.innerHTML = `<div class="loading">搜索出错: ${e.message}</div>`;
+        if (epoch !== aiConversationEpoch) return;
+        setAISearchStage('');
+        if (aiPanel) aiPanel.classList.add('hidden');
+        resultsEl.innerHTML = `<div class="loading">搜索出错: ${escHtml(e.message)}</div>`;
     }
 }
 
@@ -861,96 +969,16 @@ async function loadRelated(searchData, q) {
     }
 }
 
-function renderResults(data, filterSubject = null, subjectCountsOverride = null) {
-    // Cross hint
-    if (data.cross_hint && !filterSubject) {
-        crossHintEl.textContent = data.cross_hint;
-        crossHintEl.classList.remove('hidden');
-    } else {
-        crossHintEl.classList.add('hidden');
-    }
-
-    renderQueryAnalysis(data.query_analysis, filterSubject);
-
-    const counts = subjectCountsOverride || data.subject_counts || {};
-
-    // AI panel: available for any non-empty result set. Nothing is sent to AI until the user clicks.
-    if ((data.groups || []).length > 0) {
-        aiPanel.classList.remove('hidden');
-        renderAIStarters();
-    } else {
-        aiPanel.classList.add('hidden');
-        if (aiStarters) {
-            aiStarters.innerHTML = '';
-            aiStarters.classList.add('hidden');
-        }
-    }
-
-    // Subject tabs
-    const totalForTabs = currentOverviewData?.total ?? data.total;
-    const subjects = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-    if (subjects.length > 1) {
-        subjectTabsEl.innerHTML = `
-            <div class="subject-tab ${!filterSubject ? 'active' : ''}" data-subj="">
-                全部 <span class="tab-count">${totalForTabs}</span>
-            </div>
-            ${subjects.map(([s, c]) => `
-                <div class="subject-tab ${filterSubject === s ? 'active' : ''}" data-subj="${s}">
-                    ${getSubjectIcon(s)} ${s} <span class="tab-count">${c}</span>
-                </div>
-            `).join('')}
-        `;
-        subjectTabsEl.classList.remove('hidden');
-        subjectTabsEl.querySelectorAll('.subject-tab').forEach(tab => {
-            tab.addEventListener('click', () => {
-                const s = tab.dataset.subj || null;
-                if (s) {
-                    doSearch(currentQuery, { subject: s });
-                } else {
-                    if (currentOverviewData) {
-                        currentSubjectFilter = null;
-                        currentData = currentOverviewData;
-                        renderResults(currentOverviewData, null, currentOverviewData.subject_counts || {});
-                    } else {
-                        doSearch(currentQuery);
-                    }
-                }
-            });
-        });
-    } else {
-        subjectTabsEl.classList.add('hidden');
-    }
-
-    // Result groups
-    let groups = data.groups || [];
-    if (filterSubject) {
-        groups = groups.filter(g => g.subject === filterSubject);
-    }
-    const subjectBreadth = Object.keys(counts).length;
-
-    if (groups.length === 0) {
-        resultsEl.innerHTML = '<div class="loading">未找到相关结果</div>';
-        return;
-    }
-
-    resultsEl.innerHTML = groups.map(g => `
-        <div class="result-group">
-            <div class="group-header">
-                <span class="group-icon">${g.icon || '📚'}</span>
-                <span>${g.subject}</span>
-                <span class="group-count">${g.count} 条</span>
-                <div class="group-bar" style="background: ${g.color || '#95a5a6'}"></div>
-            </div>
-            ${g.results.map(r => `
-                <div class="result-card" onclick="this.classList.toggle('expanded')">
+function renderResultCard(r, subject, subjectBreadth, query, isExtra) {
+    return `
+                <div class="result-card${isExtra ? ' is-extra' : ''}" onclick="this.classList.toggle('expanded')">
                     <div class="result-meta">
                         <span class="result-title">${escHtml(r.title)} · §${r.section}</span>
                         ${r.source === 'gaokao' ? '<span class="source-badge gaokao">' + (PHASE === '高中' ? '📝 真题' : '📝 考试') + '</span>' : '<span class="source-badge textbook">📚 教材</span>'}
-                        ${renderMatchChannelBadge(r)}
                         ${r.image_count > 0 ? `<span class="img-badge">📷 ${r.image_count}</span>` : ''}
                         ${r.page_url ? `<span class="page-badge" title="${escAttr(pageRefTitle(r))}">📄 ${escHtml(pageRefLabel(r))}</span>` : ''}
                     </div>
-                    ${renderEvidenceTrace(r, g.subject, subjectBreadth, data.query)}
+                    ${renderEvidenceTrace(r, subject, subjectBreadth, query)}
                     <div class="result-snippet">${sanitizeSnippet(r.snippet)}</div>
                     <div class="result-text">${renderText(r.text, r.book_key)}</div>
                     ${r.page_url ? `<div class="result-actions">
@@ -962,10 +990,57 @@ function renderResults(data, filterSubject = null, subjectCountsOverride = null)
                             📄 补充教材暂无页图
                         </span>
                     </div>` : '')}
-                </div>
-            `).join('')}
-        </div>
-    `).join('');
+                </div>`;
+}
+
+function renderEvidenceGroup(g, subjectBreadth, query) {
+    const results = g.results || [];
+    const books = Array.from(new Set(results.filter(r => r.source !== 'gaokao').map(r => shortBookTitle(r.display_title || r.title)))).slice(0, 2);
+    const examCount = results.filter(r => r.source === 'gaokao').length;
+    const extra = Math.max(0, results.length - GROUP_PREVIEW_COUNT);
+    return `
+        <details class="result-group" data-subject="${escAttr(g.subject)}" style="--group-color: ${escAttr(g.color || '#7a8a89')}">
+            <summary class="group-header">
+                <span class="group-icon" aria-hidden="true">${g.icon || '📚'}</span>
+                <span class="group-name">${escHtml(g.subject)}</span>
+                <span class="group-count">${results.length} 段</span>
+                <span class="group-books">${escHtml(books.join('、'))}${books.length && examCount ? ' · ' : ''}${examCount ? `真题 ${examCount} 条` : ''}</span>
+                <span class="group-chevron" aria-hidden="true"></span>
+            </summary>
+            <div class="group-body">
+                ${results.map((r, i) => renderResultCard(r, g.subject, subjectBreadth, query, i >= GROUP_PREVIEW_COUNT)).join('')}
+                ${extra ? `<button class="group-more" type="button">再显示 ${extra} 段</button>` : ''}
+            </div>
+        </details>
+    `;
+}
+
+function renderResults(data) {
+    renderQueryAnalysis(data.query_analysis);
+
+    const counts = data.subject_counts || {};
+    // Largest subject first; the same order is handed to the library decorator below.
+    const groups = (data.groups || []).slice().sort((a, b) => (b.results || []).length - (a.results || []).length);
+    if (groups.length === 0) {
+        if (evidenceSummaryEl) evidenceSummaryEl.textContent = '';
+        resultsEl.innerHTML = '<div class="loading">未找到相关结果，换个说法或更短的关键词试试。</div>';
+        return;
+    }
+    const shown = groups.reduce((sum, g) => sum + (g.results || []).length, 0);
+    const subjectBreadth = Object.keys(counts).length || groups.length;
+    if (evidenceSummaryEl) {
+        evidenceSummaryEl.textContent = `${groups.length} 个学科 · ${shown} 段原文 · 按学科收起，点开核对`;
+    }
+    if (evidenceToggleAllEl) evidenceToggleAllEl.textContent = '全部展开';
+
+    resultsEl.innerHTML = groups.map(g => renderEvidenceGroup(g, subjectBreadth, data.query)).join('');
+    resultsEl.querySelectorAll('.group-more').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const body = btn.closest('.group-body');
+            if (body) body.querySelectorAll('.result-card.is-extra').forEach(card => card.classList.remove('is-extra'));
+            btn.remove();
+        });
+    });
 
     // Search result text is tokenized by renderText(); render only those tokens here.
     if (typeof renderKaTeX === 'function') {
@@ -980,22 +1055,6 @@ function getSubjectIcon(s) {
 
 function getSubjectColor(s) {
     return (window._subjectMeta[s] && window._subjectMeta[s].color) || '#666';
-}
-
-function renderMatchChannelBadge(result) {
-    if (result.retrieval_source === 'supplemental' || result.match_channel === 'supplemental') {
-        return '<span class="match-channel supplemental">🧩 备份教材兜底</span>';
-    }
-    if (result.match_channel === 'exact') {
-        return '<span class="match-channel exact">🎯 精确命中</span>';
-    }
-    if (result.match_channel === 'semantic') {
-        return '<span class="match-channel fts">🧠 向量召回</span>';
-    }
-    if (result.match_channel === 'fts') {
-        return '<span class="match-channel fts">🔎 全文命中</span>';
-    }
-    return '<span class="match-channel fts">🔀 混合召回</span>';
 }
 
 function renderQueryAnalysis(analysis, filterSubject = null) {
@@ -1014,7 +1073,8 @@ function renderQueryAnalysis(analysis, filterSubject = null) {
     }
 
     conceptTerms.slice(0, 4).forEach(item => {
-        const matchLabel = item.match_type === 'alias' ? '概念归并' : '标准术语';
+        // Expansion terms come from machine-built synonym tables; they are not claimed to be equivalent.
+        const matchLabel = item.match_type === 'alias' ? '扩展检索' : '标准术语';
         chips.push(`<span class="query-chip concept">${escHtml(item.term)} · ${escHtml(matchLabel)}</span>`);
     });
     fallbackTerms
@@ -1037,7 +1097,7 @@ function renderQueryAnalysis(analysis, filterSubject = null) {
 
     queryAnalysisEl.innerHTML = `
         <div class="query-analysis-header">
-            <span class="query-analysis-title">术语解析</span>
+            <span class="query-analysis-title">检索扩展</span>
             ${scopeLine}
         </div>
         <div class="query-analysis-summary">${escHtml(summaryText)}</div>
@@ -1094,7 +1154,6 @@ function renderEvidenceTrace(result, subject, subjectBreadth, query) {
     return `
         <div class="result-trace">
             <div class="evidence-chips">${evidenceChips.join('')}</div>
-            <span class="relation-path">检索路径：${escHtml(query)} → ${escHtml(subject)} · 覆盖 ${subjectBreadth} 科</span>
         </div>
     `;
 }
@@ -1789,23 +1848,43 @@ function applyLiveStatsToUI(data) {
     latestStats = data;
     setSearchAIProviderLabel(data.ai_model || aiProviderLabel);
 
+    // Textbook passages and exam rows are counted separately: total_chunks already
+    // contains the exam rows, and an exam row is a record that may hold several items.
+    const nSubjects = data.subjects_count || (data.subjects || []).length;
+    const nBooks = Number(data.textbook_books || 0);
+    const nTextbook = Number(data.textbook_chunks || 0);
+    const nGaokao = PHASE === '高中' ? Number(data.gaokao_chunks || 0) : 0;
     const heroSub = document.getElementById('hero-sub');
     if (heroSub) {
-        const nSubjects = data.subjects_count || (data.subjects || []).length;
-        const nTotal = (data.total_chunks || 0).toLocaleString();
-        const nGaokao = (data.gaokao_chunks || 0).toLocaleString();
-        const gaokaoLabel = PHASE === '高中' && Number(nGaokao.replace(/,/g, '')) > 0 ? ` · ${nGaokao} 道高考真题` : '';
-        heroSub.textContent = `覆盖${DISPLAY_PHASE} ${nSubjects} 科 · ${nTotal} 条结构化语料${gaokaoLabel}`;
+        heroSub.textContent = `${DISPLAY_PHASE} ${nSubjects} 科 · ${nBooks.toLocaleString()} 册教材 ${nTextbook.toLocaleString()} 段原文`
+            + (nGaokao > 0 ? ` · 高考题库 ${nGaokao.toLocaleString()} 条` : '');
+    }
+    const regions = (data.gaokao_by_region || []).map(item => {
+        const [from, to] = item.year_range || [];
+        const years = from && to ? (from === to ? `${from}` : `${from}–${to}`) : '年份不详';
+        const subjects = (item.subjects || []).length === 1 ? `仅${item.subjects[0]}` : `${(item.subjects || []).length} 科`;
+        const name = item.region === '全国' ? '全国卷' : (item.region === '未标注' ? '未标注地区' : `${item.region}卷`);
+        return { text: `${name} ${years} · ${subjects} · ${Number(item.count || 0).toLocaleString()} 条`, item };
+    });
+    const dataNote = document.getElementById('data-note');
+    const dataNoteBody = document.getElementById('data-note-body');
+    if (dataNote && dataNoteBody) {
+        const lines = [
+            `教材：${nBooks.toLocaleString()} 册，扫描版经 OCR 后按页切成 ${nTextbook.toLocaleString()} 段原文；部分学科同时收了两个版本（例如数学 A 版与 B 版），检索结果会标出版本。`,
+        ];
+        if (nGaokao > 0) {
+            const coverage = regions.length ? `：${regions.map(r => r.text).join('；')}` : '';
+            lines.push(`高考题库 ${nGaokao.toLocaleString()} 条记录${coverage}。一条记录可能是一道题，也可能是含几道小题的一组；题库序号不是原卷题号，近两年的卷子尚不完整。`);
+        }
+        lines.push('AI 导读只依据每次检索到的原文生成，出处可点开核对。');
+        dataNoteBody.innerHTML = lines.map(line => `<p>${escHtml(line)}</p>`).join('');
+        dataNote.classList.remove('hidden');
     }
 
     const gaokaoHeroSub = document.getElementById('gk-hero-sub');
     if (gaokaoHeroSub && PHASE === '高中') {
-        const [startYear, endYear] = data.gaokao_year_range || [];
-        const yearRange = startYear && endYear ? `${startYear}-${endYear}` : '历年';
-        const nGaokao2 = (data.gaokao_chunks || 0).toLocaleString();
-        const nTextbook = (data.textbook_chunks || 0).toLocaleString();
-        const multimodal = data.gaokao_multimodal ? ` · ${data.gaokao_multimodal.toLocaleString()} 道含图题` : '';
-        gaokaoHeroSub.textContent = `${yearRange} · ${nGaokao2} 道真题${multimodal} · 与 ${nTextbook} 条教材语料联动检索`;
+        const multimodal = data.gaokao_multimodal ? ` · 含图 ${Number(data.gaokao_multimodal).toLocaleString()} 条` : '';
+        gaokaoHeroSub.textContent = `${regions.map(r => r.text).join(' ｜ ') || `${nGaokao.toLocaleString()} 条`}${multimodal} · 一条记录可能含多道小题`;
     }
 
     const aboutScaleText = document.getElementById('about-scale-text');
@@ -1880,9 +1959,12 @@ function applyLiveStatsToUI(data) {
         const res = await fetch(`${API}/api/stats?phase=${encodeURIComponent(PHASE)}`);
         const data = await res.json();
         const el = document.getElementById('stats-bar');
-        el.innerHTML = data.subjects.map(s =>
-            `<div class="stat-chip">${s.icon} ${s.name} <span class="count">${s.count.toLocaleString()}</span></div>`
-        ).join('');
+        const examBySubject = new Map((PHASE === '高中' ? data.gaokao_by_subject || [] : []).map(item => [item.name, item.count]));
+        el.innerHTML = data.subjects.map(s => {
+            const exam = examBySubject.get(s.name) || 0;
+            const textbook = Math.max(0, s.count - exam);
+            return `<div class="stat-chip">${s.icon} ${escHtml(s.name)} <span class="count">教材 ${textbook.toLocaleString()} 段${exam ? ` · 真题 ${exam.toLocaleString()} 条` : ''}</span></div>`;
+        }).join('');
         el.classList.remove('hidden');
         applyLiveStatsToUI(data);
     } catch (e) { /* silent */ }
@@ -1995,7 +2077,7 @@ function renderGaokaoResults(questions) {
         <div class="gaokao-card" data-id="${q.id}">
             <div class="gk-card-header" onclick="this.parentElement.classList.toggle('expanded')">
                 <div class="gk-card-meta">
-                    <span class="gk-badge" style="background:${q.color || '#6c5ce7'}">${q.icon || '📚'} ${q.subject}</span>
+                    <span class="gk-badge" style="--badge-color:${q.color || '#6c5ce7'}">${q.icon || '📚'} ${q.subject}</span>
                     <span class="gk-year">${q.year}年</span>
                     <span class="gk-category">${escHtml(q.category)}</span>
                     <span class="gk-type">${q.question_type === 'objective' ? '客观题' : '主观题'}</span>
@@ -2054,7 +2136,7 @@ async function findTextbookLinks(questionId) {
             return `
             <div class="gk-link-card">
                 <div class="gk-link-meta">
-                    <span class="gk-badge" style="background:${l.color || '#6c5ce7'}">${l.icon || '📚'} ${l.subject}</span>
+                    <span class="gk-badge" style="--badge-color:${l.color || '#6c5ce7'}">${l.icon || '📚'} ${l.subject}</span>
                     ${typeLabel}
                     <span>${escHtml(l.title)} · §${l.section}</span>
                 </div>
@@ -2593,10 +2675,10 @@ async function loadSearchGraph(term) {
         const data = await res.json();
         if (!data.nodes || data.nodes.length < 3) return;
 
-        const section = document.createElement('div');
+        const section = document.createElement('details');
         section.id = 'search-graph-section';
-        section.className = 'search-graph-section';
-        section.innerHTML = '<h3 class="search-graph-title">🔗 关联知识图谱</h3>';
+        section.className = 'result-group search-graph-section';
+        section.innerHTML = '<summary class="group-header"><span class="group-icon" aria-hidden="true">🔗</span><span class="group-name">关联知识图谱</span><span class="group-books">术语共现关系，点节点可检索</span><span class="group-chevron" aria-hidden="true"></span></summary>';
 
         const graphDiv = document.createElement('div');
         graphDiv.className = 'search-graph-container';

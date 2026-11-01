@@ -109,6 +109,26 @@ def fake_chat_context(query, user_message, history=None, *, scope_subject=None, 
     }
 
 
+def fake_overview_context(query, *, scope_subject=None, book_key=None, phase=None):
+    evidence = [
+        {"id": 21, "subject": "物理", "title": "普通高中教科书·物理必修 第三册（人教版）", "base_title": "普通高中教科书·物理必修 第三册",
+         "edition": "人教版", "book_key": "physics_b3", "section": 97, "logical_page": 93, "source": "mineru",
+         "snippet": "这个规律叫作能量守恒定律。", "citation": "[物理·物理必修 第三册（人教版）·p93]", "text": "RAW " * 400},
+        {"id": 31, "subject": "生物学", "title": "生物学选择性必修2", "book_key": "bio_s2", "section": 64, "logical_page": 56,
+         "source": "mineru", "snippet": "能量流动逐级递减，与能量守恒定律矛盾吗？", "citation": "[生物学·生物学选择性必修2·p56]"},
+        {"id": 41, "subject": "物理", "year": 2023, "category": "全国乙卷", "source": "gaokao",
+         "snippet": "一物体沿光滑斜面下滑", "citation": "[真题·2023·全国乙卷·物理]"},
+    ] if query != "无结果" else []
+    groups = [{"subject": "物理", "count": 3, "items": evidence[:1]}, {"subject": "生物学", "count": 1, "items": evidence[1:2]}] if evidence else []
+    return {
+        "mode": "overview", "query": query, "phase": phase, "evidence": evidence, "groups": groups,
+        "context_text": "【物理】（教材命中 3 段，下面摘 1 段）\n[物理·物理必修 第三册（人教版）·p93] 这个规律叫作能量守恒定律。",
+        "gaokao_text": "[真题·2023·全国乙卷·物理] 一物体沿光滑斜面下滑", "alias_text": "能量守恒：机械能守恒定律",
+        "summary": {"subject_count": len(groups), "evidence_count": 2, "gaokao_hit_count": 1, "coverage_line": "整合 2 个学科"},
+        "suggested_questions": ["追问甲"],
+    }
+
+
 class MainIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.calls = []
@@ -125,9 +145,10 @@ class MainIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         self.guard = main.AI_GUARD
         self._saved = (self.guard._upstream, main._build_chat_context_for_request, main._build_dict_chat_context_for_request,
-                       main._ai_gaokao_context_for_request)
+                       main._ai_gaokao_context_for_request, main._build_overview_context_for_request)
         self.guard._upstream = upstream
         main._build_chat_context_for_request = counted_context
+        main._build_overview_context_for_request = fake_overview_context
         main._build_dict_chat_context_for_request = lambda headword, phase=None: {
             "dict_context": "[辞源·p12] 之：往也。", "textbook_context": "[教材·必修上·p30] 之", "gaokao_context": "",
             "summary": {"evidence_count": 2},
@@ -147,7 +168,7 @@ class MainIntegrationTests(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
         await self.guard.drain_logs()
         (self.guard._upstream, main._build_chat_context_for_request, main._build_dict_chat_context_for_request,
-         main._ai_gaokao_context_for_request) = self._saved
+         main._ai_gaokao_context_for_request, main._build_overview_context_for_request) = self._saved
 
     async def post(self, path, payload):
         return await self.client.post(path, headers=HEADERS, content=json.dumps(payload, ensure_ascii=False).encode())
@@ -232,6 +253,78 @@ class MainIntegrationTests(unittest.IsolatedAsyncioTestCase):
         status = (await self.client.get("/api/ai/status")).json()
         self.assertEqual((status["budget"]["count"], status["budget"]["limit"], status["budget"]["remaining"]), (5, 5, 0))
         self.assertTrue((Path(os.environ["STATE_ROOT"]) / "ai_guard" / "ai_budget.sqlite3").exists())
+
+    async def test_overview_on_the_real_app(self):
+        # Own budget file and log cleanup: test_real_app_flow asserts absolute budget and log contents.
+        saved_budget = self.guard.budget
+        budget_dir = tempfile.TemporaryDirectory()
+        self.guard.budget = main.ai_guard.BudgetStore(Path(budget_dir.name) / "budget.sqlite3")
+        self.guard._status_budget = None
+        try:
+            await self._overview_flow()
+        finally:
+            await self.guard.drain_logs()
+            con = sqlite3.connect(main.DB_PATH)
+            try:
+                con.execute("DELETE FROM ai_chat_logs WHERE kind = 'overview'")
+                con.commit()
+            finally:
+                con.close()
+            self.guard.budget = saved_budget
+            self.guard._status_budget = None
+            budget_dir.cleanup()
+
+    async def _overview_flow(self):
+        session = await self.client.post("/api/ai/session", headers=HEADERS, content=b"{}")
+        self.assertEqual(session.status_code, 200)
+        self.answer = "### 一句话\n守恒。[物理·物理必修 第三册（人教版）·p93]\n### 高考怎么考\n见 [真题·2023·全国乙卷·物理]。[物理·伪造·p404]"
+        response = await self.post("/api/overview", {"query": "能量守恒", "phase": "高中"})
+        self.assertEqual(response.status_code, 200, response.text)
+        data = response.json()
+        self.assertEqual(data["answer"], self.answer)
+        evidence = data["context"]["evidence"]
+        self.assertEqual([item["citation"] for item in evidence],
+                         ["[物理·物理必修 第三册（人教版）·p93]", "[生物学·生物学选择性必修2·p56]", "[真题·2023·全国乙卷·物理]"])
+        self.assertNotIn("text", evidence[0], "raw chunk text never leaves the server")
+        self.assertEqual(data["citation_check"]["unverified"], ["[物理·伪造·p404]"])
+        prompt = self.calls[-1]
+        for heading in ("### 一句话", "### 各学科怎么说", "### 学科之间的接缝", "### 高考怎么考", "### 值得追问"):
+            self.assertIn(heading, prompt)
+        self.assertIn("[物理·物理必修 第三册（人教版）·p93] 这个规律叫作能量守恒定律。", prompt)
+        self.assertIn("不要写题号", prompt)
+        self.assertIn("未必与「能量守恒」等价", prompt)
+        self.assertIn("（教材外补充）", prompt)
+        self.assertLessEqual(len(prompt), main.AI_GUARD_CONFIG.max_prompt_chars)
+        # A search with nothing to integrate refuses before the budget is touched.
+        before = self.guard.status()["budget"]["count"]
+        empty = await self.post("/api/overview", {"query": "无结果", "phase": "高中"})
+        self.assertEqual((empty.status_code, empty.json()["code"]), (404, "no_evidence"))
+        self.assertEqual(self.guard.status()["budget"]["count"], before)
+        await self.guard.drain_logs()
+        self.assertEqual([row["kind"] for row in self.log_rows()][-2:], ["overview", "overview"])
+
+    async def test_overview_prompt_for_junior_phase_has_no_exam_claims(self):
+        prompt = main._build_overview_prompt(dict(fake_overview_context("光合作用", phase="初中"), phase="初中", gaokao_text=""))
+        self.assertIn("### 中考怎么考", prompt)
+        self.assertIn("本站暂无初中真题数据", prompt)
+        self.assertNotIn("高考真题摘录", prompt)
+
+    def test_overview_text_helpers(self):
+        stem = main._gaokao_stem("4. 下列说法正确的是\nA. 甲\nB. 乙\n【解析】\n【详解】A 错误……")
+        self.assertEqual(stem, "下列说法正确的是 A. 甲 B. 乙")
+        self.assertEqual(main._gaokao_stem("题干\n答案：C"), "题干")
+        self.assertEqual(main._normalize_gaokao_category("（新课标Ⅰ）"), "新课标I卷")
+        self.assertEqual(main._normalize_gaokao_category("甲卷"), "全国甲卷")
+        self.assertEqual(main._normalize_gaokao_category("其他"), "")
+        self.assertEqual(main._normalize_gaokao_category("北京卷"), "北京卷")
+        text = "甲" * 500 + "能量守恒定律" + "乙" * 500
+        excerpt = main._excerpt_around_terms(text, ["能量守恒", "能量守恒定律"], limit=120)
+        self.assertIn("能量守恒定律", excerpt)
+        self.assertTrue(excerpt.startswith("…") and excerpt.endswith("…"))
+        self.assertLessEqual(len(excerpt), 122)
+        self.assertEqual(main._excerpt_around_terms("短文 ![img](a.png) 能量", ["能量"]), "短文 能量")
+        self.assertEqual(main._short_book_title("普通高中教科书·物理必修 第三册", "人教版"), "物理必修 第三册（人教版）")
+        self.assertEqual(main._short_book_title("普通高中教科书·物理必修 第三册（人教版）", "人教版"), "物理必修 第三册（人教版）")
 
     async def test_old_client_on_the_real_app(self):
         """A page still running the 035d2d4 script (no client marker) against the real app."""

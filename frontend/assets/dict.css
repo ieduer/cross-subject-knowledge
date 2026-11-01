@@ -7,34 +7,34 @@
 :root {
     --dict-ink: #2f2a25;
     --dict-ink-soft: #5d5551;
-    --dict-ink-dim: #8d837c;
-    --dict-ink-muted: #a89d96;
+    --dict-ink-dim: #5f5650;
+    --dict-ink-muted: #6b625c;
     --dict-paper: rgba(252, 250, 246, 0.86);
     --dict-paper-soft: rgba(252, 250, 246, 0.66);
     --dict-edge: rgba(120, 113, 106, 0.22);
     --dict-edge-strong: rgba(120, 113, 106, 0.35);
 
-    --dict-amber: #c98a3a;
+    --dict-amber: #8a5a1c;
     --dict-amber-tint: rgba(201, 138, 58, 0.18);
     --dict-amber-soft: rgba(201, 138, 58, 0.08);
     --dict-amber-edge: rgba(201, 138, 58, 0.28);
 
-    --dict-teal: #4a8ea0;
+    --dict-teal: #2f6371;
     --dict-teal-tint: rgba(74, 142, 160, 0.18);
     --dict-teal-soft: rgba(74, 142, 160, 0.08);
     --dict-teal-edge: rgba(74, 142, 160, 0.28);
 
-    --dict-rose: #b85a6a;
+    --dict-rose: #9a4555;
     --dict-rose-tint: rgba(184, 90, 106, 0.18);
     --dict-rose-soft: rgba(184, 90, 106, 0.08);
     --dict-rose-edge: rgba(184, 90, 106, 0.3);
 
-    --dict-sage: #6e8b6a;
+    --dict-sage: #4f6a4c;
     --dict-sage-tint: rgba(110, 139, 106, 0.18);
     --dict-sage-soft: rgba(110, 139, 106, 0.08);
     --dict-sage-edge: rgba(110, 139, 106, 0.3);
 
-    --dict-violet: #786fb1;
+    --dict-violet: #5e568f;
     --dict-violet-tint: rgba(120, 111, 177, 0.18);
     --dict-violet-soft: rgba(120, 111, 177, 0.08);
     --dict-violet-edge: rgba(120, 111, 177, 0.3);
@@ -124,7 +124,7 @@ body.dict-page .header {
 }
 
 .dict-search-box button {
-    background: linear-gradient(135deg, var(--dict-teal), #6fa6b6);
+    background: linear-gradient(135deg, var(--dict-teal), #3f6f7c);
     color: #fff;
     border: none;
     padding: 10px 24px;

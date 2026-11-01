@@ -2209,7 +2209,7 @@ def _analyze_search_query(
         mode = "concept"
         display_term = concept_matches[0]["term"]
     elif alias_matches:
-        summary = f"已按概念别名归并检索：{'、'.join(item['term'] for item in alias_matches[:3])}"
+        summary = f"已扩展检索相关术语（系统自动生成，未必与搜索词等价）：{'、'.join(item['term'] for item in alias_matches[:3])}"
         mode = "alias"
         display_term = alias_matches[0]["term"]
     elif fallback_terms:
@@ -3921,7 +3921,7 @@ def _append_precision_candidate(
     if row_id is None:
         return
     text = row.get("text") or ""
-    snippet = row.get("snippet") or _compose_chunk_snippet(row.get("ai_summary"), text, limit=180)
+    snippet = row.get("snippet") or _excerpt_around_terms(text, [matched_term], limit=220)
     logical_page = row.get("logical_page")
     if logical_page is None:
         logical_page = row.get("section")
@@ -4560,7 +4560,7 @@ def _build_precision_chat_context_payload(
             fallback_title=candidate.get("title"),
             content_id=candidate.get("content_id"),
         )
-        item["citation"] = f"[{item['subject']}·{item['title']}·p{item.get('logical_page')}]"
+        item["citation"] = f"[{item['subject']}·{_short_book_title(item.get('base_title') or item['title'], item.get('edition'))}·p{item.get('logical_page')}]"
         evidence.append(item)
         subject_group = groups_by_subject.setdefault(item["subject"], {"subject": item["subject"], "count": 0, "items": []})
         subject_group["count"] += 1
@@ -4685,7 +4685,8 @@ def _build_chat_context_payload_legacy(
         selected = []
         for row in diverse_rows[:2]:
             logical_page = row["logical_page"] if row["logical_page"] is not None else row["section"]
-            snippet = _compose_chunk_snippet(row.get("ai_summary"), row.get("text"), limit=180)
+            # Original textbook text around the match, not the precomputed AI summary.
+            snippet = _excerpt_around_terms(row.get("text"), retrieval_terms, limit=240)
             item = _apply_book_runtime_meta(
                 {
                     "id": row["id"],
@@ -4701,7 +4702,7 @@ def _build_chat_context_payload_legacy(
                 fallback_title=row["title"],
                 content_id=row.get("content_id"),
             )
-            item["citation"] = f"[{subject}·{item['title']}·p{logical_page}]"
+            item["citation"] = f"[{subject}·{_short_book_title(item.get('base_title') or item['title'], item.get('edition'))}·p{logical_page}]"
             selected.append(item)
             evidence.append(item)
         groups.append({"subject": subject, "count": len(subject_rows), "items": selected})
@@ -4716,9 +4717,9 @@ def _build_chat_context_payload_legacy(
                 "id": row["id"],
                 "subject": row["subject"],
                 "year": row["year"],
-                "category": row["category"],
+                "category": _normalize_gaokao_category(row["category"]),
                 "title": row["title"],
-                "snippet": ai_summary or _chat_excerpt(row["text"], limit=220),
+                "snippet": _gaokao_stem(row["text"], limit=220),
                 "summary": ai_summary,
                 "knowledge_points": knowledge_points[:5],
                 "textbook_refs": textbook_refs[:3],
@@ -4736,10 +4737,8 @@ def _build_chat_context_payload_legacy(
         " ".join(
             part
             for part in [
-                f"[{item['subject']}·{item['year'] or '未知年份'}·{item['category'] or '真题'}]",
-                item["summary"] or item["snippet"],
-                f"知识点：{'、'.join(item['knowledge_points'][:3])}" if item.get("knowledge_points") else "",
-                f"教材锚点：{'；'.join(item['textbook_refs'][:2])}" if item.get("textbook_refs") else "",
+                f"[真题·{item['year'] or '年份不详'}·{item['category'] or '卷别不详'}·{item['subject']}]",
+                item["snippet"],
             ]
             if part
         )
@@ -4876,10 +4875,10 @@ def _build_chat_prompt_legacy(query: str, user_message: str, context_payload: di
     _gaokao_instruction = ""
     if _phase == "初中":
         _gaokao_evidence = "考试真题证据：\n（初中暂无考试真题数据）"
-        _gaokao_instruction = "【考点提示】根据教材证据总结可能的考查方向；如证据不足就写\"证据不足\"。"
+        _gaokao_instruction = "问题涉及考试时，可据教材证据提示可能的考查方向并注明「（推测）」；本站暂无初中真题数据。"
     else:
         _gaokao_evidence = f"高考证据（如有）：\n{context_payload.get('gaokao_text') or '（无）'}"
-        _gaokao_instruction = "【高考考法】如果给定证据里有真题，再说明常见考法 / 易错点；没有就写\"高考证据不足\"。"
+        _gaokao_instruction = "问题涉及高考时，只根据真题证据说明考法并写出年份和卷别（不写题号，题库题号不是原卷题号）；没有真题证据就说明「本次检索没有命中相关真题」。"
 
     return f"""你是一位资深跨学科教育专家，面向{_display_phase}学生。用户当前搜索词是「{context_payload.get('query') or query}」。
 
@@ -4898,30 +4897,27 @@ def _build_chat_prompt_legacy(query: str, user_message: str, context_payload: di
 概念关系提示：
 {context_payload.get('relation_text') or '（无）'}
 
-教材证据（多学科原文）：
+教材证据（多学科原文摘录）：
 {context_payload.get('context_text') or '（无）'}
 
 {_gaokao_evidence}
 
-历史对话：
+历史对话（第一条 AI 消息通常是本次检索的整合导读）：
 {history_text}
 
 用户本轮问题：
 {user_message}
 
-请按以下结构回答：
-【核心结论】先用 1-2 句讲清本质。
-【学科联动】分点说明不同学科如何描述同一概念，尽量标注出处，格式：[学科·书名·p页码]。
-{_gaokao_instruction}
-【学习建议】给出面向{_display_phase}生的复习顺序或追问方向。
+回答方式（这是对话中的一轮，不要重复导读里已经说过的内容）：
+- 先直接回答这一轮的问题，再按需要展开；需要分点时用「- 」列表，可用 **加粗** 标出关键词。
+- 引用教材时在句末附标签，格式 [学科·书名·p页码]，只能原样使用上面教材证据里出现过的标签。
+- {_gaokao_instruction}
+- 需要证据之外的知识时，只能是{_display_phase}教材层面公认的内容，并在句末标注「（教材外补充）」。
 
 规则：
-1. 只根据给定证据回答，不要编造页码或教材内容。
-2. 如果证据不足，必须明确说"证据不足"。
-3. 若用户追问，保持连续回答，不重复整段前文。
-4. 可以参考"概念别名 / 关系提示"组织答案，但不能把它们当成教材原文引用。
-5. 语言简洁、具体，避免空泛套话。
-6. 总长度尽量控制在 280 字以内。"""
+1. 只根据给定证据回答，不要编造页码或教材内容；证据不足时明确说「教材证据不足」。
+2. "概念别名 / 关系提示"是系统自动生成的检索线索，未必与搜索词等价，不能当成教材原文引用，也不能据此把不同概念说成同一个。
+3. 语言具体，避免空泛套话；总长度控制在 400 字以内。"""
 
 
 def _build_precision_chat_prompt(
@@ -4978,8 +4974,8 @@ Agent 检索轮次：{len(rounds)} 轮
 3. 如果用户在问"定义"，先给最短可背诵表述，再补 1-2 个关键特征。
 4. 如果证据不足或检索结果彼此不一致，必须明确写"教材证据不足"。
 5. 忽略低相关结果，不要为了凑字数复述无关内容。
-6. 若用户继续追问，保持连续回答，不重复整段前文。
-7. 总长度尽量控制在 220 字以内。"""
+6. 若用户继续追问，保持连续回答，不重复整段前文；需要分点时用「- 」列表。
+7. 总长度尽量控制在 350 字以内。"""
 
 
 def _build_chat_prompt(query: str, user_message: str, context_payload: dict, history: list[dict] | None = None) -> str:
@@ -7053,6 +7049,14 @@ def stats(phase: Optional[str] = Query(None, description="Filter by phase: 高�
             f"SELECT subject, COUNT(*) as cnt FROM chunks WHERE source='gaokao'{phase_filter} GROUP BY subject ORDER BY cnt DESC",
             phase_params,
         ).fetchall()
+        # Where the exam rows come from: national papers and Beijing papers cover very
+        # different years and subjects, so one overall year range would mislead.
+        gaokao_by_region = con.execute(
+            f"""SELECT COALESCE(NULLIF(region, ''), '未标注') AS region, COUNT(*) AS cnt,
+                       MIN(year) AS min_y, MAX(year) AS max_y, GROUP_CONCAT(DISTINCT subject) AS subjects
+                FROM chunks WHERE source='gaokao'{phase_filter} GROUP BY 1 ORDER BY cnt DESC""",
+            phase_params,
+        ).fetchall()
         ai_table_counts = {
             "explanations": con.execute("SELECT COUNT(*) FROM ai_explanations").fetchone()[0],
             "synonyms": con.execute("SELECT COUNT(*) FROM ai_synonyms").fetchone()[0],
@@ -7077,6 +7081,15 @@ def stats(phase: Optional[str] = Query(None, description="Filter by phase: 高�
                 {"name": r["subject"], "count": r["cnt"],
                  **SUBJECT_META.get(r["subject"], {"icon": "📚", "color": "#95a5a6"})}
                 for r in gaokao_by_subject
+            ],
+            "gaokao_by_region": [
+                {
+                    "region": r["region"],
+                    "count": r["cnt"],
+                    "year_range": [r["min_y"], r["max_y"]],
+                    "subjects": sorted(filter(None, (r["subjects"] or "").split(","))),
+                }
+                for r in gaokao_by_region
             ],
             "subjects": [
                 {
@@ -7469,6 +7482,311 @@ async def _ai_build_chat(fields: dict) -> ai_guard.Built:
         meta={
             "subject_count": summary.get("subject_count") or len(summary.get("top_subjects") or []),
             "evidence_count": summary.get("evidence_count") or len(evidence),
+            "gaokao_hit_count": summary.get("gaokao_hit_count") or 0,
+        },
+    )
+
+# ── Search overview: the first, automatic synthesis of one search ─────────────
+# One explicit search → at most one guarded POST /api/overview. The prompt sees only
+# original textbook text (never the precomputed AI summaries) and exam stems with the
+# worked solution cut off, so every claim in the overview can be traced to a page.
+OVERVIEW_SUBJECT_LIMIT = 6
+OVERVIEW_ITEMS_PER_SUBJECT = 3
+OVERVIEW_EXCERPT_CHARS = 300
+OVERVIEW_GAOKAO_LIMIT = 3
+OVERVIEW_GAOKAO_STEM_CHARS = 240
+_GAOKAO_SOLUTION_RE = re.compile(r"【\s*(?:解析|详解|答案|分析|点睛|点评|解答|考点)\s*】|^\s*(?:答案|解析)\s*[:：]", re.M)
+# Spelling variants of the same paper name in the exam rows (display only; the stored
+# category is untouched because the 真题 filter queries it verbatim).
+GAOKAO_CATEGORY_ALIASES = {
+    "（新课标Ⅰ）": "新课标I卷",
+    "（新课标Ⅱ）": "新课标II卷",
+    "（新课标Ⅲ）": "新课标III卷",
+    "新课标Ⅲ": "新课标III卷",
+    "（新课标）": "新课标卷",
+    "(新课标)": "新课标卷",
+    "全国卷Ⅱ": "全国II卷",
+    "甲卷": "全国甲卷",
+    "乙卷": "全国乙卷",
+    "（全国甲卷）": "全国甲卷",
+    "（全国乙卷）": "全国乙卷",
+}
+
+
+def _normalize_gaokao_category(category: str | None) -> str:
+    value = str(category or "").strip()
+    if not value or value == "其他":
+        return ""
+    return GAOKAO_CATEGORY_ALIASES.get(value, value)
+
+
+def _gaokao_stem(text: str | None, limit: int = OVERVIEW_GAOKAO_STEM_CHARS) -> str:
+    """Question stem only: the worked solution that follows 【解析】 / 【详解】 is cut off."""
+    raw = text or ""
+    match = _GAOKAO_SOLUTION_RE.search(raw)
+    if match:
+        raw = raw[:match.start()]
+    raw = re.sub(r"^\s*\d{1,2}\s*[\.．、]\s*", "", raw)
+    return _chat_excerpt(raw, limit=limit)
+
+
+def _excerpt_around_terms(text: str | None, terms: list[str], limit: int = OVERVIEW_EXCERPT_CHARS) -> str:
+    """A window of original text around the first occurrence of the longest matching term."""
+    cleaned = re.sub(r"!\[.*?\]\(.*?\)", " ", text or "")
+    cleaned = re.sub(r"<[^>]{1,40}>", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    hit = -1
+    for term in sorted({t for t in terms if t}, key=len, reverse=True):
+        hit = cleaned.find(term)
+        if hit >= 0:
+            break
+    if hit < 0:
+        return cleaned[:limit] + "…"
+    start = max(0, hit - limit // 3)
+    end = min(len(cleaned), start + limit)
+    start = max(0, end - limit)
+    return ("…" if start > 0 else "") + cleaned[start:end] + ("…" if end < len(cleaned) else "")
+
+
+def _short_book_title(title: str | None, edition: str | None) -> str:
+    short = re.sub(r"^普通高中教科书[·・]|^义务教育教科书[·・]", "", str(title or "")).strip()
+    if edition and edition not in short:
+        short = f"{short}（{edition}）"
+    return short
+
+
+def _build_overview_context_payload(
+    con,
+    query: str,
+    *,
+    scope_subject: str | None = None,
+    book_key: str | None = None,
+    phase: str | None = None,
+) -> dict:
+    clean_q = _clean_query_text(query)
+    if not clean_q:
+        raise HTTPException(400, "Invalid query")
+
+    query_analysis = _analyze_search_query(con, query, scope_subject=scope_subject, book_key=book_key)
+    search_terms = list(dict.fromkeys([clean_q] + list(query_analysis.get("retrieval_terms") or [])))[:8]
+    retrieval_terms, alias_hints = _expand_chat_search_terms(con, search_terms)
+
+    textbook_rows = _fetch_chat_rows_for_terms(
+        con,
+        retrieval_terms,
+        source="mineru",
+        limit=OVERVIEW_SUBJECT_LIMIT * OVERVIEW_ITEMS_PER_SUBJECT * 2,
+        scope_subject=scope_subject,
+        book_key=book_key,
+        phase=phase,
+    )
+    gaokao_rows = []
+    if not book_key and phase != "初中":
+        gaokao_rows = _fetch_chat_rows_for_terms(
+            con,
+            [clean_q] + [term for term in retrieval_terms if term != clean_q][:2],
+            source="gaokao",
+            limit=OVERVIEW_GAOKAO_LIMIT,
+            scope_subject=scope_subject,
+        )
+
+    by_subject: dict[str, list] = {}
+    for row in textbook_rows:
+        by_subject.setdefault(row["subject"], []).append(row)
+
+    evidence = []
+    groups = []
+    ranked_subjects = sorted(by_subject.items(), key=lambda item: len(item[1]), reverse=True)[:OVERVIEW_SUBJECT_LIMIT]
+    for subject, subject_rows in ranked_subjects:
+        selected = []
+        for row in _apply_chat_book_diversity(subject_rows, limit=OVERVIEW_ITEMS_PER_SUBJECT, quota_per_book=2)[:OVERVIEW_ITEMS_PER_SUBJECT]:
+            logical_page = row["logical_page"] if row["logical_page"] is not None else row["section"]
+            item = _apply_book_runtime_meta(
+                {
+                    "id": row["id"],
+                    "subject": subject,
+                    "title": row["title"],
+                    "book_key": row["book_key"],
+                    "section": row["section"],
+                    "logical_page": logical_page,
+                    "snippet": _excerpt_around_terms(row.get("text"), retrieval_terms),
+                    "matched_term": row.get("matched_term"),
+                    "source": "mineru",
+                },
+                book_key=row["book_key"],
+                fallback_title=row["title"],
+                content_id=row.get("content_id"),
+            )
+            item["citation"] = f"[{subject}·{_short_book_title(item.get('base_title') or item['title'], item.get('edition'))}·p{logical_page}]"
+            selected.append(item)
+            evidence.append(item)
+        groups.append({"subject": subject, "count": len(subject_rows), "items": selected})
+
+    gaokao_items = []
+    for row in gaokao_rows[:OVERVIEW_GAOKAO_LIMIT]:
+        stem = _gaokao_stem(row.get("text"))
+        if not stem:
+            continue
+        category = _normalize_gaokao_category(row.get("category"))
+        label = "·".join(str(part) for part in ("真题", row.get("year") or "年份不详", category or "卷别不详", row["subject"]))
+        gaokao_items.append(
+            {
+                "id": row["id"],
+                "subject": row["subject"],
+                "year": row.get("year"),
+                "category": category,
+                "source": "gaokao",
+                "snippet": stem,
+                "citation": f"[{label}]",
+            }
+        )
+
+    context_lines = []
+    for group in groups:
+        lines = [f"【{group['subject']}】（教材命中 {group['count']} 段，下面摘 {len(group['items'])} 段）"]
+        lines.extend(f"{item['citation']} {item['snippet']}" for item in group["items"])
+        context_lines.append("\n".join(lines))
+    alias_lines = [
+        f"{item['term']}：{'、'.join(item['aliases'])}"
+        for item in alias_hints
+        if item.get("aliases")
+    ]
+    subjects = [group["subject"] for group in groups]
+    summary = {
+        "subject_count": len(groups),
+        "textbook_hit_count": len(textbook_rows),
+        "gaokao_hit_count": len(gaokao_items),
+        "evidence_count": len(evidence),
+        "coverage_line": (
+            f"整合 {len(groups)} 个学科 · 教材原文 {len(evidence)} 段"
+            + (f" · 真题 {len(gaokao_items)} 道" if gaokao_items else "")
+        ),
+        "search_terms_used": search_terms,
+        "retrieval_terms_used": retrieval_terms,
+        "top_subjects": [{"subject": group["subject"], "count": group["count"]} for group in groups],
+    }
+    exam = "中考" if phase == "初中" else "高考"
+    return {
+        "mode": "overview",
+        "query": clean_q,
+        "phase": phase,
+        "evidence": evidence + gaokao_items,
+        "groups": groups,
+        "context_text": "\n\n".join(context_lines),
+        "gaokao_text": "\n".join(f"{item['citation']} {item['snippet']}" for item in gaokao_items),
+        "alias_text": "\n".join(alias_lines),
+        "retrieval_terms_used": retrieval_terms,
+        "query_analysis": query_analysis,
+        "summary": summary,
+        "suggested_questions": [
+            f"「{clean_q}」在{subjects[0]}教材里是怎样定义的？" if subjects else f"教材里怎样定义「{clean_q}」？",
+            f"「{clean_q}」在{exam}里常见的考法是什么？",
+            f"「{clean_q}」最容易和哪个概念混淆？",
+        ],
+    }
+
+
+def _build_overview_context_for_request(
+    query: str,
+    *,
+    scope_subject: str | None = None,
+    book_key: str | None = None,
+    phase: str | None = None,
+) -> dict:
+    con = get_db()
+    try:
+        return _build_overview_context_payload(con, query, scope_subject=scope_subject, book_key=book_key, phase=phase)
+    finally:
+        con.close()
+
+
+def _build_overview_prompt(context_payload: dict) -> str:
+    query = context_payload.get("query") or ""
+    phase = context_payload.get("phase")
+    display_phase = "初中" if phase == "初中" else "高中"
+    exam = "中考" if phase == "初中" else "高考"
+    groups = context_payload.get("groups") or []
+    subjects = "、".join(group["subject"] for group in groups) or "（无）"
+    if phase == "初中":
+        exam_block = "考试真题摘录：\n（初中暂无真题数据）"
+        exam_rule = f"5. 「{exam}怎么考」：初中暂无真题数据，只能写「本站暂无初中真题数据」，可以据教材摘录提示一个可能的考查角度并注明「（推测）」。"
+    else:
+        exam_block = (
+            "高考真题摘录（只含题干；题库里的题号是数据集序号而非原卷题号，不要写题号）：\n"
+            + (context_payload.get("gaokao_text") or "（本次检索没有命中真题）")
+        )
+        exam_rule = (
+            f"5. 「{exam}怎么考」：只根据真题摘录说明考查角度，写出年份和卷别（如「2023 年全国乙卷」），不写题号；"
+            "没有真题摘录就只写「本次检索没有命中相关真题」。"
+        )
+    return f"""你是北大附中「AI {display_phase}教材」的学术导读。学生刚搜索了「{query}」。下面是系统从{display_phase}教材（涉及 {len(groups)} 个学科：{subjects}）和真题库中检索到的原文摘录。请写一段「检索整合导读」：它是学生看到的第一屏，必须学术准确，又要有信息量、有意思。
+
+教材原文摘录（每段开头方括号是引用标签）：
+{context_payload.get('context_text') or '（无）'}
+
+{exam_block}
+
+系统自动生成的检索扩展词（只用于扩大检索，未必与「{query}」等价，不得据此把不同概念当成同一概念）：
+{context_payload.get('alias_text') or '（无）'}
+
+用 Markdown 输出，按顺序只用下面五个小标题；某一节没有材料就用一句话如实说明，不要硬凑：
+### 一句话
+### 各学科怎么说
+### 学科之间的接缝
+### {exam}怎么考
+### 值得追问
+
+写作要求：
+1. 「一句话」：一两句讲清「{query}」在这些教材里的核心含义。如果摘录并没有直接讲这个概念，就直说，并指出最接近的内容。
+2. 「各学科怎么说」：每个有摘录的学科一条，用「- **学科**：」开头，概括该学科教材怎样界定、使用或举例，句末附 1 个引用标签（原样复制摘录前的方括号）。同一学科有不同版本的摘录时，写明版本。
+3. 「学科之间的接缝」：指出不同学科说法之间一个真实的差异、张力、限制条件或互补，这是最有意思的部分；必须能在摘录里找到依据并附引用标签，不能凭空编联系。只有一个学科时，改讲该学科内部最容易混淆的两种说法。
+{exam_rule}
+6. 「值得追问」：3 个学生接着可以问的问题，用「1.」「2.」「3.」编号，每个不超过 30 字，要能用这些教材回答。
+
+准确性规则：
+- 教材内容只能来自上面的摘录；引用标签只能原样使用已给出的，不得自造书名、页码或年份。
+- 需要摘录之外的知识时，只能是{display_phase}教材层面公认的内容，并在该句末标注「（教材外补充）」。
+- 检索扩展词、真题题干都不是教材原文，不能当作教材的说法引用。
+- 不写空话套话，不夸大跨学科联系；总长度 450–700 字。"""
+
+
+async def _ai_build_overview(fields: dict) -> ai_guard.Built:
+    try:
+        context_payload = await run_in_threadpool(
+            _build_overview_context_for_request,
+            fields["query"],
+            scope_subject=fields.get("scope_subject"),
+            book_key=fields.get("book_key"),
+            phase=fields.get("phase"),
+        )
+    except HTTPException as exc:
+        raise _ai_builder_error(exc) from exc
+    if not context_payload.get("evidence"):
+        raise ai_guard.AIGuardError(404, "no_evidence", message="本次检索没有可供整合的教材原文。")
+    prompt = _build_overview_prompt(context_payload)
+    evidence = ai_guard.sanitize_evidence(context_payload.get("evidence"), limit=24, snippet_chars=OVERVIEW_EXCERPT_CHARS + 2)
+    summary = context_payload.get("summary") or {}
+
+    def finish(answer: str) -> dict:
+        return {
+            "answer": answer,
+            "provider": AI_SERVICE_LABEL,
+            "context": {
+                "summary": summary,
+                "evidence": evidence,
+                "suggested_questions": context_payload.get("suggested_questions"),
+            },
+            "citation_check": ai_guard.check_citations(answer, evidence),
+        }
+
+    return ai_guard.Built(
+        prompt=prompt,
+        finish=finish,
+        meta={
+            "subject_count": summary.get("subject_count") or 0,
+            "evidence_count": summary.get("evidence_count") or 0,
             "gaokao_hit_count": summary.get("gaokao_hit_count") or 0,
         },
     )
@@ -9448,7 +9766,7 @@ AI_GUARD = ai_guard.Guard(AI_GUARD_CONFIG, upstream=_call_ai_service, log=_write
 app.include_router(
     ai_guard.build_router(
         AI_GUARD,
-        {"chat": _ai_build_chat, "dict": _ai_build_dict_chat, "gaokao": _ai_build_gaokao_chat},
+        {"chat": _ai_build_chat, "dict": _ai_build_dict_chat, "gaokao": _ai_build_gaokao_chat, "overview": _ai_build_overview},
     )
 )
 # Pages that still run the pre-guard script: stop their gaokao button before its browser-direct call.

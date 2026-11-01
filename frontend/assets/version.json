@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.10.11-r43",
-  "updated_at": "2026-10-11",
+  "frontend_refactor_version": "2026.10.31-r44",
+  "updated_at": "2026-10-31",
   "history": [
+    {
+      "date": "2026-10-31",
+      "version": "2026.10.31-r44",
+      "summary": "search leads with an AI overview: one explicit search makes one guarded POST /api/overview whose prompt sees only original textbook text and exam stems (solutions cut off); the answer renders as a short structured read (一句话 / 各学科怎么说 / 学科之间的接缝 / 高考怎么考 / 值得追问) with citations that open the quoted excerpt only when they name a retrieved record; the conversation continues below it and the retrieved originals sit underneath as collapsed per-subject groups; follow-up answers also cite original text instead of precomputed AI summaries; hero and stats count textbook passages and exam records separately and explain the exam coverage; legibility pass (all text ≥ 4.5:1); asset cache key 20261031a for style.css, dict.css, app.js, library.js and library.css"
+    },
     {
       "date": "2026-10-11",
       "version": "2026.10.11-r43",

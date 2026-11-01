@@ -81,7 +81,12 @@ class FrontendStaticTests(unittest.TestCase):
         dict_js = strip_js_comments(read(ASSETS / "dict.js"))
         # Line-based scan (linear): every line that mentions the main chat endpoint itself.
         chat_lines = [line for line in lines_containing(app, "/api/chat") if re.search(r"/api/chat(?![\w/])", line)]
-        self.assertEqual(chat_lines, ["    const request = window.SunAI.ask(`${API}/api/chat`, buildAIServerPayload(cleanMessage, history));"])
+        self.assertEqual(chat_lines, ["        path = `${API}/api/chat`;"])
+        self.assertEqual(lines_containing(app, "/api/overview"), ["    let path = `${API}/api/overview`;"])
+        run = function_body(app, "async function runAIRequest(kind, userMessage = '') {")
+        self.assertEqual(run.count("window.SunAI.ask(path, payload)"), 1)
+        self.assertIn("path = `${API}/api/chat`;", run)
+        self.assertIn("let path = `${API}/api/overview`;", run)
         self.assertEqual(len(re.findall(r"/api/gaokao/chat", app)), 1)
         self.assertIn("window.SunAI.ask(`${API}/api/gaokao/chat`", app)
         self.assertEqual(len(re.findall(r"/api/dict/chat", dict_js)), 1)
@@ -116,17 +121,24 @@ class FrontendStaticTests(unittest.TestCase):
         self.assertRegex(client, r"\.slice\(0, limits\.max_history_item_chars\)")
 
     def test_main_page_call_sites_are_explicit_user_actions(self):
+        """Owner decision 2026-10-31: an explicit search is followed by exactly one overview
+        request; every other AI request is a click / send / 重试 by the user."""
         app = read(ASSETS / "app.js")
         allowed = {
+            "runAIRequest(": {
+                "async function runAIRequest(kind, userMessage = '') {",
+                "await runAIRequest('overview');",
+                "await runAIRequest('chat', userMessage);",
+                "runAIRequest(kind, userMessage);",
+            },
+            "startSearchOverview(": {
+                "async function startSearchOverview() {",
+                "startSearchOverview();",
+            },
             "sendAIMessage(": {
                 "btn.addEventListener('click', () => sendAIMessage(btn.dataset.prompt));",
-                "sendAIMessage(message);",
                 "async function sendAIMessage(userMessage) {",
                 "await sendAIMessage(aiFollowupInput.value);",
-            },
-            "requestAISynthesis(": {
-                "if (aiBtn) aiBtn.addEventListener('click', () => requestAISynthesis());",
-                "async function requestAISynthesis() {",
             },
             "requestAIFollowup(": {
                 "if (aiSendBtn) aiSendBtn.addEventListener('click', () => requestAIFollowup());",
@@ -140,47 +152,60 @@ class FrontendStaticTests(unittest.TestCase):
         }
         for token, expected in allowed.items():
             for line in (line.strip() for line in app.splitlines() if token in line):
-                if token == "sendAIMessage(" and line.startswith("await sendAIMessage(`"):
-                    continue  # the three canned prompts inside requestAISynthesis
                 self.assertIn(line, expected, f"unexpected call site: {line}")
-        synthesis = function_body(app, "async function requestAISynthesis() {")
-        self.assertEqual(synthesis.count("await sendAIMessage(`"), 3)
-        self.assertEqual(app.count("await sendAIMessage(`"), 3)
-        # The Enter-key call sits inside the textarea keydown listener.
-        self.assertRegex(app, r"aiFollowupInput\.addEventListener\('keydown', \(e\) => \{\s+if \(e\.key === 'Enter' && !e\.shiftKey\) \{\s+e\.preventDefault\(\);\s+requestAIFollowup\(\);")
-        # Nothing in the search / render / subject-switch path can start AI.
-        for header in ("async function doSearch(", "function resetAIConversation() {", "function renderAIStarters() {"):
+        self.assertEqual(app.count("startSearchOverview();"), 1)
+        self.assertEqual(app.count("await runAIRequest('overview');"), 1)
+        # The only overview call sits in doSearch, after that search's results were rendered.
+        search = function_body(app, "async function doSearch(")
+        self.assertEqual(search.count("startSearchOverview();"), 1)
+        self.assertLess(search.index("renderResults(currentData);"), search.index("startSearchOverview();"))
+        self.assertIn("if (epoch !== aiConversationEpoch) return;   // a newer search has started", search)
+        for token in ("sendAIMessage(", "runAIRequest(", "SunAI.ask(", "requestGaokaoAI("):
+            self.assertNotIn(token, search, f"doSearch must not start {token}")
+        # Nothing in the render / reset / starter / related-concept path can start AI.
+        for header in ("function renderResults(data) {", "function resetAIConversation() {", "function renderAIStarters() {",
+                       "function renderAIConversation() {", "async function loadRelated(", "function renderEvidenceGroup("):
             body = function_body(app, header).replace(
                 "btn.addEventListener('click', () => sendAIMessage(btn.dataset.prompt));", "")
-            for token in ("sendAIMessage(", "requestAISynthesis(", "SunAI.ask(", "requestGaokaoAI("):
+            for token in ("sendAIMessage(", "runAIRequest(", "startSearchOverview(", "SunAI.ask(", "requestGaokaoAI("):
                 self.assertNotIn(token, body, f"{header} must not trigger AI")
-        self.assertNotRegex(app, r"setTimeout\([^)]*(sendAIMessage|requestAISynthesis|requestGaokaoAI)")
-        self.assertIn("让 AI 结合检索结果解答", app)
+        self.assertNotRegex(app, r"set(?:Timeout|Interval)\([^)]*(sendAIMessage|runAIRequest|startSearchOverview|requestGaokaoAI)")
+        self.assertNotIn("requestAISynthesis", app)
 
     def test_main_page_single_flight_cancel_and_stale_guard(self):
         app = read(ASSETS / "app.js")
-        send = function_body(app, "async function sendAIMessage(userMessage) {")
-        self.assertIn("aiRequestPending", send.split("\n")[1], "second send is refused while one is pending")
-        self.assertIn("window.SunAI.boundedHistory(aiConversation)", send)
-        self.assertEqual(send.count("SunAI.ask("), 1)
-        self.assertIn("if (epoch !== aiConversationEpoch) return;", send)
-        self.assertIn("executionKey !== getAIExecutionKey()", send)
-        self.assertNotIn("catch(() =>", send, "no fallback chained onto the request")
+        run = function_body(app, "async function runAIRequest(kind, userMessage = '') {")
+        self.assertIn("aiRequestPending", run.split("\n")[1], "second request is refused while one is pending")
+        self.assertIn("window.SunAI.boundedHistory(aiConversation)", run)
+        self.assertEqual(run.count("SunAI.ask("), 1)
+        self.assertIn("if (epoch !== aiConversationEpoch) return;", run)
+        self.assertIn("executionKey !== getAIExecutionKey()", run)
+        self.assertNotIn("catch(() =>", run, "no fallback chained onto the request")
         reset = function_body(app, "function resetAIConversation() {")
         self.assertIn("aiConversationEpoch += 1;", reset)
         self.assertIn("aiActiveRequest.cancel();", reset)
         self.assertIn("ai-cancel-btn", app)
         self.assertIn("ai-retry-btn", app)
-        busy = function_body(app, "function setAIBusy(isBusy) {")
+        busy = function_body(app, "function setAIBusy(isBusy, kind = '') {")
         self.assertIn("aiSendBtn.disabled = isBusy", busy)
 
     def test_model_text_is_never_turned_into_a_link(self):
         app = read(ASSETS / "app.js")
-        render = function_body(app, "function renderAIConversation() {")
-        self.assertIn('<div class="ai-msg-text">${escHtml(msg.content)}</div>', render)
-        sources = function_body(app, "function renderAISources(sources) {")
-        self.assertIn('data-book-key="${escAttr(src.book_key', sources)
-        self.assertIn("src.section", sources)
+        render = function_body(app, "function renderAIMessage(msg, index, isLast) {")
+        self.assertIn('<div class="ai-msg-text">${escHtml(msg.content)}</div>', render, "user text and errors stay plain")
+        self.assertIn("renderAIRichText(msg.content, msg.sources)", render)
+        rich = function_body(app, "function renderAIRichText(text, sources = []) {")
+        self.assertIn("const lines = escHtml(String(text || '')).split(/\\r?\\n/);", rich, "model text is escaped before any markup")
+        inline = function_body(app, "function renderAIInline(escapedText, sources) {")
+        # A citation becomes a button only through an index into the server's retrieval records.
+        self.assertIn("const index = matchAISource(label, sources);", inline)
+        self.assertIn('data-src="${index}"', inline)
+        self.assertNotRegex(inline, r"href=|data-book-key|onclick")
+        match = function_body(app, "function matchAISource(escapedLabel, sources) {")
+        self.assertIn("escHtml(src.citation) === `[${escapedLabel}]`", match)
+        quote = function_body(app, "function showAIQuote(messageEl, src) {")
+        self.assertIn('data-book-key="${escAttr(src.book_key)}"', quote, "page links come from the record, not from model text")
+        self.assertIn("${escHtml(src.snippet || '（无摘录）')}", quote)
         self.assertIn("sources: (contextPayload.evidence || [])", app, "chips come from server retrieval records")
         self.assertIn('<div class="gk-ai-text">${escHtml(String(data.answer', app)
         dict_js = read(ASSETS / "dict.js")
@@ -226,11 +251,11 @@ class FrontendStaticTests(unittest.TestCase):
 
 class MainSourceTests(unittest.TestCase):
     def test_ai_routes_are_registered_only_by_the_guard(self):
-        for route in ("/api/chat", "/api/chat/context", "/api/chat/log", "/api/dict/chat", "/api/gaokao/chat", "/api/ai/"):
+        for route in ("/api/chat", "/api/chat/context", "/api/chat/log", "/api/dict/chat", "/api/gaokao/chat", "/api/ai/", "/api/overview"):
             self.assertNotRegex(MAIN, r'@app\.(post|get|put|api_route)\(\s*"' + re.escape(route), route)
         self.assertEqual(MAIN.count("app.include_router("), 1)
         self.assertIn("ai_guard.build_router(", MAIN)
-        self.assertRegex(MAIN, r'\{"chat": _ai_build_chat, "dict": _ai_build_dict_chat, "gaokao": _ai_build_gaokao_chat\}')
+        self.assertRegex(MAIN, r'\{"chat": _ai_build_chat, "dict": _ai_build_dict_chat, "gaokao": _ai_build_gaokao_chat, "overview": _ai_build_overview\}')
         self.assertLess(MAIN.index("app.include_router("), MAIN.index('app.mount("/assets"'))
         self.assertNotIn("Body(...)", MAIN, "no handler accepts an uncapped JSON body")
 

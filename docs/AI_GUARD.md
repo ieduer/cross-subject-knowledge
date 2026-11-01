@@ -489,3 +489,32 @@ Turning AI off again: remove `AI_ENABLED` (or set it to anything but `1`) and re
 | M2, m9 (deploy script) | Not changed here: `scripts/deploy_vps.sh` is owned by the release workstream. Noted in §5 and R13. |
 | Hung-test hazards | Fixed: line-based scan, model-proof integration test, per-test timeouts (§7). |
 | B1, m2–m5, m8, N1, N2, N7–N13 | Library / release items, outside the AI area. |
+
+## 15. Search overview (r44, 2026-10-31)
+
+Owner decision (2026-10-31): a search leads with an AI overview of what it found; the conversation continues under it
+and the retrieved originals sit below as collapsed per-subject groups. This replaces the "click to start" rule of §2 for
+the main search page only. Dictionary pages and the 真题 page are unchanged.
+
+- Trigger: `doSearch()` (search button, Enter, a concept / trending / related chip, a filter change) renders its results,
+  then calls `startSearchOverview()` once. That is the only automatic call; it goes through `runAIRequest()` →
+  `window.SunAI.ask('/api/overview', …)` like every other request (one POST, cancellable, never retried by itself).
+  A newer search bumps the conversation epoch, cancels the pending request and drops a late answer. Rendering, resets,
+  chips and timers cannot start AI (`tests/test_ai_static.py`).
+- `POST /api/overview` (kind `overview`): fields `query`, optional `scope_subject` / `book_key`, `phase`; any other
+  field is ignored. Same admission, rate limit, caps, cache, in-flight dedup, concurrency slot and daily budget as
+  `/api/chat`. Identical searches share one dedup key, so a repeated search is answered from the cache and spends no
+  budget. A search with no textbook evidence is refused with `404 no_evidence` before the budget is touched.
+- Prompt (`_build_overview_prompt`): only original textbook text around the match (`_excerpt_around_terms`, not the
+  precomputed `ai_summaries`) and exam stems with the worked solution cut off (`_gaokao_stem`). Exam rows are labelled
+  `[真题·年份·卷别·学科]` without a question number (the stored number is a dataset ordinal). Fixed sections:
+  一句话 / 各学科怎么说 / 学科之间的接缝 / 高考怎么考 (中考 for 初中) / 值得追问. Knowledge outside the excerpts must be
+  textbook-level and marked 「（教材外补充）」; machine-built expansion terms are declared non-equivalent.
+- Rendering: the answer is escaped first; a small Markdown subset (###, lists, **bold**) is applied to the escaped
+  text. A bracketed citation becomes a button only when it names a record in the response's `context.evidence`
+  (exact citation string, or subject + page); the button shows that record's excerpt and opens the page from the
+  record's `book_key` / `section`. Unmatched citations are greyed with a note. The 值得追问 lines become follow-up chips.
+- Follow-ups (`/api/chat`) carry the overview as the first history item and now also cite original text instead of
+  precomputed summaries.
+- When AI is off, out of budget or failing, the panel shows the reason plus a retrieval-only digest built in the
+  browser from the search response (no model call) and a 重试 button.

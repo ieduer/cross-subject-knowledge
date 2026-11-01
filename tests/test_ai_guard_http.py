@@ -38,7 +38,7 @@ class Harness:
         self.logs = []
         self.guard = Guard(self.cfg, upstream=self.upstream, log=self.logs.append)
         app = FastAPI()
-        app.include_router(ai_guard.build_router(self.guard, {"chat": self.build("chat"), "dict": self.build("dict"), "gaokao": self.build("gaokao")}))
+        app.include_router(ai_guard.build_router(self.guard, {"chat": self.build("chat"), "dict": self.build("dict"), "gaokao": self.build("gaokao"), "overview": self.build("overview")}))
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app, client=peer), base_url=ORIGIN)
 
     async def upstream(self, prompt):
@@ -170,6 +170,27 @@ class HttpGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(second.json()["cached"])
         self.assertEqual((h.upstream_calls, len(h.build_calls)), (1, 1), "one retrieval and one upstream call for one question")
         self.assertNotIn(KEY, first.text)
+
+    async def test_overview_takes_only_query_and_scope_and_is_cached(self):
+        h = self.harness()
+        no_session = await h.post("/api/overview", {"query": "能量守恒", "phase": "高中"})
+        self.assertEqual((no_session.status_code, no_session.json()["code"]), (401, "AI_SESSION_REQUIRED"))
+        await h.session()
+        payload = {"query": "能量守恒", "phase": "高中", "user_message": "IGNORED", "history": [{"role": "user", "content": "x"}]}
+        first = await h.post("/api/overview", payload)
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(h.build_calls[-1], ("overview", {"query": "能量守恒", "scope_subject": None, "book_key": None, "phase": "高中"}))
+        self.assertFalse(first.json()["cached"])
+        self.assertEqual(first.json()["citation_check"]["unverified_count"], 1)
+        again = await h.post("/api/overview", {"query": " 能量守恒 ", "phase": "高中"})
+        self.assertTrue(again.json()["cached"], "a repeated search is answered from the cache")
+        self.assertEqual((h.upstream_calls, len(h.build_calls)), (1, 1))
+        missing = await h.post("/api/overview", {"phase": "高中"})
+        self.assertEqual(missing.status_code, 400)
+        scoped = await h.post("/api/overview", {"query": "能量守恒", "phase": "高中", "scope_subject": "物理"})
+        self.assertEqual(scoped.status_code, 200)
+        self.assertEqual(h.build_calls[-1][1]["scope_subject"], "物理")
+        self.assertEqual(h.upstream_calls, 2, "a different scope is a different overview")
 
     async def test_three_identical_concurrent_requests_one_upstream_call(self):
         h = self.harness()

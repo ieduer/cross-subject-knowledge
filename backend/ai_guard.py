@@ -369,6 +369,19 @@ def validate_chat(payload: Any, cfg: GuardConfig) -> dict:
     }
 
 
+def validate_overview(payload: Any, cfg: GuardConfig) -> dict:
+    """The automatic first synthesis of one search: no user text, no history. Identical
+    searches share one dedup key, so a repeated search is answered from the cache."""
+    if not isinstance(payload, dict):
+        raise AIGuardError(400, "bad_request")
+    return {
+        "query": _required_text(payload, "query", cfg.max_query_chars),
+        "scope_subject": _optional_text(payload, "scope_subject", 40),
+        "book_key": _optional_text(payload, "book_key", 200),
+        "phase": _phase(payload),
+    }
+
+
 def validate_dict_chat(payload: Any, cfg: GuardConfig) -> dict:
     if not isinstance(payload, dict):
         raise AIGuardError(400, "bad_request")
@@ -1219,7 +1232,7 @@ def install_legacy_gaokao_shim(app: Any, guard: "Guard", env: Optional[Mapping[s
 def build_router(guard: Guard, builders: Mapping[str, Callable[[dict], Awaitable[Built]]]):
     """FastAPI router for every AI endpoint.
 
-    ``builders`` maps ``chat`` / ``dict`` / ``gaokao`` to an async function that
+    ``builders`` maps ``chat`` / ``dict`` / ``gaokao`` / ``overview`` to an async function that
     takes the validated fields and returns ``Built`` (server-side retrieval +
     prompt). No builder runs before admission, caps and rate limiting pass.
     """
@@ -1319,6 +1332,10 @@ def build_router(guard: Guard, builders: Mapping[str, Callable[[dict], Awaitable
     @router.post("/api/chat")
     async def chat(request: Request):
         return await guarded(request, "chat", validate_chat, "query")
+
+    @router.post("/api/overview")
+    async def overview(request: Request):
+        return await guarded(request, "overview", validate_overview, "query")
 
     @router.post("/api/dict/chat")
     async def dict_chat(request: Request):

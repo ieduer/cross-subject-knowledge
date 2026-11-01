@@ -23,8 +23,8 @@
     <script defer src="https://unpkg.com/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
 
-    <link rel="stylesheet" href="assets/style.css?v=20260507a">
-    <link rel="stylesheet" href="assets/library.css?v=20261011e"> <!-- library-tabs -->
+    <link rel="stylesheet" href="assets/style.css?v=20261031a">
+    <link rel="stylesheet" href="assets/library.css?v=20261031a"> <!-- library-tabs -->
 </head>
 
 <body data-phase="初中">
@@ -52,7 +52,11 @@
         <main id="view-search" class="view active">
             <section class="hero">
                 <h1><span class="gradient-text">这世界真的有学科吗？</span></h1>
-                <p class="hero-sub" id="hero-sub">覆盖初中 9 科 · 加载中…</p>
+                <p class="hero-sub" id="hero-sub">初中各科教材 · 加载中…</p>
+                <details id="data-note" class="data-note hidden">
+                    <summary>数据口径</summary>
+                    <div id="data-note-body" class="data-note-body"></div>
+                </details>
                 <div class="search-box">
                     <span class="search-icon">🔍</span>
                     <input type="text" id="search-input" placeholder="搜索概念，如：二次函数、力的合成、丝绸之路…" autocomplete="off">
@@ -96,47 +100,41 @@
                 </div>
             </section>
 
-            <!-- Stats bar (loaded dynamically) -->
+            <!-- Stats bar (landing page only; loaded dynamically) -->
             <section id="stats-bar" class="stats-bar hidden"></section>
 
-            <!-- Cross hint -->
-            <div id="cross-hint" class="cross-hint hidden"></div>
-
-            <!-- Query analysis -->
-            <div id="query-analysis" class="query-analysis hidden"></div>
-
-            <!-- Related concepts -->
-            <div id="related-bar" class="related-bar hidden"></div>
-
-            <!-- AI Synthesis Panel -->
-            <div id="ai-panel" class="ai-panel hidden">
-                <div class="ai-toolbar">
-                    <button id="ai-btn" class="ai-btn">
-                        <span class="ai-sparkle">✨</span> AI 教材解读
-                    </button>
+            <!-- AI overview + conversation: the first thing a search shows -->
+            <section id="ai-panel" class="ai-panel hidden" aria-label="检索整合导读与对话">
+                <div class="ai-panel-head">
+                    <div class="ai-panel-title">
+                        <span class="ai-sparkle" aria-hidden="true">✨</span>
+                        <span>检索整合导读</span>
+                        <span id="ai-panel-query" class="ai-panel-query"></span>
+                    </div>
                     <button id="ai-copy-btn" class="ai-copy-btn hidden" type="button" title="复制全部对话"
-                        aria-label="复制全部对话">⧉</button>
+                        aria-label="复制全部对话">复制</button>
                 </div>
-                <div id="ai-starters" class="ai-starters"></div>
-                <div id="ai-result" class="ai-result hidden">
-                    <div class="ai-result-header">
-                        <span>✨ AI 教材对话</span>
-                        <span class="ai-model">Gemini</span>
-                    </div>
-                    <div id="ai-content" class="ai-content"></div>
-                    <div class="ai-compose">
-                        <textarea id="ai-followup-input" class="ai-followup-input" placeholder="继续追问，例如：这个概念在教材中的定义是什么？"
-                            rows="2"></textarea>
-                        <button id="ai-send-btn" class="ai-send-btn" type="button">发送</button>
-                    </div>
+                <div id="ai-content" class="ai-thread" aria-live="polite"></div>
+                <div id="ai-starters" class="ai-starters hidden"></div>
+                <div class="ai-compose">
+                    <textarea id="ai-followup-input" class="ai-followup-input" aria-label="继续追问"
+                        placeholder="接着问，例如：这个概念在不同学科里有什么不一样？" rows="2"></textarea>
+                    <button id="ai-send-btn" class="ai-send-btn" type="button">发送</button>
                 </div>
-            </div>
+                <p id="ai-footnote" class="ai-footnote"></p>
+            </section>
 
-            <!-- Subject filter tabs -->
-            <div id="subject-tabs" class="subject-tabs hidden"></div>
-
-            <!-- Results -->
-            <section id="results" class="results"></section>
+            <!-- Retrieved originals, grouped by subject and collapsed: kept for checking -->
+            <section id="evidence-section" class="evidence-section hidden" aria-label="检索原文备查">
+                <div class="evidence-head">
+                    <h2 class="evidence-title">检索原文备查</h2>
+                    <span id="evidence-summary" class="evidence-summary"></span>
+                    <button id="evidence-toggle-all" class="evidence-toggle-all" type="button">全部展开</button>
+                </div>
+                <div id="query-analysis" class="query-analysis hidden"></div>
+                <div id="related-bar" class="related-bar hidden"></div>
+                <section id="results" class="results"></section>
+            </section>
         </main>
 
         <!-- Data Insights View -->
@@ -208,8 +206,8 @@
         </footer>
     </div>
     <script src="assets/ai-client.js?v=20261010a"></script>
-    <script src="assets/app.js?v=20261011e"></script>
-    <script src="assets/library.js?v=20261011e"></script> <!-- library-tabs -->
+    <script src="assets/app.js?v=20261031a"></script>
+    <script src="assets/library.js?v=20261031a"></script> <!-- library-tabs -->
     <script src="https://nav.bdfz.net/bdfz-nav.js" async></script>
 </body>
 
