@@ -236,10 +236,27 @@ function isStructuralFallbackTerm(term, precisionProfile = null) {
     return false;
 }
 
+// Ids of the results on screen, in display order: the top textbook passages of up to six
+// subjects and the first exam rows. The server reloads exactly these rows for the overview.
+function overviewResultIds(data) {
+    const groups = sortedResultGroups(data);
+    const ids = [];
+    groups.slice(0, 6).forEach(g => {
+        (g.results || []).filter(r => r.source !== 'gaokao').slice(0, 3).forEach(r => ids.push(r.id));
+    });
+    groups.forEach(g => {
+        (g.results || []).filter(r => r.source === 'gaokao').forEach(r => ids.push(r.id));
+    });
+    return ids
+        .filter(id => (Number.isInteger(id) && id > 0) || (typeof id === 'string' && /^supp:[0-9a-f]{16}$/.test(id)))
+        .slice(0, 24);
+}
+
 function buildOverviewPayload() {
     const scope = getCurrentAIScopePayload();
     return {
         query: currentQuery,
+        ids: overviewResultIds(currentData),
         phase: PHASE,
         ...(scope.scope_subject ? { scope_subject: scope.scope_subject } : {}),
         ...(scope.book_key ? { book_key: scope.book_key } : {}),
@@ -1015,12 +1032,16 @@ function renderEvidenceGroup(g, subjectBreadth, query) {
     `;
 }
 
+function sortedResultGroups(data) {
+    return ((data && data.groups) || []).slice().sort((a, b) => (b.results || []).length - (a.results || []).length);
+}
+
 function renderResults(data) {
     renderQueryAnalysis(data.query_analysis);
 
     const counts = data.subject_counts || {};
     // Largest subject first; the same order is handed to the library decorator below.
-    const groups = (data.groups || []).slice().sort((a, b) => (b.results || []).length - (a.results || []).length);
+    const groups = sortedResultGroups(data);
     if (groups.length === 0) {
         if (evidenceSummaryEl) evidenceSummaryEl.textContent = '';
         resultsEl.innerHTML = '<div class="loading">未找到相关结果，换个说法或更短的关键词试试。</div>';

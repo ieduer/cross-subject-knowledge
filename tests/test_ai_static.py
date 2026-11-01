@@ -171,6 +171,12 @@ class FrontendStaticTests(unittest.TestCase):
                 self.assertNotIn(token, body, f"{header} must not trigger AI")
         self.assertNotRegex(app, r"set(?:Timeout|Interval)\([^)]*(sendAIMessage|runAIRequest|startSearchOverview|requestGaokaoAI)")
         self.assertNotIn("requestAISynthesis", app)
+        # The overview integrates the results on screen: their ids, validated like the server does.
+        payload = function_body(app, "function buildOverviewPayload() {")
+        self.assertIn("ids: overviewResultIds(currentData),", payload)
+        ids = function_body(app, "function overviewResultIds(data) {")
+        self.assertIn("/^supp:[0-9a-f]{16}$/", ids)
+        self.assertIn(".slice(0, 24)", ids)
 
     def test_main_page_single_flight_cancel_and_stale_guard(self):
         app = read(ASSETS / "app.js")

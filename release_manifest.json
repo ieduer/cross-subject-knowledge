@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-01T04:18:59.016790+00:00",
-  "git_head": "8122981129dff614b03f0aedf325f431c23eb6e2",
+  "generated_at": "2026-11-01T04:29:47.300825+00:00",
+  "git_head": "9ba53babef81d50f46420f2d052d7cf221615b31",
   "frontend_version": "2026.10.31-r44",
   "source_of_truth": {
     "local_workspace": "authoritative",
@@ -31,14 +31,14 @@
     {
       "kind": "source",
       "logical_path": "backend/main.py",
-      "size": 383251,
-      "sha256": "f3a226091154545365a3c8113130f963b89a1ec9f7d82f18773d616443e0461c"
+      "size": 389680,
+      "sha256": "34d2ac5d14d25176a2025011c7cb9b53b51010ef7acc9df26cebddecf030a6c0"
     },
     {
       "kind": "source",
       "logical_path": "backend/ai_guard.py",
-      "size": 62439,
-      "sha256": "4e1896187c9b548cff59d041b75b34cff499e86163c547ed83a0b14d811704a3"
+      "size": 63375,
+      "sha256": "84754957e7eee13c8f4fc596a156acc7da77f20bd2b5f63e9166feff35c9d6b4"
     },
     {
       "kind": "source",
@@ -145,8 +145,8 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/app.js",
-      "size": 123900,
-      "sha256": "dfca0052fc4edc8f4283ebbc9b145e284f05a04496e27c396c93e2ed74e2f0bb"
+      "size": 124747,
+      "sha256": "233ee9c7949d622781f3794b4c9828920659cc5ffcd920c0e6d2806497d7d416"
     },
     {
       "kind": "source",
@@ -1494,8 +1494,8 @@
     }
   ],
   "runtime_assets_carried_from": {
-    "generated_at": "2026-10-11T08:05:30.501294+00:00",
-    "git_head": "a1aed391fc77d42ae4ad1946144eadbbc3a03996",
+    "generated_at": "2026-11-01T04:18:59.016790+00:00",
+    "git_head": "8122981129dff614b03f0aedf325f431c23eb6e2",
     "note": "runtime half not re-measured in this build; deploy_vps.sh verifies it on the VPS",
     "corrections": [
       {

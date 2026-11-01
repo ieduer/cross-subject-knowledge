@@ -3401,10 +3401,14 @@ def _fetch_chat_rows(
         fts_params.append(scope_subject)
     where_sql = " AND ".join(where_parts)
 
+    # Literal hits rank ahead of FTS hits as before (rank <= -100), and among themselves by how
+    # often the term occurs. Without an order, LIMIT kept the lowest row ids, i.e. the books
+    # loaded first, and dropped later subjects for common terms.
     like_rows = con.execute(
         f"""
         SELECT c.id, c.subject, c.title, c.book_key, c.section, c.logical_page,
-               c.text, c.source, c.year, c.category, -100.0 AS rank,
+               c.text, c.source, c.year, c.category,
+               -100.0 - (LENGTH(c.text) - LENGTH(REPLACE(c.text, ?, ''))) * 1.0 / ? AS rank,
                s.summary AS ai_summary,
                ag.summary AS ai_gaokao_summary,
                ag.knowledge_points AS ai_gaokao_knowledge_points,
@@ -3413,9 +3417,10 @@ def _fetch_chat_rows(
         LEFT JOIN ai_summaries s ON s.chunk_id = c.id
         LEFT JOIN ai_gaokao_links ag ON ag.chunk_id = c.id
         WHERE {where_sql} AND c.text LIKE ?
+        ORDER BY rank, c.id
         LIMIT ?
         """,
-        tuple(like_params + [f"%{clean_q}%", candidate_limit]),
+        tuple([clean_q, max(1, len(clean_q))] + like_params + [f"%{clean_q}%", candidate_limit]),
     ).fetchall()
 
     try:
@@ -7688,15 +7693,128 @@ def _build_overview_context_payload(
     }
 
 
+@functools.lru_cache(maxsize=1)
+def _supplemental_pages_by_id() -> dict:
+    return {entry["id"]: entry for entry in _load_supplemental_textbook_pages() if entry.get("id")}
+
+
+def _build_overview_context_from_ids(con, query: str, ids: list, *, phase: str | None = None) -> dict:
+    """Overview evidence = the search results the reader is looking at, reloaded on the
+    server by id (chunk ids and supplemental page ids). Nothing but the ids comes from the client."""
+    clean_q = _clean_query_text(query)
+    if not clean_q:
+        raise HTTPException(400, "Invalid query")
+    query_analysis = _analyze_search_query(con, query)
+    terms = list(dict.fromkeys([clean_q] + list(query_analysis.get("retrieval_terms") or [])))[:8]
+    _, alias_hints = _expand_chat_search_terms(con, terms)
+
+    chunk_ids = [item for item in ids if isinstance(item, int)]
+    chunk_rows = {}
+    if chunk_ids:
+        placeholders = ",".join("?" for _ in chunk_ids)
+        for row in con.execute(
+            f"""SELECT id, content_id, phase, subject, title, book_key, section, logical_page, text, source, year, category
+                FROM chunks WHERE id IN ({placeholders})""",
+            chunk_ids,
+        ).fetchall():
+            chunk_rows[row["id"]] = dict(row)
+    supplemental = _supplemental_pages_by_id() if any(isinstance(item, str) for item in ids) else {}
+
+    textbook_by_subject: dict[str, list] = {}
+    gaokao_items = []
+    for item_id in ids:
+        row = chunk_rows.get(item_id) if isinstance(item_id, int) else supplemental.get(item_id)
+        if not row or (phase and row.get("phase") and row["phase"] != phase):
+            continue
+        if row.get("source") == "gaokao":
+            if len(gaokao_items) >= OVERVIEW_GAOKAO_LIMIT:
+                continue
+            stem = _gaokao_stem(row.get("text"))
+            if not stem:
+                continue
+            category = _normalize_gaokao_category(row.get("category"))
+            label = "·".join(str(part) for part in ("真题", row.get("year") or "年份不详", category or "卷别不详", row["subject"]))
+            gaokao_items.append({"id": row["id"], "subject": row["subject"], "year": row.get("year"), "category": category,
+                                 "source": "gaokao", "snippet": stem, "citation": f"[{label}]"})
+            continue
+        subject_items = textbook_by_subject.setdefault(row["subject"], [])
+        if len(textbook_by_subject) > OVERVIEW_SUBJECT_LIMIT or len(subject_items) >= OVERVIEW_ITEMS_PER_SUBJECT:
+            if not subject_items:
+                textbook_by_subject.pop(row["subject"], None)
+            continue
+        logical_page = row["logical_page"] if row.get("logical_page") is not None else row["section"]
+        entry = _apply_book_runtime_meta(
+            {
+                "id": row["id"],
+                "subject": row["subject"],
+                "title": row.get("title") or "",
+                "book_key": row.get("book_key"),
+                "section": row["section"],
+                "logical_page": logical_page,
+                "snippet": _excerpt_around_terms(row.get("text"), terms),
+                "source": "mineru",
+                "retrieval_source": "supplemental" if isinstance(item_id, str) else "primary",
+            },
+            book_key=row.get("book_key"),
+            fallback_title=row.get("title"),
+            content_id=row.get("content_id"),
+        )
+        if isinstance(item_id, str):
+            # Supplemental pages carry their own edition / title; the runtime map knows only primary books.
+            entry["edition"] = entry.get("edition") or row.get("edition") or ""
+            entry["base_title"] = row.get("base_title") or entry.get("base_title")
+        entry["citation"] = f"[{row['subject']}·{_short_book_title(entry.get('base_title') or entry['title'], entry.get('edition'))}·p{logical_page}]"
+        subject_items.append(entry)
+
+    groups = [{"subject": subject, "count": len(items), "items": items} for subject, items in textbook_by_subject.items() if items]
+    evidence = [item for group in groups for item in group["items"]]
+    context_lines = []
+    for group in groups:
+        lines = [f"【{group['subject']}】（摘 {len(group['items'])} 段）"]
+        lines.extend(f"{item['citation']} {item['snippet']}" for item in group["items"])
+        context_lines.append("\n".join(lines))
+    subjects = [group["subject"] for group in groups]
+    exam = "中考" if phase == "初中" else "高考"
+    return {
+        "mode": "overview",
+        "query": clean_q,
+        "phase": phase,
+        "evidence": evidence + gaokao_items,
+        "groups": groups,
+        "context_text": "\n\n".join(context_lines),
+        "gaokao_text": "\n".join(f"{item['citation']} {item['snippet']}" for item in gaokao_items),
+        "alias_text": "\n".join(f"{item['term']}：{'、'.join(item['aliases'])}" for item in alias_hints if item.get("aliases")),
+        "retrieval_terms_used": terms,
+        "query_analysis": query_analysis,
+        "summary": {
+            "subject_count": len(groups),
+            "textbook_hit_count": len(evidence),
+            "gaokao_hit_count": len(gaokao_items),
+            "evidence_count": len(evidence),
+            "coverage_line": f"整合 {len(groups)} 个学科 · 教材原文 {len(evidence)} 段" + (f" · 真题 {len(gaokao_items)} 道" if gaokao_items else ""),
+            "search_terms_used": terms,
+            "top_subjects": [{"subject": group["subject"], "count": group["count"]} for group in groups],
+        },
+        "suggested_questions": [
+            f"「{clean_q}」在{subjects[0]}教材里是怎样定义的？" if subjects else f"教材里怎样定义「{clean_q}」？",
+            f"「{clean_q}」在{exam}里常见的考法是什么？",
+            f"「{clean_q}」最容易和哪个概念混淆？",
+        ],
+    }
+
+
 def _build_overview_context_for_request(
     query: str,
     *,
+    ids: list | None = None,
     scope_subject: str | None = None,
     book_key: str | None = None,
     phase: str | None = None,
 ) -> dict:
     con = get_db()
     try:
+        if ids:
+            return _build_overview_context_from_ids(con, query, ids, phase=phase)
         return _build_overview_context_payload(con, query, scope_subject=scope_subject, book_key=book_key, phase=phase)
     finally:
         con.close()
@@ -7757,6 +7875,7 @@ async def _ai_build_overview(fields: dict) -> ai_guard.Built:
         context_payload = await run_in_threadpool(
             _build_overview_context_for_request,
             fields["query"],
+            ids=fields.get("ids"),
             scope_subject=fields.get("scope_subject"),
             book_key=fields.get("book_key"),
             phase=fields.get("phase"),

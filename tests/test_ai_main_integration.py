@@ -109,7 +109,11 @@ def fake_chat_context(query, user_message, history=None, *, scope_subject=None, 
     }
 
 
-def fake_overview_context(query, *, scope_subject=None, book_key=None, phase=None):
+OVERVIEW_IDS_SEEN = []
+
+
+def fake_overview_context(query, *, ids=None, scope_subject=None, book_key=None, phase=None):
+    OVERVIEW_IDS_SEEN.append(ids)
     evidence = [
         {"id": 21, "subject": "物理", "title": "普通高中教科书·物理必修 第三册（人教版）", "base_title": "普通高中教科书·物理必修 第三册",
          "edition": "人教版", "book_key": "physics_b3", "section": 97, "logical_page": 93, "source": "mineru",
@@ -278,8 +282,9 @@ class MainIntegrationTests(unittest.IsolatedAsyncioTestCase):
         session = await self.client.post("/api/ai/session", headers=HEADERS, content=b"{}")
         self.assertEqual(session.status_code, 200)
         self.answer = "### 一句话\n守恒。[物理·物理必修 第三册（人教版）·p93]\n### 高考怎么考\n见 [真题·2023·全国乙卷·物理]。[物理·伪造·p404]"
-        response = await self.post("/api/overview", {"query": "能量守恒", "phase": "高中"})
+        response = await self.post("/api/overview", {"query": "能量守恒", "phase": "高中", "ids": [21, "supp:443409c8d697fbf3"]})
         self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(OVERVIEW_IDS_SEEN[-1], [21, "supp:443409c8d697fbf3"])
         data = response.json()
         self.assertEqual(data["answer"], self.answer)
         evidence = data["context"]["evidence"]
@@ -308,6 +313,70 @@ class MainIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("### 中考怎么考", prompt)
         self.assertIn("本站暂无初中真题数据", prompt)
         self.assertNotIn("高考真题摘录", prompt)
+
+    def test_overview_context_from_the_ids_on_screen(self):
+        """Real SQL over a throwaway chunks table: the overview reloads exactly the rows the
+        reader sees, in their order, with original text and without exam solutions."""
+        con = sqlite3.connect(main.DB_PATH)
+        con.row_factory = sqlite3.Row
+        saved = (main._analyze_search_query, main._expand_chat_search_terms, main._supplemental_pages_by_id)
+        main._analyze_search_query = lambda con, query, **kwargs: {"retrieval_terms": ["能量守恒定律"]}
+        main._expand_chat_search_terms = lambda con, terms, limit=10: (terms, [{"term": "能量守恒", "aliases": ["机械能守恒定律"]}])
+        main._supplemental_pages_by_id = lambda: {"supp:443409c8d697fbf3": {
+            "id": "supp:443409c8d697fbf3", "phase": "高中", "subject": "物理", "title": "普通高中教科书·物理必修 第三册（人教版）",
+            "base_title": "普通高中教科书·物理必修 第三册", "edition": "人教版", "book_key": "suppbook:cabf9ae26e37ed0f",
+            "section": 97, "logical_page": 93, "text": "这个规律叫作能量守恒定律。", "source": "mineru"}}
+        try:
+            con.execute("DROP TABLE IF EXISTS chunks")
+            con.execute("""CREATE TABLE chunks (id INTEGER PRIMARY KEY, content_id TEXT, phase TEXT, subject TEXT, title TEXT,
+                           book_key TEXT, section INTEGER, logical_page INTEGER, text TEXT, source TEXT, year INTEGER, category TEXT)""")
+            con.executemany("INSERT INTO chunks VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [
+                (16356, None, "高中", "生物学", "普通高中教科书·生物学选择性必修2 生物与环境", "bio_s2", 64, 56,
+                 "能量在流动过程中逐级递减，与能量守恒定律矛盾吗？", "mineru", None, None),
+                (16357, None, "初中", "生物学", "义务教育教科书·生物学", "bio_j", 3, 3, "初中的段落", "mineru", None, None),
+                (5001, None, "高中", "物理", "2023年全国乙卷物理第3题", "gk", 3, None,
+                 "3. 一物体沿光滑斜面下滑……\n【解析】机械能守恒……", "gaokao", 2023, "乙卷"),
+            ])
+            con.commit()
+            payload = main._build_overview_context_from_ids(con, "能量守恒", [16356, "supp:443409c8d697fbf3", 16357, 5001, 999999], phase="高中")
+        finally:
+            con.execute("DROP TABLE IF EXISTS chunks")
+            con.commit()
+            con.close()
+            main._analyze_search_query, main._expand_chat_search_terms, main._supplemental_pages_by_id = saved
+        self.assertEqual([group["subject"] for group in payload["groups"]], ["生物学", "物理"], "display order, other phase dropped")
+        citations = [item["citation"] for item in payload["evidence"]]
+        self.assertIn("[物理·物理必修 第三册（人教版）·p93]", citations)
+        self.assertIn("[真题·2023·全国乙卷·物理]", citations)
+        self.assertTrue(citations[0].startswith("[生物学·") and citations[0].endswith("·p56]"))
+        self.assertIn("逐级递减，与能量守恒定律矛盾吗？", payload["context_text"])
+        self.assertIn("一物体沿光滑斜面下滑", payload["gaokao_text"])
+        self.assertNotIn("机械能守恒……", payload["gaokao_text"], "the worked solution is cut off")
+        self.assertNotIn("初中的段落", payload["context_text"])
+        self.assertEqual(payload["summary"]["evidence_count"], 2)
+        self.assertIn("能量守恒：机械能守恒定律", payload["alias_text"])
+
+    def test_chat_rows_prefer_the_most_occurrences_not_the_lowest_id(self):
+        con = sqlite3.connect(main.DB_PATH)
+        con.row_factory = sqlite3.Row
+        try:
+            for table in ("chunks", "ai_summaries", "ai_gaokao_links"):
+                con.execute(f"DROP TABLE IF EXISTS {table}")
+            con.execute("""CREATE TABLE chunks (id INTEGER PRIMARY KEY, content_id TEXT, phase TEXT, subject TEXT, title TEXT,
+                           book_key TEXT, section INTEGER, logical_page INTEGER, text TEXT, source TEXT, year INTEGER, category TEXT)""")
+            con.execute("CREATE TABLE ai_summaries (chunk_id INTEGER, summary TEXT)")
+            con.execute("CREATE TABLE ai_gaokao_links (chunk_id INTEGER, summary TEXT, knowledge_points TEXT, textbook_refs TEXT)")
+            rows = [(i, None, "高中", "物理", "早入库的书", "early", i, i, "提到一次能量守恒。", "mineru", None, None) for i in range(1, 11)]
+            rows.append((16356, None, "高中", "生物学", "后入库的书", "late", 64, 56, "能量守恒、能量守恒、能量守恒反复出现。", "mineru", None, None))
+            con.executemany("INSERT INTO chunks VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+            con.commit()
+            found = main._fetch_chat_rows(con, "能量守恒", source="mineru", limit=1, phase="高中")
+        finally:
+            for table in ("chunks", "ai_summaries", "ai_gaokao_links"):
+                con.execute(f"DROP TABLE IF EXISTS {table}")
+            con.commit()
+            con.close()
+        self.assertEqual([row["id"] for row in found], [16356])
 
     def test_overview_text_helpers(self):
         stem = main._gaokao_stem("4. 下列说法正确的是\nA. 甲\nB. 乙\n【解析】\n【详解】A 错误……")

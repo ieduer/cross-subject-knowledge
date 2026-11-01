@@ -369,13 +369,40 @@ def validate_chat(payload: Any, cfg: GuardConfig) -> dict:
     }
 
 
+OVERVIEW_MAX_IDS = 30
+_SUPPLEMENTAL_ID_RE = re.compile(r"supp:[0-9a-f]{16}")
+
+
+def _overview_ids(raw: Any) -> list:
+    """Ids of the search results on screen: chunk ids (int) or supplemental page ids.
+    They only select rows on the server; anything else is refused, not repaired."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or len(raw) > OVERVIEW_MAX_IDS:
+        raise AIGuardError(400, "bad_request")
+    ids = []
+    for item in raw:
+        if isinstance(item, bool):
+            raise AIGuardError(400, "bad_request")
+        if isinstance(item, int) and 0 < item < 2**53:
+            value = item
+        elif isinstance(item, str) and _SUPPLEMENTAL_ID_RE.fullmatch(item):
+            value = item
+        else:
+            raise AIGuardError(400, "bad_request")
+        if value not in ids:
+            ids.append(value)
+    return ids
+
+
 def validate_overview(payload: Any, cfg: GuardConfig) -> dict:
     """The automatic first synthesis of one search: no user text, no history. Identical
-    searches share one dedup key, so a repeated search is answered from the cache."""
+    searches (same results on screen) share one dedup key and are answered from the cache."""
     if not isinstance(payload, dict):
         raise AIGuardError(400, "bad_request")
     return {
         "query": _required_text(payload, "query", cfg.max_query_chars),
+        "ids": _overview_ids(payload.get("ids")),
         "scope_subject": _optional_text(payload, "scope_subject", 40),
         "book_key": _optional_text(payload, "book_key", 200),
         "phase": _phase(payload),

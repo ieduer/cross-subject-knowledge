@@ -501,8 +501,11 @@ the main search page only. Dictionary pages and the 真题 page are unchanged.
   `window.SunAI.ask('/api/overview', …)` like every other request (one POST, cancellable, never retried by itself).
   A newer search bumps the conversation epoch, cancels the pending request and drops a late answer. Rendering, resets,
   chips and timers cannot start AI (`tests/test_ai_static.py`).
-- `POST /api/overview` (kind `overview`): fields `query`, optional `scope_subject` / `book_key`, `phase`; any other
-  field is ignored. Same admission, rate limit, caps, cache, in-flight dedup, concurrency slot and daily budget as
+- `POST /api/overview` (kind `overview`): fields `query`, `ids`, optional `scope_subject` / `book_key`, `phase`; any
+  other field is ignored. `ids` are the results on screen in display order (top 3 textbook passages of up to six
+  subjects, then exam rows; at most 30, each a chunk id or `supp:<16 hex>`; anything else is a 400). The server reloads
+  exactly those rows (`_build_overview_context_from_ids`), so the overview integrates what the reader sees. Without
+  `ids` it falls back to term retrieval. Same admission, rate limit, caps, cache, in-flight dedup, concurrency slot and daily budget as
   `/api/chat`. Identical searches share one dedup key, so a repeated search is answered from the cache and spends no
   budget. A search with no textbook evidence is refused with `404 no_evidence` before the budget is touched.
 - Prompt (`_build_overview_prompt`): only original textbook text around the match (`_excerpt_around_terms`, not the
@@ -515,6 +518,7 @@ the main search page only. Dictionary pages and the 真题 page are unchanged.
   (exact citation string, or subject + page); the button shows that record's excerpt and opens the page from the
   record's `book_key` / `section`. Unmatched citations are greyed with a note. The 值得追问 lines become follow-up chips.
 - Follow-ups (`/api/chat`) carry the overview as the first history item and now also cite original text instead of
-  precomputed summaries.
+  precomputed summaries. Their literal-match retrieval (`_fetch_chat_rows`) ranks rows by how often the term occurs;
+  before r44 the unordered `LIKE … LIMIT` kept the lowest row ids and dropped later-loaded subjects for common terms.
 - When AI is off, out of budget or failing, the panel shows the reason plus a retrieval-only digest built in the
   browser from the search response (no model call) and a 重试 button.

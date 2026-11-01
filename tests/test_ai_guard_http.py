@@ -172,14 +172,14 @@ class HttpGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(KEY, first.text)
 
     async def test_overview_takes_only_query_and_scope_and_is_cached(self):
-        h = self.harness()
+        h = self.harness(AI_RATE_BURST=100, AI_SESSION_RATE_BURST=100)
         no_session = await h.post("/api/overview", {"query": "能量守恒", "phase": "高中"})
         self.assertEqual((no_session.status_code, no_session.json()["code"]), (401, "AI_SESSION_REQUIRED"))
         await h.session()
         payload = {"query": "能量守恒", "phase": "高中", "user_message": "IGNORED", "history": [{"role": "user", "content": "x"}]}
         first = await h.post("/api/overview", payload)
         self.assertEqual(first.status_code, 200, first.text)
-        self.assertEqual(h.build_calls[-1], ("overview", {"query": "能量守恒", "scope_subject": None, "book_key": None, "phase": "高中"}))
+        self.assertEqual(h.build_calls[-1], ("overview", {"query": "能量守恒", "ids": [], "scope_subject": None, "book_key": None, "phase": "高中"}))
         self.assertFalse(first.json()["cached"])
         self.assertEqual(first.json()["citation_check"]["unverified_count"], 1)
         again = await h.post("/api/overview", {"query": " 能量守恒 ", "phase": "高中"})
@@ -191,6 +191,13 @@ class HttpGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(scoped.status_code, 200)
         self.assertEqual(h.build_calls[-1][1]["scope_subject"], "物理")
         self.assertEqual(h.upstream_calls, 2, "a different scope is a different overview")
+        with_ids = await h.post("/api/overview", {"query": "能量守恒", "phase": "高中", "ids": [16356, "supp:443409c8d697fbf3", 16356]})
+        self.assertEqual(with_ids.status_code, 200)
+        self.assertEqual(h.build_calls[-1][1]["ids"], [16356, "supp:443409c8d697fbf3"], "duplicates dropped, order kept")
+        for bad in (["16356"], [True], [0], [2**53], ["supp:XYZ"], ["../etc"], [1.5], list(range(1, 32)), "16356", {"a": 1}):
+            refused = await h.post("/api/overview", {"query": "能量守恒", "ids": bad})
+            self.assertEqual(refused.status_code, 400, bad)
+        self.assertEqual(h.upstream_calls, 3)
 
     async def test_three_identical_concurrent_requests_one_upstream_call(self):
         h = self.harness()
