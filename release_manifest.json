@@ -1489,14 +1489,22 @@
       "kind": "runtime",
       "logical_path": "data/index/dict_moe_revised.db",
       "size": 145301504,
-      "sha256": "5b3c0aa6c07fc740faa3e9eb2acb7c01a2a858c49007413f323e75e7cafc709a",
+      "sha256": "eea862edfc521d0f4bccaccc04ccafbce5fa17c77dd086f96ab82327ff8e7b26",
       "source_path": "data/index/dict_moe_revised.db"
     }
   ],
   "runtime_assets_carried_from": {
     "generated_at": "2026-10-11T08:05:30.501294+00:00",
     "git_head": "a1aed391fc77d42ae4ad1946144eadbbc3a03996",
-    "note": "runtime half not re-measured in this build; deploy_vps.sh verifies it on the VPS"
+    "note": "runtime half not re-measured in this build; deploy_vps.sh verifies it on the VPS",
+    "corrections": [
+      {
+        "logical_path": "data/index/dict_moe_revised.db",
+        "sha256": "eea862edfc521d0f4bccaccc04ccafbce5fa17c77dd086f96ab82327ff8e7b26",
+        "measured_on": "gcsjc13 2026-11-01 (read-only)",
+        "basis": "equals the accepted host-migration frozen state (_meta/reports/operations/sun-dict-preflight-20261026/final-state-manifest.json, 2026-10-27T03:37:06Z); the 2026-10-11 value predates the migration snapshot rewrite"
+      }
+    ]
   },
   "page_mapping": {
     "book_count": 144,
