@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-01T04:35:55.850165+00:00",
-  "git_head": "05abaab3ff2c983e2cb2930afa9ca982a3e6180e",
+  "generated_at": "2026-11-01T04:39:51.089239+00:00",
+  "git_head": "19df6bc8eb2ee039464e06c45d5767fba3ce780c",
   "frontend_version": "2026.10.31-r44",
   "source_of_truth": {
     "local_workspace": "authoritative",
@@ -151,8 +151,8 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/style.css",
-      "size": 92073,
-      "sha256": "9f1120a34e67deb0c14a0b4794ff3cd004fd3d032f73937e3673ad30e09184b6"
+      "size": 92130,
+      "sha256": "b235c6282cc012cf5369740524a7bb7768f746beb73205755e4f0dc9fd9fd937"
     },
     {
       "kind": "source",
@@ -1494,8 +1494,8 @@
     }
   ],
   "runtime_assets_carried_from": {
-    "generated_at": "2026-11-01T04:34:17.306519+00:00",
-    "git_head": "e625916177be64d1fea244ee758fd9c90f792e54",
+    "generated_at": "2026-11-01T04:35:55.850165+00:00",
+    "git_head": "05abaab3ff2c983e2cb2930afa9ca982a3e6180e",
     "note": "runtime half not re-measured in this build; deploy_vps.sh verifies it on the VPS",
     "corrections": [
       {

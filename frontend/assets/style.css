@@ -3773,6 +3773,11 @@ body {
     color: var(--text-muted);
 }
 
+.related-count {
+    opacity: 1;
+    font-size: 11px;
+}
+
 .result-text {
     color: var(--text-dim);
 }
