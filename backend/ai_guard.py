@@ -663,7 +663,8 @@ async def post_upstream(
     detailed: bool = False,
 ) -> Any:
     """POST once and return the answer text (``detailed``: a dict with the answer and the
-    gateway's ``source_api_provider_pool`` / ``model``, which say who actually answered).
+    gateway's ``source_api_provider_pool`` / ``model`` and ``raw_response.provider``, which say who
+    actually answered).
 
     ``hard_max_sec`` may raise the ceiling only up to HARD_MAX_SYNTHESIS_DEADLINE_SEC.
 
@@ -731,10 +732,13 @@ async def post_upstream(
         return answer.strip()
     pool = data.get("source_api_provider_pool")
     model = data.get("model")
+    raw_response = data.get("raw_response")
+    provider = raw_response.get("provider") if isinstance(raw_response, dict) else None
     return {
         "answer": answer.strip(),
         "pool": pool if isinstance(pool, str) else "",
         "model": model if isinstance(model, str) else "",
+        "provider": provider.strip()[:40] if isinstance(provider, str) else "",
     }
 
 

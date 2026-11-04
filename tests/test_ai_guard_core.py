@@ -316,11 +316,18 @@ class UpstreamTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((ctx.exception.status, ctx.exception.code), (502, "ai_empty"))
 
     async def test_detailed_answer_and_the_synthesis_ceiling(self):
-        body = {"answer": " 好 ", "source_api_provider_pool": "claude_credit_pool", "model": "claude-sonnet-5-5"}
+        body = {"answer": " 好 ", "source_api_provider_pool": "claude_credit_pool", "model": "claude-sonnet-5-5",
+                "raw_response": {"candidates": [], "provider": "anthropic"}}
         self.assertEqual(await self.call(lambda r: httpx.Response(200, json=body), detailed=True),
-                         {"answer": "好", "pool": "claude_credit_pool", "model": "claude-sonnet-5-5"})
-        self.assertEqual(await self.call(lambda r: httpx.Response(200, json={"answer": "好", "model": 7}), detailed=True),
-                         {"answer": "好", "pool": "", "model": ""})
+                         {"answer": "好", "pool": "claude_credit_pool", "model": "claude-sonnet-5-5", "provider": "anthropic"})
+        body = {"answer": "好", "source_api_provider_pool": "openai_credit_pool", "model": "gpt-6.1-sol",
+                "raw_response": {"provider": "openai", "modelVersion": "gpt-6.1-sol"}}
+        self.assertEqual(await self.call(lambda r: httpx.Response(200, json=body), detailed=True),
+                         {"answer": "好", "pool": "openai_credit_pool", "model": "gpt-6.1-sol", "provider": "openai"})
+        # A Gemini raw_response carries no provider; a non-object raw_response or provider is ignored.
+        for raw in ({"candidates": []}, "text", [1], {"provider": 7}):
+            self.assertEqual(await self.call(lambda r, raw=raw: httpx.Response(200, json={"answer": "好", "model": 7, "raw_response": raw}), detailed=True),
+                             {"answer": "好", "pool": "", "model": "", "provider": ""})
         # The default ceiling stays 30 s; only the synthesis ceiling (65 s) may raise it, never beyond.
         seen = []
         real_wait_for = ai_guard.asyncio.wait_for

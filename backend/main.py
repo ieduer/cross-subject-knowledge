@@ -198,7 +198,7 @@ AI_SERVICE_PROJECT = os.getenv("AI_SERVICE_PROJECT", "").strip()
 AI_SERVICE_TASK_TYPE = os.getenv("AI_SERVICE_TASK_TYPE", "chat").strip() or "chat"
 AI_SERVICE_THINKING_LEVEL = os.getenv("AI_SERVICE_THINKING_LEVEL", "low").strip() or "low"
 AI_INTERNAL_TOKEN = os.getenv("AI_INTERNAL_TOKEN", "").strip()
-# Overview and follow-ups ask the gateway's synthesis lane (Claude first, free Gemini pool as fallback; owner approval
+# Overview and follow-ups ask the gateway's synthesis lane (Claude first, then OpenAI, free Gemini pool last; owner approval
 # 2026-11-01). The lane needs this site's caller identity (token + project name); without it they stay plain chat.
 AI_SYNTHESIS_TASK_TYPE = "synthesis"
 # Claude writes a five-subject overview in about 2,000-3,500 tokens; the gateway never serves a cut answer (it bills it and
@@ -5021,11 +5021,37 @@ def _build_chat_prompt(query: str, user_message: str, context_payload: dict, his
     return _build_chat_prompt_legacy(query, user_message, context_payload, history=history)
 
 
+# Who wrote an answer, from the gateway's own response: raw_response.provider first, then the model id's
+# prefix, then the gateway's pool name. Anything else gets a neutral label, never a guessed vendor.
+_WRITER_BY_PROVIDER = {"anthropic": "Claude", "claude": "Claude", "openai": "OpenAI", "google": "Gemini", "gemini": "Gemini"}
+_WRITER_BY_MODEL_PREFIX = (("claude-", "Claude"), ("gpt-", "OpenAI"), ("chatgpt-", "OpenAI"), ("o1-", "OpenAI"),
+                           ("o3-", "OpenAI"), ("o4-", "OpenAI"), ("gemini-", "Gemini"), ("gemma-", "Gemini"))
+_WRITER_BY_POOL = {"claude_credit_pool": "Claude", "openai_credit_pool": "OpenAI",
+                   "google_primary_pool": "Gemini", "google_paid_ocr_pool": "Gemini"}
+AI_UNKNOWN_WRITER_LABEL = "AI 模型"
+
+
+def _answer_writer(result: dict) -> str:
+    """'Claude', 'OpenAI', 'Gemini' or '' (unknown)."""
+    provider = str(result.get("provider") or "").strip().lower()
+    if provider in _WRITER_BY_PROVIDER:
+        return _WRITER_BY_PROVIDER[provider]
+    model = str(result.get("model") or "").strip().lower()
+    if model.startswith("models/"):
+        model = model[len("models/"):]
+    for prefix, writer in _WRITER_BY_MODEL_PREFIX:
+        if model.startswith(prefix):
+            return writer
+    return _WRITER_BY_POOL.get(str(result.get("pool") or ""), "")
+
+
 def _served_by_label(result: dict, *, synthesis: bool) -> str:
-    """Who actually wrote the answer, from the gateway's own response fields."""
-    if result.get("pool") == "claude_credit_pool" or str(result.get("model") or "").startswith("claude-"):
-        return "Claude"
-    return f"{AI_SERVICE_LABEL}（备用）" if synthesis else AI_SERVICE_LABEL
+    """Who actually wrote the answer. Stored as-is in ai_chat_logs.provider and the answer cache; older rows keep
+    'Claude' / 'Gemini（备用）' / 'Gemini', which stay valid values. Gemini on the synthesis lane is the free fallback."""
+    writer = _answer_writer(result)
+    if writer == "Gemini":
+        return f"{AI_SERVICE_LABEL}（备用）" if synthesis else AI_SERVICE_LABEL
+    return writer or AI_UNKNOWN_WRITER_LABEL
 
 
 async def _call_ai_service(prompt: str, *, task_type: str = "chat") -> dict:

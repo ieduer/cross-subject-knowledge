@@ -443,6 +443,107 @@ class MainIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plain["citation"], "[真题·2020·卷别不详·物理]")
         self.assertNotIn("解析摘录", plain["snippet"], "the stem already names the concept")
 
+    def test_answer_label_names_the_actual_writer(self):
+        """raw_response.provider first, then the model prefix, then the pool; unknown is neutral, never Gemini."""
+        label = main._served_by_label
+        cases = [
+            ({"provider": "anthropic", "model": "claude-sonnet-5-5", "pool": "claude_credit_pool"}, "Claude", "Claude"),
+            ({"provider": "openai", "model": "gpt-6.1-sol", "pool": "openai_credit_pool"}, "OpenAI", "OpenAI"),
+            ({"provider": "openai", "model": "gpt-6.1-terra", "pool": ""}, "OpenAI", "OpenAI"),
+            ({"provider": "", "model": "gemini-3.6-flash", "pool": "google_primary_pool"}, "Gemini（备用）", "Gemini"),
+            ({"provider": "google", "model": "", "pool": ""}, "Gemini（备用）", "Gemini"),
+            # No provider: the model id decides, then the pool.
+            ({"provider": "", "model": "claude-sonnet-5-5", "pool": ""}, "Claude", "Claude"),
+            ({"provider": "", "model": "gpt-6.1-terra", "pool": ""}, "OpenAI", "OpenAI"),
+            ({"provider": "", "model": "models/gemini-flash-latest", "pool": ""}, "Gemini（备用）", "Gemini"),
+            ({"provider": "", "model": "", "pool": "claude_credit_pool"}, "Claude", "Claude"),
+            ({"provider": "", "model": "", "pool": "openai_credit_pool"}, "OpenAI", "OpenAI"),
+            # The provider outranks a model id that says otherwise.
+            ({"provider": "openai", "model": "claude-sonnet-5-5", "pool": "claude_credit_pool"}, "OpenAI", "OpenAI"),
+            # Nothing identifies the writer: a neutral label.
+            ({"provider": "", "model": "", "pool": ""}, "AI 模型", "AI 模型"),
+            ({"provider": "mistral", "model": "mistral-large", "pool": "other_pool"}, "AI 模型", "AI 模型"),
+            ({}, "AI 模型", "AI 模型"),
+        ]
+        for result, synthesis_label, plain_label in cases:
+            self.assertEqual(label(result, synthesis=True), synthesis_label, result)
+            self.assertEqual(label(result, synthesis=False), plain_label, result)
+            self.assertLessEqual(len(synthesis_label), 40, "ai_chat_logs.provider keeps 40 characters")
+
+    async def test_synthesis_label_for_each_gateway_provider(self):
+        """End to end through post_upstream: each provider's real response shape gives its own label."""
+        bodies = [
+            {"answer": "整合", "source_api_provider_pool": "claude_credit_pool", "model": "claude-sonnet-5-5",
+             "raw_response": {"candidates": [{"content": {"parts": [{"text": "整合"}]}}], "modelVersion": "claude-sonnet-5-5", "provider": "anthropic"}},
+            {"answer": "整合", "source_api_provider_pool": "openai_credit_pool", "model": "gpt-6.1-sol",
+             "raw_response": {"candidates": [{"content": {"parts": [{"text": "整合"}]}}], "modelVersion": "gpt-6.1-sol", "provider": "openai"}},
+            {"answer": "整合", "source_api_provider_pool": "google_primary_pool", "model": "gemini-3.6-flash",
+             "raw_response": {"candidates": [{"content": {"parts": [{"text": "整合"}]}}], "modelVersion": "gemini-3.6-flash"}},
+            {"answer": "整合"},
+        ]
+        seen = []
+
+        def handler(request):
+            seen.append(request)
+            return httpx.Response(200, json=bodies[len(seen) - 1])
+
+        real_post = main.ai_guard.post_upstream
+
+        async def patched(url, payload, headers, **kwargs):
+            return await real_post(url, payload, headers, transport=httpx.MockTransport(handler), **kwargs)
+
+        saved = (main.AI_SYNTHESIS_AVAILABLE, main.AI_INTERNAL_TOKEN, main.AI_SERVICE_PROJECT)
+        main.ai_guard.post_upstream = patched
+        main.AI_SYNTHESIS_AVAILABLE, main.AI_INTERNAL_TOKEN, main.AI_SERVICE_PROJECT = True, "caller-token-fixture", "sun.bdfz.net"
+        try:
+            labels = [(await main._call_ai_service("PROMPT", task_type="synthesis"))["provider"] for _ in bodies]
+        finally:
+            main.ai_guard.post_upstream = real_post
+            main.AI_SYNTHESIS_AVAILABLE, main.AI_INTERNAL_TOKEN, main.AI_SERVICE_PROJECT = saved
+        self.assertEqual(labels, ["Claude", "OpenAI", "Gemini（备用）", "AI 模型"])
+
+    async def test_openai_writer_label_reaches_overview_follow_up_cache_and_log(self):
+        """An OpenAI-written overview and follow-up say 由 OpenAI 撰写 in the response, the cached repeat and the log row."""
+        async def upstream(prompt, **kwargs):
+            self.calls.append(prompt)
+            return {"answer": self.answer, "provider": main._served_by_label(
+                {"provider": "openai", "model": "gpt-6.1-sol", "pool": "openai_credit_pool"}, synthesis=True)}
+
+        self.guard._upstream = upstream
+        # Own budget file and log cleanup: test_real_app_flow asserts absolute budget and log contents.
+        saved_budget = self.guard.budget
+        budget_dir = tempfile.TemporaryDirectory()
+        self.guard.budget = main.ai_guard.BudgetStore(Path(budget_dir.name) / "budget.sqlite3")
+        self.guard._status_budget = None
+        last_id = max([row["id"] for row in self.log_rows()] or [0])
+        try:
+            session = await self.client.post("/api/ai/session", headers=HEADERS, content=b"{}")
+            self.assertEqual(session.status_code, 200)
+            overview = await self.post("/api/overview", {"query": "能量守恒", "phase": "高中", "ids": [21]})
+            self.assertEqual(overview.status_code, 200, overview.text)
+            self.assertEqual(overview.json()["provider"], "OpenAI")
+            payload = {"query": "能量守恒", "user_message": "能量去了哪里", "phase": "高中", "ids": [21]}
+            follow_up = await self.post("/api/chat", payload)
+            self.assertEqual(follow_up.status_code, 200, follow_up.text)
+            self.assertEqual(follow_up.json()["provider"], "OpenAI")
+            again = await self.post("/api/chat", payload)
+            self.assertEqual((again.json()["cached"], again.json()["provider"]), (True, "OpenAI"))
+            self.assertEqual(len(self.calls), 2)
+            await self.guard.drain_logs()
+            served = [(row["kind"], row["provider"]) for row in self.log_rows() if row["id"] > last_id and row["upstream_called"]]
+            self.assertEqual(served, [("overview", "OpenAI"), ("chat", "OpenAI")])
+        finally:
+            await self.guard.drain_logs()
+            con = sqlite3.connect(main.DB_PATH)
+            try:
+                con.execute("DELETE FROM ai_chat_logs WHERE id > ?", (last_id,))
+                con.commit()
+            finally:
+                con.close()
+            self.guard.budget = saved_budget
+            self.guard._status_budget = None
+            budget_dir.cleanup()
+
     async def test_synthesis_lane_request_shape_and_label(self):
         """Overview and follow-ups ask the gateway's synthesis lane once this site has a caller identity;
         without one (the test default) they stay plain chat. The label says who actually answered."""
@@ -538,7 +639,7 @@ class MainIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         def handler(request):
             seen.append(request)
-            return httpx.Response(200, json={"answer": "好"})
+            return httpx.Response(200, json={"answer": "好", "model": main.AI_SERVICE_MODEL})
 
         real_post = main.ai_guard.post_upstream
 

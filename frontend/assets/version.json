@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.11.01-r46",
-  "updated_at": "2026-11-01",
+  "frontend_refactor_version": "2026.11.04-r47",
+  "updated_at": "2026-11-04",
   "history": [
+    {
+      "date": "2026-11-04",
+      "version": "2026.11.04-r47",
+      "summary": "every AI answer names the model that actually wrote it, read from the gateway's raw_response.provider, then the model id, then its pool: 由 Claude / OpenAI / Gemini（备用） 撰写, or 由 AI 模型 撰写 when the gateway does not say; the label logic is server-side; app.js only carries the new default version (asset cache key 20261104a for app.js, library.js and library.css)"
+    },
     {
       "date": "2026-11-01",
       "version": "2026.11.01-r46",

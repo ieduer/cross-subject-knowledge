@@ -549,3 +549,15 @@ screen when there is no overview), validated exactly like the overview's ids (at
 `_merge_prior_evidence` reloads those rows (`_evidence_from_ids`, shared with the overview) and puts them first in the
 evidence and the prompt under 「导读已用的原文」, followed by the turn's own retrieval; a record present in both is kept once.
 The response evidence (citation buttons) holds up to 32 records. Without ids the follow-up is exactly r45.
+
+## 18. The label names the actual writer (r47, 2026-11-04)
+
+The gateway's credit tiers are Claude (`claude-sonnet-5-5`), then OpenAI (`gpt-6.1-sol` / `gpt-6.1-terra`), then the free
+Gemini pool. `post_upstream(..., detailed=True)` also returns `raw_response.provider` (`anthropic` / `openai`; a Gemini
+`raw_response` has none). `_answer_writer` decides in this order: that provider, then the `model` prefix (`claude-`;
+`gpt-` / `chatgpt-` / `o1-` / `o3-` / `o4-`; `gemini-` / `gemma-`), then `source_api_provider_pool`
+(`claude_credit_pool`, `openai_credit_pool`, `google_*`). Labels: `Claude`, `OpenAI`, `Gemini（备用）` for a synthesis answer
+from the free pool (`Gemini` elsewhere), and `AI 模型` when nothing identifies the writer — never a guessed vendor.
+The label is a display string only: it goes into the response `provider`, the 10-minute in-memory answer cache and
+`ai_chat_logs.provider` (TEXT, ≤40 chars). Older rows keep `Claude` / `Gemini（备用）` / `Gemini`, which remain valid values;
+nothing reads the column back to branch on it. No other code depends on the model id.
