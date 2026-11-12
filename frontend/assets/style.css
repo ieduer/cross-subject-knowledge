@@ -3028,13 +3028,8 @@ body {
 }
 
 /* ── BDFZ / mx.bdfz.net visual refresh ───────────────────── */
-@font-face {
-    font-family: 'HuWenMingChao';
-    src: url('https://mx.bdfz.net/data/fonts/HuWenMingChaoTi.woff2') format('woff2');
-    font-weight: normal;
-    font-style: normal;
-    font-display: swap;
-}
+/* 'HuWenMingChao' comes from the shared slice stylesheet on mx.bdfz.net, linked by each page (r48);
+   the 8 MB single-file @font-face is no longer declared here. The family name is unchanged. */
 
 :root {
     --bg: #fbfaf5;

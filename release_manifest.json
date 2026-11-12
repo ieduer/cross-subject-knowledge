@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-04T04:58:16.282869+00:00",
-  "git_head": "453c9acdd486d4bf05f0b43e0dbc6e4965366b77",
-  "frontend_version": "2026.11.04-r47",
+  "generated_at": "2026-11-12T15:05:56.862215+00:00",
+  "git_head": "8d58c1d25c33525dfe27a462cfdd848b17603900",
+  "frontend_version": "2026.11.12-r48",
   "source_of_truth": {
     "local_workspace": "authoritative",
     "github": "authoritative_for_code_only_after_push",
@@ -115,26 +115,26 @@
     {
       "kind": "source",
       "logical_path": "frontend/index.html",
-      "size": 15036,
-      "sha256": "f0ab3ebf0a7dd6a639a7deff1a89c980fc739f1fca0a3661fa536ab4bb9992a0"
+      "size": 15541,
+      "sha256": "fd26dd4503d897c903fba8673148e2ff025a1d04c1475297881a3e1aa85891ec"
     },
     {
       "kind": "source",
       "logical_path": "frontend/dict.html",
-      "size": 10410,
-      "sha256": "ba592734d0a5a9452af52805a9ba1d32db6bae5281827773929650e4de8d2e42"
+      "size": 10915,
+      "sha256": "7f0ecb509f86b06fe48feb1dcedc7171becdfdf4f12270e466912e025f07072b"
     },
     {
       "kind": "source",
       "logical_path": "frontend/chuzhong.html",
-      "size": 11667,
-      "sha256": "9c0e7461efebd219b57732bc22ff3e1c10a4a04cc4c82833225dad85a9942a3d"
+      "size": 12172,
+      "sha256": "cdca7d0af61191a1bd3e392ce09fd23482a0014455bc652c9a251c70325a3c42"
     },
     {
       "kind": "source",
       "logical_path": "frontend/chuzhong-dict.html",
-      "size": 10371,
-      "sha256": "3e6eb85b5ea7407aa3baacb32b7181134a5cd0975304adf17daaf32cf8689676"
+      "size": 10876,
+      "sha256": "3c2f52ff5b2ed6c5e4c68ae59a14cb69fc5afa3bbd66f0b278b186067dbb87bb"
     },
     {
       "kind": "source",
@@ -146,13 +146,13 @@
       "kind": "source",
       "logical_path": "frontend/assets/app.js",
       "size": 125816,
-      "sha256": "d2040cc6d9af8a5fa021d06b32196eb5a5ef675139a06c446493f15bc7a58c21"
+      "sha256": "4e429d9829bc351f8598da58648e68ef8f545f9a0d153e715c7d5d5fe966d9b5"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/style.css",
-      "size": 92130,
-      "sha256": "b235c6282cc012cf5369740524a7bb7768f746beb73205755e4f0dc9fd9fd937"
+      "size": 92119,
+      "sha256": "e7480725ae56c83275c27453b277bbaae634f1359d4308e8b6a3b5e8ffc8b1bd"
     },
     {
       "kind": "source",
@@ -187,8 +187,8 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/version.json",
-      "size": 15657,
-      "sha256": "f338b2e8bd044df25982a1dafe666cc154f77297ad5e9b3fd10ec0cb3180f461"
+      "size": 16107,
+      "sha256": "1b16dd4bec0d138defe2c16896c035ee859a28f6ee9ef5c883b5636a6ddb2546"
     },
     {
       "kind": "source",
@@ -1494,8 +1494,8 @@
     }
   ],
   "runtime_assets_carried_from": {
-    "generated_at": "2026-11-01T06:09:19.984811+00:00",
-    "git_head": "aef0b4cd5f29ff86e3a866050d0bca9983162ae7",
+    "generated_at": "2026-11-04T04:58:16.282869+00:00",
+    "git_head": "453c9acdd486d4bf05f0b43e0dbc6e4965366b77",
     "note": "runtime half not re-measured in this build; deploy_vps.sh verifies it on the VPS",
     "corrections": [
       {

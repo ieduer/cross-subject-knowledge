@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.11.04-r47",
-  "updated_at": "2026-11-04",
+  "frontend_refactor_version": "2026.11.12-r48",
+  "updated_at": "2026-11-12",
   "history": [
+    {
+      "date": "2026-11-12",
+      "version": "2026.11.12-r48",
+      "summary": "the body font loads from the shared HuWenMingChao slices on mx.bdfz.net (per-character unicode-range slices, non-blocking stylesheet on all four pages) instead of the 8 MB single file declared in style.css; same typeface and layout; app.js only carries the new default version (asset cache key 20261112a for style.css, app.js, library.js and library.css)"
+    },
     {
       "date": "2026-11-04",
       "version": "2026.11.04-r47",
