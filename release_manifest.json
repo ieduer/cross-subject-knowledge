@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-14T02:00:12.146722+00:00",
-  "git_head": "75de5e1e3b059ad9756b83b960655d1e2139d342",
+  "generated_at": "2026-11-14T04:22:22.577354+00:00",
+  "git_head": "f4ae268ceca15d9a3098a0cb869add34c2eaaff4",
   "frontend_version": "2026.11.13-r49",
   "source_of_truth": {
     "local_workspace": "authoritative",
@@ -31,8 +31,8 @@
     {
       "kind": "source",
       "logical_path": "backend/main.py",
-      "size": 402640,
-      "sha256": "369265922b341a7b34626b1a724b0b035c0cb219f7eb20e25540c10fe23176b1"
+      "size": 405695,
+      "sha256": "5e8799635e8982c286ba9ecc0789add0bb813f6683fea0fe58ecce0b88aca730"
     },
     {
       "kind": "source",
@@ -1413,15 +1413,15 @@
     {
       "kind": "runtime",
       "logical_path": "data/index/textbook_chunks.index",
-      "size": 82355058,
-      "sha256": "9e0f7bc19de9236b15c238b45cb9d480eb1b554036e5c95ef99eadf178375e00",
+      "size": 144678402,
+      "sha256": "fa8ad1b5181c258126c0854b764a0ee3e0c139a734366577afea562c85a7be02",
       "source_path": "data/index/textbook_chunks.index"
     },
     {
       "kind": "runtime",
       "logical_path": "data/index/textbook_chunks.manifest.json",
-      "size": 1246,
-      "sha256": "b5da78854fce67bfdcf85703597f84e6953925e32fdb31becee9f9ccfad103c9",
+      "size": 1437,
+      "sha256": "0aeac71858c5cd9546ccf9d0dfdeb262dc32531943d6541be4d3c4fe98006dfc",
       "source_path": "data/index/textbook_chunks.manifest.json"
     },
     {
@@ -1441,15 +1441,15 @@
     {
       "kind": "runtime",
       "logical_path": "data/index/supplemental_textbook_pages.index",
-      "size": 11644973,
-      "sha256": "879a02d544e999bfc31813eab76bbd5bf1b8b91a7ec70fb3f4cd65e2d2c5f4ca",
+      "size": 29023578,
+      "sha256": "7f1fb5ce1dfc2037b40cf733f0554d4ee6e6466bf2c1c51c5b674d9a91cccaf4",
       "source_path": "data/index/supplemental_textbook_pages.index"
     },
     {
       "kind": "runtime",
       "logical_path": "data/index/supplemental_textbook_pages.vector.manifest.json",
-      "size": 717,
-      "sha256": "f2fbbbb91988d58f891d90ab8677c7a05732de3308bfde7a1222c53e8bc9425f",
+      "size": 814,
+      "sha256": "998c511b1e21c61893745af6b46f033ca5556381d0bda3ff23e2ed6d31a5558d",
       "source_path": "data/index/supplemental_textbook_pages.vector.manifest.json"
     },
     {
@@ -1482,8 +1482,8 @@
     }
   ],
   "runtime_assets_carried_from": {
-    "generated_at": "2026-11-12T15:05:56.862215+00:00",
-    "git_head": "8d58c1d25c33525dfe27a462cfdd848b17603900",
+    "generated_at": "2026-11-14T02:00:12.146722+00:00",
+    "git_head": "75de5e1e3b059ad9756b83b960655d1e2139d342",
     "note": "runtime half not re-measured in this build; deploy_vps.sh verifies it on the VPS",
     "corrections": [
       {
@@ -1492,7 +1492,36 @@
         "measured_on": "gcsjc13 2026-11-01 (read-only)",
         "basis": "equals the accepted host-migration frozen state (_meta/reports/operations/sun-dict-preflight-20261026/final-state-manifest.json, 2026-10-27T03:37:06Z); the 2026-10-11 value predates the migration snapshot rewrite"
       }
-    ]
+    ],
+    "r50_vector_rebuild": {
+      "note": "the four vector files are the r50 passage pairs built on a Mac (MPS, transformers 5.2.0 = image version) from a read-only snapshot of gcsjc13 textbook_mineru_fts.db (2026-11-14); every other runtime asset is carried from r49 unchanged",
+      "files": [
+        {
+          "logical_path": "data/index/textbook_chunks.index",
+          "from": "9e0f7bc19de9236b15c238b45cb9d480eb1b554036e5c95ef99eadf178375e00",
+          "to": "fa8ad1b5181c258126c0854b764a0ee3e0c139a734366577afea562c85a7be02",
+          "size": 144678402
+        },
+        {
+          "logical_path": "data/index/textbook_chunks.manifest.json",
+          "from": "b5da78854fce67bfdcf85703597f84e6953925e32fdb31becee9f9ccfad103c9",
+          "to": "0aeac71858c5cd9546ccf9d0dfdeb262dc32531943d6541be4d3c4fe98006dfc",
+          "size": 1437
+        },
+        {
+          "logical_path": "data/index/supplemental_textbook_pages.index",
+          "from": "879a02d544e999bfc31813eab76bbd5bf1b8b91a7ec70fb3f4cd65e2d2c5f4ca",
+          "to": "7f1fb5ce1dfc2037b40cf733f0554d4ee6e6466bf2c1c51c5b674d9a91cccaf4",
+          "size": 29023578
+        },
+        {
+          "logical_path": "data/index/supplemental_textbook_pages.vector.manifest.json",
+          "from": "f2fbbbb91988d58f891d90ab8677c7a05732de3308bfde7a1222c53e8bc9425f",
+          "to": "998c511b1e21c61893745af6b46f033ca5556381d0bda3ff23e2ed6d31a5558d",
+          "size": 814
+        }
+      ]
+    }
   },
   "page_mapping": {
     "book_count": 144,
