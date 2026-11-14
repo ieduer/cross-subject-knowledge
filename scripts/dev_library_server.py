@@ -38,8 +38,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 import library  # noqa: E402
 
 FRONTEND = ROOT / "frontend"
-PAGES = {"/": "index.html", "/chuzhong.html": "chuzhong.html", "/dict.html": "dict.html",
-         "/chuzhong-dict.html": "chuzhong-dict.html"}
+PAGES = {"/": "index.html", "/dict.html": "dict.html"}  # r49: /chuzhong*.html redirect in main.py
 
 
 def build_app(catalog_root: Path, pdf_dir: Path, upstream: str | None, max_search: int, extra_env: dict) -> FastAPI:

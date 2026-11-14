@@ -4,8 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="北大附中 孙玉磊">
-    <title>AI 高中教材 · 北大附中</title>
+    <meta name="description" content="北大附中 孙玉磊 · AI 教材：初中、高中各科教材原文检索，一次检索同时查两个学段">
+    <title>AI 教材 · 北大附中</title>
     <meta name="robots" content="index, follow">
     <link rel="icon" href="https://img.bdfz.net/20250503004.webp" type="image/jpeg">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -27,18 +27,18 @@
     <link rel="preconnect" href="https://mx.bdfz.net" crossorigin>
     <link rel="stylesheet" href="https://mx.bdfz.net/fonts/huwen/v1/HuWenMingChao.4eeeeaf657.css" crossorigin media="print" onload="this.media='all'">
     <noscript><link rel="stylesheet" href="https://mx.bdfz.net/fonts/huwen/v1/HuWenMingChao.4eeeeaf657.css" crossorigin></noscript>
-    <link rel="stylesheet" href="assets/style.css?v=20261112a">
-    <link rel="stylesheet" href="assets/library.css?v=20261112a"> <!-- library-tabs -->
+    <link rel="stylesheet" href="assets/style.css?v=20261113a">
+    <link rel="stylesheet" href="assets/library.css?v=20261113a"> <!-- library-tabs -->
 </head>
 
-<body data-phase="高中">
+<body>
     <div id="app">
         <!-- Header -->
         <header class="header">
             <div class="header-inner">
                 <div class="logo">
                     <span class="logo-icon">🔗</span>
-                    <span class="logo-text">AI 高中教材</span>
+                    <span class="logo-text">AI 教材</span>
                 </div>
                 <nav class="nav">
                     <button class="nav-btn active" data-view="search">搜索</button>
@@ -48,7 +48,6 @@
                     <button class="nav-btn" data-view="pdf">PDF 预览</button> <!-- library-tabs -->
                     <button class="nav-btn" data-view="downloads">教材下载</button> <!-- library-tabs -->
                     <a href="/dict.html" class="nav-btn">实虚词典</a>
-                    <a href="/chuzhong.html" class="nav-btn">初中版</a>
                 </nav>
             </div>
         </header>
@@ -57,7 +56,7 @@
         <main id="view-search" class="view active">
             <section class="hero">
                 <h1><span class="gradient-text">这世界真的有学科吗？</span></h1>
-                <p class="hero-sub" id="hero-sub">高中各科教材 · 加载中…</p>
+                <p class="hero-sub" id="hero-sub">初中、高中各科教材 · 加载中…</p>
                 <details id="data-note" class="data-note hidden">
                     <summary>数据口径</summary>
                     <div id="data-note-body" class="data-note-body"></div>
@@ -68,6 +67,8 @@
                     <button id="advanced-toggle" class="advanced-toggle active" title="高级搜索">⚙</button>
                     <button id="search-btn" class="search-submit">搜索</button>
                 </div>
+                <!-- 学段: one search covers 初中 and 高中; this switch filters the results and the AI overview -->
+                <div id="stage-switch" class="stage-switch" role="group" aria-label="学段"></div>
                 <!-- Advanced Search Panel -->
                 <div id="advanced-panel" class="advanced-panel">
                     <div class="filter-row">
@@ -119,6 +120,7 @@
                     <button id="ai-copy-btn" class="ai-copy-btn hidden" type="button" title="复制全部对话"
                         aria-label="复制全部对话">复制</button>
                 </div>
+                <div id="ai-stage-note" class="ai-stage-note hidden" aria-live="polite"></div>
                 <div id="ai-content" class="ai-thread" aria-live="polite"></div>
                 <div id="ai-starters" class="ai-starters hidden"></div>
                 <div class="ai-compose">
@@ -284,8 +286,8 @@
         </footer>
     </div>
     <script src="assets/ai-client.js?v=20261010a"></script>
-    <script src="assets/app.js?v=20261112a"></script>
-    <script src="assets/library.js?v=20261112a"></script> <!-- library-tabs -->
+    <script src="assets/app.js?v=20261113a"></script>
+    <script src="assets/library.js?v=20261113a"></script> <!-- library-tabs -->
     <script src="https://nav.bdfz.net/bdfz-nav.js" async></script>
 </body>
 

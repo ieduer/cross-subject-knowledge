@@ -32,7 +32,7 @@ import build_release_manifest  # noqa: E402
 import stage_clean_release  # noqa: E402
 
 SUBPROCESS_TIMEOUT = 120
-PAGES = ("index.html", "dict.html", "chuzhong.html", "chuzhong-dict.html")
+PAGES = ("index.html", "dict.html")
 
 
 def stage(target: Path) -> list[str]:
@@ -195,7 +195,7 @@ class PageHookTests(unittest.TestCase):
     """The few lines the library tabs own in the existing pages."""
 
     def test_changed_assets_share_one_new_cache_key(self):
-        for page in ("index.html", "chuzhong.html"):
+        for page in ("index.html",):
             html = (ROOT / "frontend" / page).read_text(encoding="utf-8")
             keys = {name: re.search(re.escape(name) + r"\?v=([0-9a-z]+)", html).group(1)
                     for name in ("assets/app.js", "assets/library.js", "assets/library.css")}

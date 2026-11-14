@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.11.12-r48",
-  "updated_at": "2026-11-12",
+  "frontend_refactor_version": "2026.11.13-r49",
+  "updated_at": "2026-11-13",
   "history": [
+    {
+      "date": "2026-11-13",
+      "version": "2026.11.13-r49",
+      "summary": "one site for 初中 and 高中: / searches both 学段 (the server runs each 学段's search on its own and merges, every hit tagged with its 学段) and a 全部 / 初中 / 高中 switch under the search box filters the results and scopes the AI overview; /chuzhong.html and /chuzhong-dict.html redirect (302) to the merged pages with 初中 preselected; the dictionary lists textbook hits of both 学段 with the same switch; result cards show only the source, the recognized text and the page image / PDF buttons (match-channel, term, source and page chips removed, page numbers in the button tooltip, publisher watermark lines hidden); asset cache key 20261113a"
+    },
     {
       "date": "2026-11-12",
       "version": "2026.11.12-r48",

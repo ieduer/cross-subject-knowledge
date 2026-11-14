@@ -173,7 +173,14 @@ class FrontendStaticTests(unittest.TestCase):
         self.assertNotIn("requestAISynthesis", app)
         # The overview integrates the results on screen: their ids, validated like the server does.
         payload = function_body(app, "function buildOverviewPayload() {")
-        self.assertIn("ids: overviewResultIds(currentData),", payload)
+        # r49: the results on screen are those of the search's 学段 (both when none is chosen).
+        self.assertIn("ids: overviewResultIds(stageScopedData(currentData, aiOverviewStage)),", payload)
+        search = function_body(app, "async function doSearch(")
+        self.assertLess(search.index("aiOverviewStage = stageFilter;"), search.index("startSearchOverview();"))
+        # Switching 学段 only filters what is on the page: it never starts AI.
+        switch = function_body(app, "function setStageFilter(stage) {")
+        for token in ("sendAIMessage(", "runAIRequest(", "startSearchOverview(", "SunAI.ask(", "doSearch("):
+            self.assertNotIn(token, switch)
         chat_payload = function_body(app, "function buildAIServerPayload(userMessage, history) {")
         self.assertIn("ids: followupEvidenceIds(),", chat_payload)
         followup = function_body(app, "function followupEvidenceIds() {")

@@ -5,13 +5,13 @@ import asyncio, gzip, sqlite3, json, math, os, re, time, functools, hashlib, thr
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 import httpx
 import ai_guard
-from fastapi import FastAPI, Query, HTTPException, Body
+from fastapi import FastAPI, Query, HTTPException, Body, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 try:
@@ -4572,7 +4572,7 @@ def _build_precision_chat_context_payload(
             fallback_title=candidate.get("title"),
             content_id=candidate.get("content_id"),
         )
-        item["citation"] = f"[{item['subject']}·{_short_book_title(item.get('base_title') or item['title'], item.get('edition'))}·p{item.get('logical_page')}]"
+        item["citation"] = _textbook_citation(item["subject"], item, item.get("logical_page"), stage=None if phase else _stage_of_book_key(item.get("book_key")))
         evidence.append(item)
         subject_group = groups_by_subject.setdefault(item["subject"], {"subject": item["subject"], "count": 0, "items": []})
         subject_group["count"] += 1
@@ -4714,7 +4714,7 @@ def _build_chat_context_payload_legacy(
                 fallback_title=row["title"],
                 content_id=row.get("content_id"),
             )
-            item["citation"] = f"[{subject}·{_short_book_title(item.get('base_title') or item['title'], item.get('edition'))}·p{logical_page}]"
+            item["citation"] = _textbook_citation(subject, item, logical_page, stage=None if phase else _stage_of_book_key(row["book_key"]))
             selected.append(item)
             evidence.append(item)
         groups.append({"subject": subject, "count": len(subject_rows), "items": selected})
@@ -4906,7 +4906,8 @@ def _build_chat_prompt_legacy(query: str, user_message: str, context_payload: di
         history_text = "（无）"
 
     _phase = context_payload.get("phase")
-    _display_phase = "初中" if _phase == "初中" else "高中"
+    _display_phase = _prompt_stage(_phase)
+    _stage_rule = "" if _phase in STAGES else "\n" + MERGED_STAGE_RULE
 
     _gaokao_evidence = ""
     _gaokao_instruction = ""
@@ -4949,7 +4950,7 @@ def _build_chat_prompt_legacy(query: str, user_message: str, context_payload: di
 - 先直接回答这一轮的问题，再按需要展开；需要分点时用「- 」列表，可用 **加粗** 标出关键词。
 - 引用教材时在句末附标签，格式 [学科·书名·p页码]，只能原样使用上面教材证据里出现过的标签。
 - {_gaokao_instruction}
-- 需要证据之外的知识时，只能是{_display_phase}教材层面公认的内容，并在句末标注「（教材外补充）」。
+- 需要证据之外的知识时，只能是{_display_phase}教材层面公认的内容，并在句末标注「（教材外补充）」。{_stage_rule}
 
 规则：
 1. 只根据给定证据回答，不要编造页码或教材内容；证据不足时明确说「教材证据不足」。
@@ -4982,7 +4983,8 @@ def _build_precision_chat_prompt(
     }.get(intent, "精准检索")
 
     _phase = context_payload.get("phase")
-    _display_phase = "初中" if _phase == "初中" else "高中"
+    _display_phase = _prompt_stage(_phase)
+    _stage_rule = "" if _phase in STAGES else "\n" + MERGED_STAGE_RULE
 
     return f"""你是一位严谨的教材检索助手，面向{_display_phase}学生。当前搜索词是「{context_payload.get('query') or query}」，用户当前要解决的是「{target}」的{intent_label}。
 
@@ -5012,7 +5014,7 @@ Agent 检索轮次：{len(rounds)} 轮
 4. 如果证据不足或检索结果彼此不一致，必须明确写"教材证据不足"。
 5. 忽略低相关结果，不要为了凑字数复述无关内容。
 6. 若用户继续追问，保持连续回答，不重复整段前文；需要分点时用「- 」列表。
-7. 总长度尽量控制在 350 字以内。"""
+7. 总长度尽量控制在 350 字以内。{_stage_rule}"""
 
 
 def _build_chat_prompt(query: str, user_message: str, context_payload: dict, history: list[dict] | None = None) -> str:
@@ -6469,7 +6471,7 @@ def _build_dict_chat_prompt(
     phase: str | None = None,
 ) -> str:
     history_text = "\n".join(_format_chat_history_lines(history)) or "（无）"
-    _display_phase = "初中" if phase == "初中" else "高中"
+    _display_phase = _prompt_stage(phase)
 
     _gaokao_section = ""
     _gaokao_instruction = ""
@@ -6533,7 +6535,8 @@ def _build_dict_textbook_context_block(results: list[dict]) -> str:
     for item in results[:8]:
         display_title = item.get("display_title") or item.get("title") or ""
         page_label = f"p{item.get('logical_page')}" if item.get("logical_page") is not None else ""
-        blocks.append(f"[教材·{display_title}·{page_label}] {(_normalize_text_line(item.get('text')) or _normalize_text_line(item.get('snippet')))[:260]}")
+        stage = f"{item['phase']}·" if item.get("phase") in STAGES else ""
+        blocks.append(f"[教材·{stage}{display_title}·{page_label}] {(_normalize_text_line(item.get('text')) or _normalize_text_line(item.get('snippet')))[:260]}")
     return "\n\n".join(blocks)
 
 
@@ -6799,9 +6802,9 @@ def _build_dict_status_payload() -> dict:
 
 @app.get("/api/subject-meta")
 def subject_meta_endpoint(
-    phase: str = Query(..., description="学段: 高中 or 初中"),
+    phase: Optional[str] = Query(None, description="学段: 高中, 初中, or None for both"),
 ):
-    """Return subject metadata for a given phase."""
+    """Return subject metadata for a given phase (both 学段 when omitted)."""
     return _subject_meta_for_phase(phase)
 
 
@@ -6825,24 +6828,27 @@ def search(
         if not clean_q:
             raise HTTPException(400, "Invalid query")
 
-        where_extra = ""
-        filter_params = []
-        if phase:
-            where_extra += " AND c.phase = ?"
-            filter_params.append(phase)
-        if subject:
-            where_extra += " AND c.subject = ?"
-            filter_params.append(subject)
-        if book_key:
-            where_extra += " AND c.book_key = ?"
-            filter_params.append(book_key)
-        elif scope_subject:
-            where_extra += " AND (c.source = 'mineru' OR c.source IS NULL) AND c.subject = ?"
-            filter_params.append(scope_subject)
-        if source == 'textbook':
-            where_extra += " AND (c.source = 'mineru' OR c.source IS NULL)"
-        elif source == 'gaokao':
-            where_extra += " AND c.source = 'gaokao'"
+        def stage_filters(stage):
+            where_extra = ""
+            filter_params = []
+            if stage:
+                where_extra += " AND c.phase = ?"
+                filter_params.append(stage)
+            if subject:
+                where_extra += " AND c.subject = ?"
+                filter_params.append(subject)
+            if book_key:
+                where_extra += " AND c.book_key = ?"
+                filter_params.append(book_key)
+            elif scope_subject:
+                where_extra += " AND (c.source = 'mineru' OR c.source IS NULL) AND c.subject = ?"
+                filter_params.append(scope_subject)
+            if source == 'textbook':
+                where_extra += " AND (c.source = 'mineru' OR c.source IS NULL)"
+            elif source == 'gaokao':
+                where_extra += " AND c.source = 'gaokao'"
+
+            return where_extra, filter_params
 
         candidate_limit = _candidate_window_limit(limit, offset, multiplier=2, minimum=max(24, limit * 2), cap=600)
         query_analysis = _analyze_search_query(
@@ -6864,63 +6870,83 @@ def search(
             and len(_compact_query_text(clean_q)) >= 2
         )
 
-        hybrid_meta = None
-        if use_hybrid_search:
-            hybrid_rows, hybrid_meta = _collect_hybrid_search_rows(
-                con,
-                q,
-                query_analysis,
-                scope_subject=textbook_scope_subject,
-                book_key=book_key,
-                phase=phase,
-                candidate_limit=candidate_limit,
-            )
-            all_rows = list(hybrid_rows)
-            seen_ids = {row.get("id") for row in all_rows if row.get("id") is not None}
-            include_gaokao = not book_key and not scope_subject and source != "textbook" and phase != "初中"
-            if include_gaokao:
-                gaokao_where_extra = " AND c.source = 'gaokao'"
-                gaokao_filter_params = []
-                if subject:
-                    gaokao_where_extra += " AND c.subject = ?"
-                    gaokao_filter_params.append(subject)
-                gaokao_rows = _collect_legacy_search_rows(
+        def collect(stage):
+            where_extra, filter_params = stage_filters(stage)
+            hybrid_meta = None
+            if use_hybrid_search:
+                hybrid_rows, hybrid_meta = _collect_hybrid_search_rows(
+                    con,
+                    q,
+                    query_analysis,
+                    scope_subject=textbook_scope_subject,
+                    book_key=book_key,
+                    phase=stage,
+                    candidate_limit=candidate_limit,
+                )
+                all_rows = list(hybrid_rows)
+                seen_ids = {row.get("id") for row in all_rows if row.get("id") is not None}
+                include_gaokao = not book_key and not scope_subject and source != "textbook" and stage != "初中"
+                if include_gaokao:
+                    gaokao_where_extra = " AND c.source = 'gaokao'"
+                    gaokao_filter_params = []
+                    if subject:
+                        gaokao_where_extra += " AND c.subject = ?"
+                        gaokao_filter_params.append(subject)
+                    gaokao_rows = _collect_legacy_search_rows(
+                        con,
+                        q,
+                        query_analysis,
+                        search_plan,
+                        where_extra=gaokao_where_extra,
+                        filter_params=gaokao_filter_params,
+                        candidate_limit=max(12, min(60, math.ceil(candidate_limit / 2))),
+                        sort=sort,
+                        source="gaokao",
+                        include_supplemental=False,
+                        seen_ids=seen_ids,
+                        rank_shift=40.0,
+                    )
+                    all_rows = _merge_ranked_rows(all_rows, gaokao_rows, sort=sort)
+                else:
+                    all_rows = _merge_ranked_rows(all_rows, sort=sort)
+            else:
+                all_rows = _collect_legacy_search_rows(
                     con,
                     q,
                     query_analysis,
                     search_plan,
-                    where_extra=gaokao_where_extra,
-                    filter_params=gaokao_filter_params,
-                    candidate_limit=max(12, min(60, math.ceil(candidate_limit / 2))),
+                    where_extra=where_extra,
+                    filter_params=filter_params,
+                    candidate_limit=candidate_limit,
                     sort=sort,
-                    source="gaokao",
-                    include_supplemental=False,
-                    seen_ids=seen_ids,
-                    rank_shift=40.0,
+                    scope_subject=textbook_scope_subject,
+                    book_key=book_key,
+                    source=source,
+                    phase=stage,
                 )
-                all_rows = _merge_ranked_rows(all_rows, gaokao_rows, sort=sort)
-            else:
                 all_rows = _merge_ranked_rows(all_rows, sort=sort)
-        else:
-            all_rows = _collect_legacy_search_rows(
-                con,
-                q,
-                query_analysis,
-                search_plan,
-                where_extra=where_extra,
-                filter_params=filter_params,
-                candidate_limit=candidate_limit,
-                sort=sort,
-                scope_subject=textbook_scope_subject,
-                book_key=book_key,
-                source=source,
-                phase=phase,
-            )
-            all_rows = _merge_ranked_rows(all_rows, sort=sort)
+            if has_images:
+                all_rows = [r for r in all_rows if '![' in (r.get('text') or '')]
+            for r in all_rows:
+                r["_stage"] = stage or _stage_of_book_key(r.get("book_key"))
+            return all_rows, hybrid_meta
 
-        if has_images:
-            all_rows = [r for r in all_rows if '![' in (r.get('text') or '')]
-        rows = all_rows[offset: offset + limit]
+        # One site for both 学段 (r49): without a 学段 (and not inside one book) each 学段 is searched on its own, exactly as
+        # its own page used to, and the two result lists are merged. A single pass over both would let one 学段's hits use
+        # up the per-term candidate quotas of the other.
+        merge_stages = not phase and not book_key
+        if merge_stages:
+            stage_rows = {stage: collect(stage) for stage in STAGES}
+            all_rows = _merge_ranked_rows(*(rows_ for rows_, _ in stage_rows.values()), sort=sort)
+            rows = _merge_ranked_rows(*(rows_[offset: offset + limit] for rows_, _ in stage_rows.values()), sort=sort)
+            metas = [meta for _, meta in stage_rows.values() if meta]
+            hybrid_meta = None
+            if metas:
+                hybrid_meta = dict(metas[-1])
+                hybrid_meta["candidate_count"] = sum(int(meta.get("candidate_count") or 0) for meta in metas)
+        else:
+            all_rows, hybrid_meta = collect(phase)
+            rows = all_rows[offset: offset + limit]
 
         by_subject = {}
         for r in rows:
@@ -6957,6 +6983,7 @@ def search(
                 "pdf_ref": ({key: page_ref[key] for key in (
                     "edition_id", "pdf_page", "pdf_pages", "printed_label", "viewer_url", "text_identity",
                     "preview_default", "default_edition_id", "legacy_content_revised")} if page_ref else None),
+                "phase": r.get("_stage") or _stage_of_book_key(bk),
             }
             if (r["source"] or "mineru") != "gaokao":
                 result_item = _apply_book_runtime_meta(
@@ -6974,6 +7001,7 @@ def search(
             by_subject[s]["count"] += 1
 
         subject_counts = dict(Counter(row["subject"] for row in all_rows))
+        phase_counts = dict(Counter(row.get("_stage") or "" for row in all_rows))
         total = len(all_rows)
 
         cross_subjects = [s for s in subject_counts if subject_counts[s] > 0]
@@ -7005,6 +7033,8 @@ def search(
             "query": q,
             "total": total,
             "subject_counts": subject_counts,
+            "phase_counts": phase_counts,
+            "stages_merged": merge_stages,
             "cross_hint": hint,
             "query_analysis": {
                 **query_analysis,
@@ -7139,6 +7169,16 @@ def stats(phase: Optional[str] = Query(None, description="Filter by phase: 高�
                 FROM chunks WHERE source='gaokao'{phase_filter} GROUP BY 1 ORDER BY cnt DESC""",
             phase_params,
         ).fetchall()
+        # Per 学段 textbook counts (r49: one site for both); exam rows are not a 学段's textbook.
+        textbook_by_phase = [
+            {"name": r["phase"], "chunks": r["cnt"], "books": r["books"]}
+            for r in con.execute(
+                f"""SELECT phase, COUNT(*) AS cnt, COUNT(DISTINCT book_key) AS books FROM chunks
+                    WHERE (source='mineru' OR source IS NULL) AND phase IN ('初中', '高中'){phase_filter} GROUP BY phase""",
+                phase_params,
+            ).fetchall()
+        ]
+        textbook_by_phase.sort(key=lambda item: STAGES.index(item["name"]))
         ai_table_counts = {
             "explanations": con.execute("SELECT COUNT(*) FROM ai_explanations").fetchone()[0],
             "synonyms": con.execute("SELECT COUNT(*) FROM ai_synonyms").fetchone()[0],
@@ -7154,6 +7194,7 @@ def stats(phase: Optional[str] = Query(None, description="Filter by phase: 高�
             "textbook_books": textbook_books,
             "gaokao_multimodal": gaokao_multimodal,
             "subjects_count": len(dist),
+            "textbook_by_phase": textbook_by_phase,
             "ai_model": AI_SERVICE_LABEL,
             "ai_tables": ai_table_counts,
             "faiss_enabled": faiss_index is not None,
@@ -7667,6 +7708,47 @@ def _short_book_title(title: str | None, edition: str | None) -> str:
     return short
 
 
+# ── 学段: one site for both 初中 and 高中 (r49) ───────────────────────────────
+STAGES = ("初中", "高中")
+
+
+@functools.lru_cache(maxsize=1)
+def _supplemental_stage_by_book_key() -> dict:
+    stages: dict[str, str] = {}
+    for entry in _load_supplemental_textbook_pages():
+        key, stage = entry.get("book_key"), entry.get("phase")
+        if key and stage in STAGES:
+            stages.setdefault(key, stage)
+    return stages
+
+
+def _stage_of_book_key(book_key: str | None) -> str | None:
+    """学段 of a row from its book_key prefix (初中_ / 高中_ / 高考_), or of a supplemental book from its index entry."""
+    key = str(book_key or "")
+    if key.startswith("初中_"):
+        return "初中"
+    if key.startswith(("高中_", "高考_")):
+        return "高中"
+    if key.startswith("suppbook:"):
+        return _supplemental_stage_by_book_key().get(key)
+    return None
+
+
+def _textbook_citation(subject: str | None, item: dict, page, *, stage: str | None = None) -> str:
+    """Citation label. A request over both 学段 puts the 学段 between subject and book: the subject still leads (the
+    page links match on subject + page) and the model can tell an 初中 book from a 高中 one."""
+    short = _short_book_title(item.get("base_title") or item.get("title"), item.get("edition"))
+    middle = f"{stage}·{short}" if stage in STAGES else short
+    return f"[{subject}·{middle}·p{page}]"
+
+
+def _prompt_stage(phase: str | None) -> str:
+    return phase if phase in STAGES else "中学"
+
+
+MERGED_STAGE_RULE = "- 教材摘录来自初中和高中两个学段，引用标签里写明了学段；讲同一个概念时分清初中、高中教材各自怎么说，不要混为一谈。"
+
+
 def _build_overview_context_payload(
     con,
     query: str,
@@ -7729,7 +7811,7 @@ def _build_overview_context_payload(
                 fallback_title=row["title"],
                 content_id=row.get("content_id"),
             )
-            item["citation"] = f"[{subject}·{_short_book_title(item.get('base_title') or item['title'], item.get('edition'))}·p{logical_page}]"
+            item["citation"] = _textbook_citation(subject, item, logical_page, stage=None if phase else _stage_of_book_key(row["book_key"]))
             selected.append(item)
             evidence.append(item)
         groups.append({"subject": subject, "count": len(subject_rows), "items": selected})
@@ -7837,7 +7919,7 @@ def _evidence_from_ids(con, ids: list, terms: list[str], *, phase: str | None = 
             # Supplemental pages carry their own edition / title; the runtime map knows only primary books.
             entry["edition"] = entry.get("edition") or row.get("edition") or ""
             entry["base_title"] = row.get("base_title") or entry.get("base_title")
-        entry["citation"] = f"[{row['subject']}·{_short_book_title(entry.get('base_title') or entry['title'], entry.get('edition'))}·p{logical_page}]"
+        entry["citation"] = _textbook_citation(row["subject"], entry, logical_page, stage=None if phase else (row.get("phase") or _stage_of_book_key(row.get("book_key"))))
         subject_items.append(entry)
     return textbook_by_subject, gaokao_items
 
@@ -7920,8 +8002,9 @@ def _build_overview_context_for_request(
 def _build_overview_prompt(context_payload: dict) -> str:
     query = context_payload.get("query") or ""
     phase = context_payload.get("phase")
-    display_phase = "初中" if phase == "初中" else "高中"
+    display_phase = _prompt_stage(phase)
     exam = "中考" if phase == "初中" else "高考"
+    stage_rule = "" if phase in STAGES else "\n" + MERGED_STAGE_RULE
     groups = context_payload.get("groups") or []
     subjects = "、".join(group["subject"] for group in groups) or "（无）"
     if phase == "初中":
@@ -7965,7 +8048,7 @@ def _build_overview_prompt(context_payload: dict) -> str:
 - 需要摘录之外的知识时，只能是{display_phase}教材层面公认的内容，并在该句末标注「（教材外补充）」。
 - 检索扩展词、真题题干和解析摘录都不是教材原文，不能当作教材的说法引用。
 - 数字、年份、名称、定律表述必须与摘录一致；不确定就不写，不要先写错再加注更正。
-- 不写空话套话，不夸大跨学科联系；总长度 450–700 字。"""
+- 不写空话套话，不夸大跨学科联系；总长度 450–700 字。{stage_rule}"""
 
 
 async def _ai_build_overview(fields: dict) -> ai_guard.Built:
@@ -8134,117 +8217,135 @@ def dict_textbook(
 
     con = get_db()
     try:
-        dict_phase_filter = " AND phase = ?" if phase else ""
-        dict_phase_params = [phase] if phase else []
-        rows = con.execute(
-            f"""
-            SELECT id, subject, title, book_key, section, logical_page, text
-            FROM chunks
-            WHERE source = 'mineru'
-              AND subject = '语文'
-              AND text LIKE ?{dict_phase_filter}
-            ORDER BY
-                CASE
-                    WHEN INSTR(text, ?) > 0 THEN INSTR(text, ?)
-                    ELSE 999999
-                END,
-                COALESCE(logical_page, section),
-                id
-            LIMIT ?
-            """,
-            [f"%{clean_q}%"] + dict_phase_params + [clean_q, clean_q, max(limit * 6, 120)],
-        ).fetchall()
+        def collect(stage):
+            dict_phase_filter = " AND phase = ?" if stage else ""
+            dict_phase_params = [stage] if stage else []
+            rows = con.execute(
+                f"""
+                SELECT id, subject, title, book_key, section, logical_page, text
+                FROM chunks
+                WHERE source = 'mineru'
+                  AND subject = '语文'
+                  AND text LIKE ?{dict_phase_filter}
+                ORDER BY
+                    CASE
+                        WHEN INSTR(text, ?) > 0 THEN INSTR(text, ?)
+                        ELSE 999999
+                    END,
+                    COALESCE(logical_page, section),
+                    id
+                LIMIT ?
+                """,
+                [f"%{clean_q}%"] + dict_phase_params + [clean_q, clean_q, max(limit * 6, 120)],
+            ).fetchall()
 
-        matches = []
-        seen = set()
-        normalized_query = re.sub(r"\s+", "", clean_q)
-        for row in rows:
-            raw_text = _normalize_text_line(row["text"])
-            if not raw_text:
-                continue
-            physical_page = row["section"]
-            logical_page = row["logical_page"] if row["logical_page"] is not None else physical_page
-            manifest_hits = _find_textbook_classics_hits(row["book_key"], logical_page)
+            matches = []
+            seen = set()
+            normalized_query = re.sub(r"\s+", "", clean_q)
+            for row in rows:
+                raw_text = _normalize_text_line(row["text"])
+                if not raw_text:
+                    continue
+                physical_page = row["section"]
+                logical_page = row["logical_page"] if row["logical_page"] is not None else physical_page
+                manifest_hits = _find_textbook_classics_hits(row["book_key"], logical_page)
 
-            if manifest_hits:
-                for manifest_hit in manifest_hits:
-                    clipped_text = _clip_textbook_classics_text(raw_text, manifest_hit)
-                    if not clipped_text:
-                        continue
-                    if normalized_query not in re.sub(r"\s+", "", clipped_text):
-                        continue
-                    heading = str(manifest_hit.get("title") or "").strip() or _extract_passage_heading(clipped_text)
-                    display_title = heading or row["title"]
-                    dedupe_key = (row["id"], display_title, physical_page)
-                    if dedupe_key in seen:
-                        continue
-                    seen.add(dedupe_key)
-                    score = max(8, _classical_marker_score(clipped_text))
-                    if _looks_like_poem(clipped_text):
-                        score += 6
-                    if heading:
-                        score += 2
-                    matches.append(
-                        _apply_book_runtime_meta(
-                            {
-                                "id": row["id"],
-                                "book_key": row["book_key"],
-                                "title": row["title"],
-                                "display_title": display_title,
-                                "classical_title": heading or None,
-                                "section": physical_page,
-                                "logical_page": logical_page,
-                                "text": clipped_text[:DICT_TEXTBOOK_RESPONSE_TEXT_LIMIT],
-                                "snippet": _build_context_snippet(clipped_text, clean_q),
-                                "page_url": _book_page_url(row["book_key"], physical_page),
-                                "classical_kind": manifest_hit.get("kind"),
-                                "score": score,
-                            },
-                            book_key=row["book_key"],
-                            fallback_title=row["title"],
+                if manifest_hits:
+                    for manifest_hit in manifest_hits:
+                        clipped_text = _clip_textbook_classics_text(raw_text, manifest_hit)
+                        if not clipped_text:
+                            continue
+                        if normalized_query not in re.sub(r"\s+", "", clipped_text):
+                            continue
+                        heading = str(manifest_hit.get("title") or "").strip() or _extract_passage_heading(clipped_text)
+                        display_title = heading or row["title"]
+                        dedupe_key = (row["id"], display_title, physical_page)
+                        if dedupe_key in seen:
+                            continue
+                        seen.add(dedupe_key)
+                        score = max(8, _classical_marker_score(clipped_text))
+                        if _looks_like_poem(clipped_text):
+                            score += 6
+                        if heading:
+                            score += 2
+                        matches.append(
+                            _apply_book_runtime_meta(
+                                {
+                                    "id": row["id"],
+                                    "book_key": row["book_key"],
+                                    "title": row["title"],
+                                    "display_title": display_title,
+                                    "classical_title": heading or None,
+                                    "section": physical_page,
+                                    "logical_page": logical_page,
+                                    "text": clipped_text[:DICT_TEXTBOOK_RESPONSE_TEXT_LIMIT],
+                                    "snippet": _build_context_snippet(clipped_text, clean_q),
+                                    "page_url": _book_page_url(row["book_key"], physical_page),
+                                    "classical_kind": manifest_hit.get("kind"),
+                                    "score": score,
+                                },
+                                book_key=row["book_key"],
+                                fallback_title=row["title"],
+                            )
                         )
+                    continue
+
+                if _book_has_textbook_classics_manifest(row["book_key"]):
+                    continue
+
+                clipped_text = _clip_textbook_classics_text(raw_text)
+                if not clipped_text:
+                    continue
+                score = _score_textbook_classical_row(row)
+                if score < 5:
+                    continue
+                if normalized_query not in re.sub(r"\s+", "", clipped_text):
+                    continue
+
+                heading = _extract_passage_heading(clipped_text)
+                display_title = heading or row["title"]
+                dedupe_key = (row["id"], display_title, physical_page)
+                if dedupe_key in seen:
+                    continue
+                seen.add(dedupe_key)
+                matches.append(
+                    _apply_book_runtime_meta(
+                        {
+                            "id": row["id"],
+                            "book_key": row["book_key"],
+                            "title": row["title"],
+                            "display_title": display_title,
+                            "classical_title": heading or None,
+                            "section": physical_page,
+                            "logical_page": logical_page,
+                            "text": clipped_text[:DICT_TEXTBOOK_RESPONSE_TEXT_LIMIT],
+                            "snippet": _build_context_snippet(clipped_text, clean_q),
+                            "page_url": _book_page_url(row["book_key"], physical_page),
+                            "classical_kind": None,
+                            "score": score,
+                        },
+                        book_key=row["book_key"],
+                        fallback_title=row["title"],
                     )
-                continue
-
-            if _book_has_textbook_classics_manifest(row["book_key"]):
-                continue
-
-            clipped_text = _clip_textbook_classics_text(raw_text)
-            if not clipped_text:
-                continue
-            score = _score_textbook_classical_row(row)
-            if score < 5:
-                continue
-            if normalized_query not in re.sub(r"\s+", "", clipped_text):
-                continue
-
-            heading = _extract_passage_heading(clipped_text)
-            display_title = heading or row["title"]
-            dedupe_key = (row["id"], display_title, physical_page)
-            if dedupe_key in seen:
-                continue
-            seen.add(dedupe_key)
-            matches.append(
-                _apply_book_runtime_meta(
-                    {
-                        "id": row["id"],
-                        "book_key": row["book_key"],
-                        "title": row["title"],
-                        "display_title": display_title,
-                        "classical_title": heading or None,
-                        "section": physical_page,
-                        "logical_page": logical_page,
-                        "text": clipped_text[:DICT_TEXTBOOK_RESPONSE_TEXT_LIMIT],
-                        "snippet": _build_context_snippet(clipped_text, clean_q),
-                        "page_url": _book_page_url(row["book_key"], physical_page),
-                        "classical_kind": None,
-                        "score": score,
-                    },
-                    book_key=row["book_key"],
-                    fallback_title=row["title"],
+                )
+            matches.sort(
+                key=lambda item: (
+                    -item["score"],
+                    -item["text"].count(clean_q),
+                    item["text"].find(clean_q) if clean_q in item["text"] else 999999,
+                    item["logical_page"],
+                    item["id"],
                 )
             )
+            for item in matches:
+                item["phase"] = stage or _stage_of_book_key(item.get("book_key"))
+            return matches[:limit]
 
+        # Both 学段 when none is given (r49): each 学段 is looked up on its own, then the two lists are merged.
+        if phase:
+            matches = collect(phase)
+        else:
+            matches = [item for stage in STAGES for item in collect(stage)]
         matches.sort(
             key=lambda item: (
                 -item["score"],
@@ -8262,7 +8363,7 @@ def dict_textbook(
                     for k, v in item.items()
                     if k not in {"score"}
                 }
-                for item in matches[:limit]
+                for item in matches
             ],
         }
     finally:
@@ -10014,10 +10115,19 @@ if FRONTEND.exists():
     def dict_page():
         return (FRONTEND / "dict.html").read_text(encoding="utf-8")
 
-    @app.get("/chuzhong.html", response_class=HTMLResponse)
-    def chuzhong_page():
-        return (FRONTEND / "chuzhong.html").read_text(encoding="utf-8")
+    # r49: one site for both 学段. The former 初中 pages keep working as temporary redirects to the merged pages; their
+    # query string is kept and, unless it already names one, the 初中 学段 is preselected (stage=初中).
+    def _junior_redirect(request: Request, target: str) -> RedirectResponse:
+        params = [(key, value) for key, value in request.query_params.multi_items() if key != "stage"][:20]
+        if not request.query_params.get("view") or request.query_params.get("view") == "search":
+            params.append(("stage", "初中"))
+        query = urlencode(params)
+        return RedirectResponse(target + ("?" + query if query else ""), status_code=302)
 
-    @app.get("/chuzhong-dict.html", response_class=HTMLResponse)
-    def chuzhong_dict_page():
-        return (FRONTEND / "chuzhong-dict.html").read_text(encoding="utf-8")
+    @app.get("/chuzhong.html")
+    def chuzhong_page(request: Request):
+        return _junior_redirect(request, "/")
+
+    @app.get("/chuzhong-dict.html")
+    def chuzhong_dict_page(request: Request):
+        return _junior_redirect(request, "/dict.html")

@@ -320,6 +320,87 @@ class MainIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("本站暂无初中真题数据", prompt)
         self.assertNotIn("高考真题摘录", prompt)
 
+    async def test_overview_prompt_over_both_stages(self):
+        """r49: an overview without a 学段 speaks to 中学 students and asks the model to keep 初中 / 高中 apart."""
+        prompt = main._build_overview_prompt(dict(fake_overview_context("光合作用", phase=None), phase=None))
+        self.assertIn("「AI 中学教材」", prompt)
+        self.assertIn(main.MERGED_STAGE_RULE, prompt)
+        self.assertIn("### 高考怎么考", prompt)
+        single = main._build_overview_prompt(dict(fake_overview_context("光合作用", phase="高中"), phase="高中"))
+        self.assertNotIn(main.MERGED_STAGE_RULE, single)
+        self.assertIn("「AI 高中教材」", single)
+
+    def test_search_without_stage_searches_each_stage_and_tags_results(self):
+        """r49: one site. No 学段 = each 学段 searched on its own (as its old page did), merged, every hit tagged."""
+        calls = []
+
+        def fake_hybrid(con, q, query_analysis, *, scope_subject=None, book_key=None, phase=None, candidate_limit=80):
+            calls.append(phase)
+            prefix = {"初中": "初中_生物学_x", "高中": "高中_生物学_y"}[phase]
+            rows = [{"id": (1000 if phase == "初中" else 2000) + n, "subject": "生物学", "title": f"{phase}书", "book_key": prefix,
+                     "section": n, "logical_page": n, "text": f"{phase}光合作用 {n}", "snippet": "光合作用", "source": "mineru",
+                     "content_id": None, "rank": -100.0 + n, "match_channel": "exact"} for n in range(3)]
+            return rows, {"mode": "hybrid_rerank", "precision_mode": False, "query_intent": "lookup", "candidate_count": 3,
+                          "term_plan": [], "semantic_queries": [], "reranker_loaded": False}
+
+        saved = (main._collect_hybrid_search_rows, main._collect_legacy_search_rows, main._analyze_search_query,
+                 main._build_search_term_plan, main._book_page_ref, main.log_search)
+        main._collect_hybrid_search_rows = fake_hybrid
+        main._collect_legacy_search_rows = lambda *args, **kwargs: []
+        main._analyze_search_query = lambda con, q, **kwargs: {}
+        main._build_search_term_plan = lambda analysis: [{"term": "光合作用", "basis": "query"}]
+        main._book_page_ref = lambda book_key, page: None
+        main.log_search = lambda *args, **kwargs: None
+        args = dict(q="光合作用", subject=None, scope_subject=None, book_key=None, source=None, sort="relevance",
+                    has_images=False, limit=2, offset=0)
+        try:
+            merged = main.search(phase=None, **args)
+            merged_calls, calls[:] = list(calls), []
+            junior = main.search(phase="初中", **args)
+            junior_calls = list(calls)
+        finally:
+            (main._collect_hybrid_search_rows, main._collect_legacy_search_rows, main._analyze_search_query,
+             main._build_search_term_plan, main._book_page_ref, main.log_search) = saved
+        self.assertEqual(merged_calls, ["初中", "高中"])
+        self.assertEqual(junior_calls, ["初中"])
+        results = [r for g in merged["groups"] for r in g["results"]]
+        self.assertEqual(sorted(r["phase"] for r in results), ["初中", "初中", "高中", "高中"], "limit applies per 学段")
+        self.assertEqual(merged["phase_counts"], {"初中": 3, "高中": 3})
+        self.assertTrue(merged["stages_merged"])
+        self.assertEqual({r["phase"] for g in junior["groups"] for r in g["results"]}, {"初中"})
+        self.assertFalse(junior["stages_merged"])
+
+    def test_overview_context_over_both_stages_labels_each_stage(self):
+        """r49: without a 学段 the ids of both 学段 are kept and each citation names its 学段."""
+        con = sqlite3.connect(main.DB_PATH)
+        con.row_factory = sqlite3.Row
+        saved = (main._analyze_search_query, main._expand_chat_search_terms)
+        main._analyze_search_query = lambda con, query, **kwargs: {"retrieval_terms": ["光合作用"]}
+        main._expand_chat_search_terms = lambda con, terms, limit=10: (terms, [])
+        try:
+            con.execute("DROP TABLE IF EXISTS chunks")
+            con.execute("""CREATE TABLE chunks (id INTEGER PRIMARY KEY, content_id TEXT, phase TEXT, subject TEXT, title TEXT,
+                           book_key TEXT, section INTEGER, logical_page INTEGER, text TEXT, source TEXT, year INTEGER, category TEXT)""")
+            con.executemany("INSERT INTO chunks VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [
+                (31, None, "高中", "生物学", "普通高中教科书·生物学必修1 分子与细胞", "高中_生物学_a", 100, 98, "光合作用的过程", "mineru", None, None),
+                (32, None, "初中", "生物学", "义务教育教科书·生物学七年级上册", "初中_生物学_b", 90, 88, "绿色植物的光合作用", "mineru", None, None),
+                (5002, None, "高中", "生物学", "2022年全国甲卷生物第1题", "高考_生物学", 1, None, "1. 关于光合作用……", "gaokao", 2022, "甲卷"),
+            ])
+            con.commit()
+            payload = main._build_overview_context_from_ids(con, "光合作用", [31, 32, 5002], phase=None)
+        finally:
+            con.execute("DROP TABLE IF EXISTS chunks")
+            con.commit()
+            con.close()
+            main._analyze_search_query, main._expand_chat_search_terms = saved
+        citations = [item["citation"] for item in payload["evidence"] if item.get("source") != "gaokao"]
+        self.assertEqual(len(citations), 2)
+        self.assertTrue(citations[0].startswith("[生物学·高中·") and citations[0].endswith("·p98]"), citations)
+        self.assertTrue(citations[1].startswith("[生物学·初中·") and citations[1].endswith("·p88]"), citations)
+        self.assertIn("绿色植物的光合作用", payload["context_text"])
+        check = main.ai_guard.check_citations(f"一句话 {citations[1]}", payload["evidence"])
+        self.assertEqual(check["unverified_count"], 0, "a 学段-labelled citation still verifies")
+
     def test_overview_context_from_the_ids_on_screen(self):
         """Real SQL over a throwaway chunks table: the overview reloads exactly the rows the
         reader sees, in their order, with original text and without exam solutions."""
@@ -626,9 +707,16 @@ class MainIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(getattr(main, name), name)
 
     async def test_served_pages_and_assets(self):
-        for page, script in (("/", "assets/app.js"), ("/chuzhong.html", "assets/app.js"), ("/dict.html", "assets/dict.js"), ("/chuzhong-dict.html", "assets/dict.js")):
+        for page, script in (("/", "assets/app.js"), ("/dict.html", "assets/dict.js")):
             html = (await self.client.get(page)).text
             self.assertLess(html.index("assets/ai-client.js"), html.index(script))
+        # r49: the former 初中 pages redirect to the merged pages, keep their query and preselect 初中 on the search view
+        for page, expected in (("/chuzhong.html", "/?stage=%E5%88%9D%E4%B8%AD"),
+                               ("/chuzhong.html?view=pdf&edition=cn-x&p=3", "/?view=pdf&edition=cn-x&p=3"),
+                               ("/chuzhong-dict.html?q=%E4%B9%8B", "/dict.html?q=%E4%B9%8B&stage=%E5%88%9D%E4%B8%AD")):
+            response = await self.client.get(page, follow_redirects=False)
+            self.assertEqual(response.status_code, 302, page)
+            self.assertEqual(response.headers["location"], expected, page)
         client_js = await self.client.get("/assets/ai-client.js")
         self.assertEqual(client_js.status_code, 200)
         self.assertIn("window.SunAI", client_js.text)

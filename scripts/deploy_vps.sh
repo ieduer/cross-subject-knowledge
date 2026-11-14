@@ -214,7 +214,7 @@ verify_built_image_release_assets() {
     set -e
     for f in \
       assets/pages/book_map.json assets/version.json \
-      index.html dict.html chuzhong.html chuzhong-dict.html \
+      index.html dict.html \
       assets/app.js assets/dict.js assets/ai-client.js assets/library.js \
       assets/style.css assets/dict.css assets/library.css assets/background-mx.jpg \
       vendor/pdfjs/VENDOR.json vendor/pdfjs/LICENSE \

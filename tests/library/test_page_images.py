@@ -942,7 +942,7 @@ print(json.dumps(out, ensure_ascii=False))
         for name in ("app.js", "library.js", "dict.js", "ai-client.js"):
             text = (ROOT / "frontend" / "assets" / name).read_text(encoding="utf-8")
             self.assertNotRegex(text, r"IMG_CDN\}?/pages|img\.rdfzer\.com/pages", name)
-        for page in ("index.html", "chuzhong.html", "dict.html", "chuzhong-dict.html"):
+        for page in ("index.html", "dict.html"):
             self.assertIsNone(LEGACY_URL_RE.search((ROOT / "frontend" / page).read_text(encoding="utf-8")), page)
 
 

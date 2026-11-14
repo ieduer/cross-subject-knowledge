@@ -394,7 +394,8 @@ def cover_url(edition_id: str, width: int = 240) -> str:
 
 
 def viewer_url(stage: Optional[str], edition_id: str, pdf_page: int) -> str:
-    page = "/chuzhong.html" if stage == "初中" else "/"
+    # r49: one page for both 学段 (the stage argument is kept for callers; /chuzhong.html now redirects to /).
+    page = "/"
     return f"{page}?view=pdf&edition={quote(edition_id, safe='')}" + (f"&p={int(pdf_page)}" if pdf_page and pdf_page > 1 else "")
 
 

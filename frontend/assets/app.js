@@ -1,13 +1,25 @@
 /* ── Cross-Subject Knowledge Platform · Frontend ── */
 
 const API = '';  // same origin
-const PHASE = document.body.dataset.phase || '高中';
-const DISPLAY_PHASE = PHASE;
+// ── 学段: one site for 初中 and 高中 (r49) ──────────────────
+// Searches cover both 学段 (the server searches each on its own and merges); the 学段 switch
+// only filters what is on the page and sets the scope of the AI overview. '' = both.
+const STAGES = ['初中', '高中'];
+let stageFilter = (() => {
+    try {
+        const value = new URLSearchParams(location.search).get('stage');
+        return STAGES.includes(value) ? value : '';
+    } catch (_) { return ''; }
+})();
+// The 学段 the current overview and its conversation were written for (set by each search).
+// Switching 学段 afterwards only filters the results; a new overview needs a new search.
+let aiOverviewStage = stageFilter;
+function stageWords() { return stageFilter || '初中、高中'; }
 window._subjectMeta = {};
 // AI runs only on an explicit user action and only through this site's own server
 // (assets/ai-client.js → POST /api/chat). The browser never contacts a model gateway.
 const IMG_CDN = 'https://img.rdfzer.com';
-const DEFAULT_FRONTEND_VERSION = '2026.11.12-r48';
+const DEFAULT_FRONTEND_VERSION = '2026.11.13-r49';
 const FRONTEND_VERSION_FILE = '/assets/version.json';
 const AI_MEMORY_LIMIT = 12;
 const DOWNLOADABLE_LIBRARY_BOOKS = 316;
@@ -171,12 +183,13 @@ function getCurrentAIScopePayload() {
 }
 
 function getCurrentAISubjectCount() {
-    const counts = currentData?.subject_counts || currentOverviewData?.subject_counts || {};
+    const counts = stageScopedData(currentData, aiOverviewStage)?.subject_counts || currentOverviewData?.subject_counts || {};
     return Object.keys(counts).length;
 }
 
 function hasSearchResults() {
-    return Boolean(currentData && Array.isArray(currentData.groups) && currentData.groups.length);
+    const data = stageScopedData(currentData, aiOverviewStage);
+    return Boolean(data && Array.isArray(data.groups) && data.groups.length);
 }
 
 function getAISourceLabel() {
@@ -189,13 +202,13 @@ function getAISourceLabel() {
 
 function getAIExecutionKey() {
     const scope = getCurrentAIScopePayload();
-    return [currentQuery, currentSubjectFilter || '', scope.scope_subject || '', scope.book_key || ''].join('|');
+    return [currentQuery, aiOverviewStage, currentSubjectFilter || '', scope.scope_subject || '', scope.book_key || ''].join('|');
 }
 
 // The records the overview actually cited (else the results on screen): a follow-up keeps them as evidence.
 function followupEvidenceIds() {
     const overview = aiConversation.find(msg => msg.kind === 'overview' && !msg.isError && Array.isArray(msg.sources));
-    const ids = overview ? overview.sources.map(src => src.id) : overviewResultIds(currentData);
+    const ids = overview ? overview.sources.map(src => src.id) : overviewResultIds(stageScopedData(currentData, aiOverviewStage));
     return Array.from(new Set(ids))
         .filter(id => (Number.isInteger(id) && id > 0) || (typeof id === 'string' && /^supp:[0-9a-f]{16}$/.test(id)))
         .slice(0, 24);
@@ -208,7 +221,7 @@ function buildAIServerPayload(userMessage, history) {
         user_message: userMessage,
         history,
         ids: followupEvidenceIds(),
-        phase: PHASE,
+        ...(aiOverviewStage ? { phase: aiOverviewStage } : {}),
         ...(scope.scope_subject ? { scope_subject: scope.scope_subject } : {}),
         ...(scope.book_key ? { book_key: scope.book_key } : {}),
     };
@@ -266,15 +279,36 @@ function buildOverviewPayload() {
     const scope = getCurrentAIScopePayload();
     return {
         query: currentQuery,
-        ids: overviewResultIds(currentData),
-        phase: PHASE,
+        ids: overviewResultIds(stageScopedData(currentData, aiOverviewStage)),
+        ...(aiOverviewStage ? { phase: aiOverviewStage } : {}),
         ...(scope.scope_subject ? { scope_subject: scope.scope_subject } : {}),
         ...(scope.book_key ? { book_key: scope.book_key } : {}),
     };
 }
 
 function shortBookTitle(title) {
-    return String(title || '').replace(/^(?:普通高中|义务教育)教科书[·・]/, '').trim();
+    return String(title || '').replace(/^(?:普通高中|义务教育)教科书[·・_]/, '').trim();
+}
+
+// 学段 of a result or book: the server tags it; older payloads are read from the book key prefix.
+function resultStage(r) {
+    if (!r) return '';
+    if (STAGES.includes(r.phase)) return r.phase;
+    const key = String(r.book_key || '');
+    if (key.startsWith('初中_')) return '初中';
+    if (key.startsWith('高中_') || key.startsWith('高考_') || r.source === 'gaokao') return '高中';
+    return '';
+}
+
+// The search response restricted to a 学段 (default: the one chosen on the page); the response holds both.
+function stageScopedData(data, stage = stageFilter) {
+    if (!data || !stage) return data;
+    const groups = (data.groups || [])
+        .map(g => ({ ...g, results: (g.results || []).filter(r => resultStage(r) === stage) }))
+        .filter(g => g.results.length);
+    const subjectCounts = {};
+    groups.forEach(g => { subjectCounts[g.subject] = g.results.length; });
+    return { ...data, groups, subject_counts: subjectCounts, total: groups.reduce((n, g) => n + g.results.length, 0) };
 }
 
 // Retrieval-only digest of one search (no model call): what was found, where.
@@ -505,7 +539,7 @@ function renderAIConversation() {
     if (aiRequestPending) {
         html += renderAIPending();
     } else if (!aiConversation.length && aiSearchStage === 'searching') {
-        html = `<div class="ai-msg assistant pending"><div class="ai-msg-text"><span class="ai-dots" aria-hidden="true"></span>正在检索${escHtml(DISPLAY_PHASE)}各科教材原文…</div></div>`;
+        html = `<div class="ai-msg assistant pending"><div class="ai-msg-text"><span class="ai-dots" aria-hidden="true"></span>正在检索${escHtml(stageWords())}各科教材原文…</div></div>`;
     }
     aiContent.innerHTML = html;
     // Formulas in answers ($…$) are typeset from the escaped text nodes; KaTeX runs with trust off.
@@ -718,7 +752,7 @@ document.querySelectorAll('.nav-btn[data-view]').forEach(btn => {
         const view = document.getElementById('view-' + btn.dataset.view);
         view.classList.add('active');
         if (btn.dataset.view === 'graph') loadGraph();
-        if (btn.dataset.view === 'gaokao' && PHASE === '高中') initGaokao();
+        if (btn.dataset.view === 'gaokao') initGaokao();
         if (btn.dataset.view === 'insights') loadInsights();
     });
 });
@@ -740,7 +774,7 @@ let booksLoaded = false;
 async function loadBooks() {
     if (booksLoaded) return;
     try {
-        const res = await fetch(`${API}/api/books?phase=${encodeURIComponent(PHASE)}`);
+        const res = await fetch(`${API}/api/books`);
         const subjects = await res.json();
         filterScope.innerHTML = '<option value="">全部教材</option>';
 
@@ -757,10 +791,10 @@ async function loadBooks() {
         subjects.forEach(subj => {
             const optgroup = document.createElement('optgroup');
             optgroup.label = `${subj.icon} ${subj.subject} · 单本教材`;
-            subj.books.forEach(b => {
+            subj.books.slice().sort((a, b) => STAGES.indexOf(resultStage(a)) - STAGES.indexOf(resultStage(b))).forEach(b => {
                 const opt = document.createElement('option');
                 opt.value = `book:${b.book_key}`;
-                opt.textContent = b.display_title || b.title;
+                opt.textContent = [resultStage(b), shortBookTitle(b.display_title || b.title)].filter(Boolean).join(' · ');
                 optgroup.appendChild(opt);
             });
             filterScope.appendChild(optgroup);
@@ -800,11 +834,8 @@ if (evidenceToggleAllEl) {
 searchBtn.addEventListener('click', () => doSearch(searchInput.value));
 searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(searchInput.value); });
 // ── Dynamic Concept Carousel ──────────────────────────────
-const FALLBACK_CONCEPTS = PHASE === '初中'
-    ? ['一次函数', '化学方程式', '光合作用', '丝绸之路', '勾股定理', '欧姆定律', '细胞', '地球运动',
-       '法治', '光的折射', '二元一次方程', '生态系统', '物态变化', '辛亥革命', '全等三角形', '酸碱盐', '大洲大洋', '文言文']
-    : ['蛋白质', 'DNA', '能量守恒', '丝绸之路', '温室效应', '光合作用', '平衡', '电子',
-       '氧化还原', '细胞分裂', '力学', '概率', '函数', '文艺复兴', '全球化', '化学键', '自然选择', '电磁波'];
+const FALLBACK_CONCEPTS = ['光合作用', '丝绸之路', '勾股定理', '能量守恒', '欧姆定律', '蛋白质', '生态系统', '辛亥革命',
+    '温室效应', '一次函数', '氧化还原', '文艺复兴', '光的折射', '自然选择', '化学方程式', '全球化', '函数', '电磁波'];
 let allConcepts = [...FALLBACK_CONCEPTS];
 const carousel = document.getElementById('concept-carousel');
 const CAROUSEL_SIZE = 4;
@@ -834,7 +865,7 @@ function renderCarouselBatch() {
 // Load curated academic keywords from API
 (async () => {
     try {
-        const res = await fetch(`${API}/api/keywords?limit=120&phase=${encodeURIComponent(PHASE)}`);
+        const res = await fetch(`${API}/api/keywords?limit=120`);
         if (res.ok) {
             const data = await res.json();
             const kws = data.keywords || [];
@@ -855,7 +886,7 @@ function renderCarouselBatch() {
 // ── Trending Searches ─────────────────────────────────────
 async function loadTrending() {
     try {
-        const res = await fetch(`${API}/api/search/trending?phase=${encodeURIComponent(PHASE)}`);
+        const res = await fetch(`${API}/api/search/trending`);
         if (!res.ok) return;
         const data = await res.json();
         const section = document.getElementById('trending-section');
@@ -898,6 +929,8 @@ async function doSearch(q, { subject = null } = {}) {
     currentQuery = q;
     currentSubjectFilter = subject || null;
     resetAIConversation();
+    aiOverviewStage = stageFilter;
+    renderAIStageNote();
     document.body.classList.add('has-search');
 
     resultsEl.innerHTML = '<div class="loading">检索中…</div>';
@@ -910,7 +943,8 @@ async function doSearch(q, { subject = null } = {}) {
     const epoch = aiConversationEpoch;
 
     // Build search URL with advanced filters
-    const params = new URLSearchParams({ q, limit: 100, phase: PHASE });
+    // No 学段: the server searches 初中 and 高中 each on its own and returns both, tagged (r49).
+    const params = new URLSearchParams({ q, limit: 100 });
     if (currentSubjectFilter) params.set('subject', currentSubjectFilter);
 
     const scopeValue = filterScope.value;
@@ -934,7 +968,7 @@ async function doSearch(q, { subject = null } = {}) {
         if (!currentSubjectFilter) {
             currentOverviewData = data;
         }
-        aiLocalDigest = buildLocalDigest(data);
+        aiLocalDigest = buildLocalDigest(stageScopedData(data, aiOverviewStage));
         setAISearchStage('');
         renderResults(currentData);
         if (hasSearchResults()) {
@@ -977,7 +1011,7 @@ async function loadRelated(searchData, q) {
             .map(([term, count]) => ({ term, count }));
 
         if (data.length === 0) {
-            const res = await fetch(`${API}/api/related?q=${encodeURIComponent(q)}&limit=10&phase=${encodeURIComponent(PHASE)}`);
+            const res = await fetch(`${API}/api/related?q=${encodeURIComponent(q)}&limit=10`);
             data = await res.json();
         }
 
@@ -1002,26 +1036,28 @@ async function loadRelated(searchData, q) {
     }
 }
 
+// A result shows only its source, the recognized text, and the page image / PDF to check it against (r49).
+// Page numbers sit in the buttons' tooltips; match channel, term and source chips are not shown.
+function resultSourceLine(r) {
+    if (r.source === 'gaokao') return ['真题', r.year, r.category].filter(Boolean).join(' · ') || '真题';
+    return [stageFilter ? '' : resultStage(r), shortBookTitle(r.display_title || r.title)].filter(Boolean).join(' · ');
+}
+
 function renderResultCard(r, subject, subjectBreadth, query, isExtra) {
+    const pageTitle = r.page_url ? pageRefTitle(r) : '';
     return `
                 <div class="result-card${isExtra ? ' is-extra' : ''}" onclick="this.classList.toggle('expanded')">
                     <div class="result-meta">
-                        <span class="result-title">${escHtml(r.title)} · §${r.section}</span>
-                        ${r.source === 'gaokao' ? '<span class="source-badge gaokao">' + (PHASE === '高中' ? '📝 真题' : '📝 考试') + '</span>' : '<span class="source-badge textbook">📚 教材</span>'}
-                        ${r.image_count > 0 ? `<span class="img-badge">📷 ${r.image_count}</span>` : ''}
-                        ${r.page_url ? `<span class="page-badge" title="${escAttr(pageRefTitle(r))}">📄 ${escHtml(pageRefLabel(r))}</span>` : ''}
+                        <span class="result-title">${escHtml(resultSourceLine(r))}</span>
                     </div>
-                    ${renderEvidenceTrace(r, subject, subjectBreadth, query)}
-                    <div class="result-snippet">${sanitizeSnippet(r.snippet)}</div>
-                    <div class="result-text">${renderText(r.text, r.book_key)}</div>
+                    <div class="result-snippet">${sanitizeSnippet(stripPageFurniture(r.snippet, true))}</div>
+                    <div class="result-text">${renderText(stripPageFurniture(r.text), r.book_key)}</div>
                     ${r.page_url ? `<div class="result-actions">
-                        <button class="view-page-btn" onclick="event.stopPropagation(); openPageViewer('${escAttr(r.book_key)}', ${r.page_num}, ${r.total_pages})">
-                            📖 查看原文
+                        <button class="view-page-btn" title="${escAttr(pageTitle)}" aria-label="查看页图：${escAttr(pageTitle)}" onclick="event.stopPropagation(); openPageViewer('${escAttr(r.book_key)}', ${r.page_num}, ${r.total_pages})">
+                            🖼 查看页图
                         </button>
                     </div>` : (String(r.book_key || '').startsWith('suppbook:') ? `<div class="result-actions">
-                        <span class="view-page-note" title="该结果来自补充教材 OCR，当前没有对应的页图映射，因此不能打开页图原文。">
-                            📄 补充教材暂无页图
-                        </span>
+                        <span class="view-page-note" title="该结果来自补充教材 OCR，当前没有对应的页图映射，因此不能打开页图原文。">暂无页图</span>
                     </div>` : '')}
                 </div>`;
 }
@@ -1052,7 +1088,77 @@ function sortedResultGroups(data) {
     return ((data && data.groups) || []).slice().sort((a, b) => (b.results || []).length - (a.results || []).length);
 }
 
+// ── 学段 switch: 全部 / 初中 / 高中 under the search box; counts appear once there are results ──
+const stageSwitchEl = document.getElementById('stage-switch');
+
+function stageCounts(data) {
+    const counts = { '': 0, 初中: 0, 高中: 0 };
+    ((data && data.groups) || []).forEach(g => (g.results || []).forEach(r => {
+        counts[''] += 1;
+        const stage = resultStage(r);
+        if (stage) counts[stage] += 1;
+    }));
+    return counts;
+}
+
+function renderStageSwitch() {
+    if (!stageSwitchEl) return;
+    const counts = currentData ? stageCounts(currentData) : null;
+    stageSwitchEl.innerHTML = '<span class="stage-switch-label">学段</span>' + [['', '全部'], ['初中', '初中'], ['高中', '高中']].map(([value, label]) => {
+        const active = value === stageFilter;
+        const count = counts ? `<span class="stage-count">${counts[value].toLocaleString()}</span>` : '';
+        return `<button type="button" class="stage-btn${active ? ' active' : ''}" data-stage="${escAttr(value)}" aria-pressed="${active}">${escHtml(label)}${count}</button>`;
+    }).join('');
+}
+
+function syncStageUrl() {
+    try {
+        const params = new URLSearchParams(location.search);
+        if (stageFilter) params.set('stage', stageFilter); else params.delete('stage');
+        const text = params.toString();
+        history.replaceState(history.state, '', location.pathname + (text ? '?' + text : '') + location.hash);
+    } catch (_) { /* e.g. file:// */ }
+}
+
+// Switching 学段 filters the results already on the page: no new search and no AI request.
+// The overview keeps the 学段 it was written for; the note in the AI panel offers a new search.
+function setStageFilter(stage) {
+    const next = STAGES.includes(stage) ? stage : '';
+    if (next === stageFilter) return;
+    stageFilter = next;
+    syncStageUrl();
+    renderStageSwitch();
+    renderAIStageNote();
+    if (currentData) renderResults(currentData);
+}
+
+const aiStageNoteEl = document.getElementById('ai-stage-note');
+function renderAIStageNote() {
+    if (!aiStageNoteEl) return;
+    const differs = Boolean(currentData && currentQuery) && stageFilter !== aiOverviewStage;
+    aiStageNoteEl.classList.toggle('hidden', !differs);
+    if (!differs) { aiStageNoteEl.innerHTML = ''; return; }
+    aiStageNoteEl.innerHTML = `<span>这段导读依据「${escHtml(aiOverviewStage || '全部学段')}」的检索结果；下方原文已筛到「${escHtml(stageFilter || '全部学段')}」。</span>`
+        + `<button type="button" class="ai-stage-research">按「${escHtml(stageFilter || '全部学段')}」重新检索</button>`;
+}
+if (aiStageNoteEl) {
+    aiStageNoteEl.addEventListener('click', event => {
+        if (event.target.closest('.ai-stage-research') && currentQuery) doSearch(currentQuery);
+    });
+}
+
+if (stageSwitchEl) {
+    stageSwitchEl.addEventListener('click', event => {
+        const button = event.target.closest('.stage-btn');
+        if (button) setStageFilter(button.dataset.stage || '');
+    });
+    renderStageSwitch();
+}
+
 function renderResults(data) {
+    renderStageSwitch();
+    const fullData = data;
+    data = stageScopedData(fullData);
     renderQueryAnalysis(data.query_analysis);
 
     const counts = data.subject_counts || {};
@@ -1060,7 +1166,10 @@ function renderResults(data) {
     const groups = sortedResultGroups(data);
     if (groups.length === 0) {
         if (evidenceSummaryEl) evidenceSummaryEl.textContent = '';
-        resultsEl.innerHTML = '<div class="loading">未找到相关结果，换个说法或更短的关键词试试。</div>';
+        const other = stageFilter && stageCounts(fullData)[''] > 0;
+        resultsEl.innerHTML = other
+            ? `<div class="loading">${escHtml(stageFilter)}教材没有找到相关结果；切换到「全部」可看另一个学段的 ${stageCounts(fullData)[''].toLocaleString()} 段。</div>`
+            : '<div class="loading">未找到相关结果，换个说法或更短的关键词试试。</div>';
         return;
     }
     const shown = groups.reduce((sum, g) => sum + (g.results || []).length, 0);
@@ -1144,57 +1253,6 @@ function renderQueryAnalysis(analysis, filterSubject = null) {
     queryAnalysisEl.classList.remove('hidden');
 }
 
-function renderEvidenceTrace(result, subject, subjectBreadth, query) {
-    const evidenceChips = [];
-    if (result.retrieval_source === 'supplemental' || result.match_channel === 'supplemental') {
-        evidenceChips.push('<span class="evidence-chip supplemental">备份教材页</span>');
-    } else if (result.match_channel === 'exact') {
-        evidenceChips.push('<span class="evidence-chip strong">原文精确命中</span>');
-    } else if (result.match_channel === 'semantic') {
-        evidenceChips.push('<span class="evidence-chip semantic">向量语义召回</span>');
-    } else if (result.match_channel === 'fts') {
-        evidenceChips.push('<span class="evidence-chip semantic">全文检索命中</span>');
-    } else {
-        evidenceChips.push('<span class="evidence-chip semantic">混合召回</span>');
-    }
-
-    if (result.page_url) {
-        evidenceChips.push(`<span class="evidence-chip page">可回原页 ${escHtml(pageRefLabel(result))}</span>`);
-    } else {
-        evidenceChips.push('<span class="evidence-chip neutral">仅片段证据</span>');
-    }
-
-    if (result.snippet_source === 'sentence') {
-        evidenceChips.push('<span class="evidence-chip strong">句级证据</span>');
-    }
-
-    if (result.source === 'gaokao') {
-        evidenceChips.push(
-            `<span class="evidence-chip exam">${escHtml([result.year, result.category].filter(Boolean).join(' · ') || (PHASE === '高中' ? '高考真题' : '考试题'))}</span>`
-        );
-    } else {
-        evidenceChips.push(
-            result.retrieval_source === 'supplemental'
-                ? '<span class="evidence-chip textbook">教材原文兜底</span>'
-                : '<span class="evidence-chip textbook">教材原文</span>'
-        );
-    }
-
-    if (result.image_count > 0) {
-        evidenceChips.push(`<span class="evidence-chip media">含 ${result.image_count} 张图</span>`);
-    }
-
-    if (result.matched_term) {
-        evidenceChips.push(`<span class="evidence-chip neutral">术语：${escHtml(result.matched_term)}</span>`);
-    }
-
-    return `
-        <div class="result-trace">
-            <div class="evidence-chips">${evidenceChips.join('')}</div>
-        </div>
-    `;
-}
-
 function escHtml(s) {
     const d = document.createElement('div');
     d.textContent = s == null ? '' : String(s);
@@ -1203,6 +1261,15 @@ function escHtml(s) {
 
 function escAttr(s) {
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Page furniture the OCR kept as text: the publisher watermark line (also its common misreads) and the
+// "personal study only" notice. Whole lines only in the full text; whole space-separated tokens in a snippet.
+const PAGE_FURNITURE_LINE_RE = /^[ \t]*(?:人民[教都旅傲]育出版社|仅供个人学习使用，未经授权不得另做他用)[ \t]*(?:\n|$)/gm;
+const PAGE_FURNITURE_TOKEN_RE = /(^|\s)(?:人民[教都旅傲]育出版社|仅供个人学习使用，未经授权不得另做他用)(?=\s|$)/g;
+function stripPageFurniture(text, snippet = false) {
+    const value = String(text || '');
+    return snippet ? value.replace(PAGE_FURNITURE_TOKEN_RE, '$1').trim() : value.replace(PAGE_FURNITURE_LINE_RE, '');
 }
 
 // Sanitize snippet: keep <mark> highlights, strip everything else
@@ -1568,7 +1635,7 @@ async function loadGraph(mode = 'cross', subject = '') {
     container.innerHTML = '<div class="loading" style="padding-top:40vh">加载知识图谱…</div>';
 
     try {
-        let url = `${API}/api/graph/overview?mode=${mode}&limit=80&phase=${encodeURIComponent(PHASE)}`;
+        let url = `${API}/api/graph/overview?mode=${mode}&limit=80`;
         if (subject) url += `&subject=${encodeURIComponent(subject)}`;
         const res = await fetch(url);
         const data = await res.json();
@@ -1890,10 +1957,14 @@ function applyLiveStatsToUI(data) {
     const nSubjects = data.subjects_count || (data.subjects || []).length;
     const nBooks = Number(data.textbook_books || 0);
     const nTextbook = Number(data.textbook_chunks || 0);
-    const nGaokao = PHASE === '高中' ? Number(data.gaokao_chunks || 0) : 0;
+    const nGaokao = Number(data.gaokao_chunks || 0);
+    const byPhase = Array.isArray(data.textbook_by_phase) ? data.textbook_by_phase : [];
     const heroSub = document.getElementById('hero-sub');
     if (heroSub) {
-        heroSub.textContent = `${DISPLAY_PHASE} ${nSubjects} 科 · ${nBooks.toLocaleString()} 册教材 ${nTextbook.toLocaleString()} 段原文`
+        const stageParts = byPhase.map(item => `${item.name} ${Number(item.books || 0).toLocaleString()} 册 ${Number(item.chunks || 0).toLocaleString()} 段`);
+        heroSub.textContent = (stageParts.length
+            ? `${stageParts.join(' · ')}原文`
+            : `${nSubjects} 科 · ${nBooks.toLocaleString()} 册教材 ${nTextbook.toLocaleString()} 段原文`)
             + (nGaokao > 0 ? ` · 高考题库 ${nGaokao.toLocaleString()} 条` : '');
     }
     const regions = (data.gaokao_by_region || []).map(item => {
@@ -1907,7 +1978,7 @@ function applyLiveStatsToUI(data) {
     const dataNoteBody = document.getElementById('data-note-body');
     if (dataNote && dataNoteBody) {
         const lines = [
-            `教材：${nBooks.toLocaleString()} 册，扫描版经 OCR 后按页切成 ${nTextbook.toLocaleString()} 段原文；部分学科同时收了两个版本（例如数学 A 版与 B 版），检索结果会标出版本。`,
+            `教材：初中、高中共 ${nBooks.toLocaleString()} 册，扫描版经 OCR 后按页切成 ${nTextbook.toLocaleString()} 段原文${byPhase.length ? `（${byPhase.map(item => `${item.name} ${Number(item.chunks || 0).toLocaleString()} 段`).join('、')}）` : ''}；一次检索同时查两个学段，结果上方可选「初中」「高中」。部分学科同时收了两个版本（例如数学 A 版与 B 版），检索结果会标出版本。`,
         ];
         if (nGaokao > 0) {
             const coverage = regions.length ? `：${regions.map(r => r.text).join('；')}` : '';
@@ -1919,7 +1990,7 @@ function applyLiveStatsToUI(data) {
     }
 
     const gaokaoHeroSub = document.getElementById('gk-hero-sub');
-    if (gaokaoHeroSub && PHASE === '高中') {
+    if (gaokaoHeroSub) {
         const multimodal = data.gaokao_multimodal ? ` · 含图 ${Number(data.gaokao_multimodal).toLocaleString()} 条` : '';
         gaokaoHeroSub.textContent = `${regions.map(r => r.text).join(' ｜ ') || `${nGaokao.toLocaleString()} 条`}${multimodal} · 一条记录可能含多道小题`;
     }
@@ -1934,7 +2005,7 @@ function applyLiveStatsToUI(data) {
                 `${nBooks} 本已入库教材`,
                 `${DOWNLOADABLE_LIBRARY_BOOKS} 本 PDF 下载`,
                 `${(data.total_chunks || 0).toLocaleString()} 条语料`,
-                ...(PHASE === '高中' && (data.gaokao_chunks || 0) > 0 ? [`${(data.gaokao_chunks || 0).toLocaleString()} 道真题`] : []),
+                ...((data.gaokao_chunks || 0) > 0 ? [`${(data.gaokao_chunks || 0).toLocaleString()} 道真题`] : []),
                 data.faiss_enabled
                     ? `FAISS ${(data.faiss_vectors || 0).toLocaleString()} 向量`
                     : 'FAISS 未启用',
@@ -1953,7 +2024,7 @@ function applyLiveStatsToUI(data) {
         const [startYear, endYear] = data.gaokao_year_range || [];
         const yearRange = startYear && endYear ? `${startYear}-${endYear}` : '历年';
         const multimodal = data.gaokao_multimodal ? `，其中 <strong>${data.gaokao_multimodal.toLocaleString()}</strong> 道含图题` : '';
-        const gaokaoCorpusPart = PHASE === '高中' && Number(String(nGaokao).replace(/,/g, '')) > 0
+        const gaokaoCorpusPart = Number(String(nGaokao).replace(/,/g, '')) > 0
             ? ` / 真题 ${nGaokao}），覆盖 <strong>${nSubjects}</strong> 个学科；真题时间范围为 <strong>${yearRange}</strong>${multimodal}。`
             : `），覆盖 <strong>${nSubjects}</strong> 个学科。`;
         aboutCorpusText.innerHTML = `全文检索基于 SQLite FTS5，当前共有 <strong>${nTotal}</strong> 条结构化语料（教材 ${nTextbook}${gaokaoCorpusPart}`;
@@ -1970,7 +2041,7 @@ function applyLiveStatsToUI(data) {
     const aboutPrecomputeText = document.getElementById('about-precompute-text');
     if (aboutPrecomputeText) {
         const tables = data.ai_tables || {};
-        const gaokaoLinksPart = PHASE === '高中' && Number(tables.gaokao_links || 0) > 0 ? `、真题关联 ${Number(tables.gaokao_links || 0).toLocaleString()}` : '';
+        const gaokaoLinksPart = Number(tables.gaokao_links || 0) > 0 ? `、真题关联 ${Number(tables.gaokao_links || 0).toLocaleString()}` : '';
         aboutPrecomputeText.textContent = `AI 预计算已入库：解读 ${Number(tables.explanations || 0).toLocaleString()}、同义/别名 ${Number(tables.synonyms || 0).toLocaleString()}、关系 ${Number(tables.relations || 0).toLocaleString()}、教材摘要 ${Number(tables.summaries || 0).toLocaleString()}${gaokaoLinksPart}。`;
     }
 
@@ -1988,15 +2059,15 @@ function applyLiveStatsToUI(data) {
 (async function init() {
     // Fetch subject metadata for this phase
     try {
-        const metaRes = await fetch(`${API}/api/subject-meta?phase=${encodeURIComponent(PHASE)}`);
+        const metaRes = await fetch(`${API}/api/subject-meta`);
         if (metaRes.ok) window._subjectMeta = await metaRes.json();
     } catch (_) { /* silent */ }
 
     try {
-        const res = await fetch(`${API}/api/stats?phase=${encodeURIComponent(PHASE)}`);
+        const res = await fetch(`${API}/api/stats`);
         const data = await res.json();
         const el = document.getElementById('stats-bar');
-        const examBySubject = new Map((PHASE === '高中' ? data.gaokao_by_subject || [] : []).map(item => [item.name, item.count]));
+        const examBySubject = new Map((data.gaokao_by_subject || []).map(item => [item.name, item.count]));
         el.innerHTML = data.subjects.map(s => {
             const exam = examBySubject.get(s.name) || 0;
             const textbook = Math.max(0, s.count - exam);
@@ -2006,11 +2077,6 @@ function applyLiveStatsToUI(data) {
         applyLiveStatsToUI(data);
     } catch (e) { /* silent */ }
 
-    // Hide gaokao nav for non-高中 phases
-    if (PHASE !== '高中') {
-        const gkBtn = document.querySelector('[data-view="gaokao"]');
-        if (gkBtn) gkBtn.style.display = 'none';
-    }
 })();
 
 // ── Gaokao View ─────────────────────────────────────────────────
@@ -2263,7 +2329,7 @@ async function requestGaokaoAI(questionId, btn) {
     resultEl.innerHTML = '<div class="loading">✨ AI 正在分析真题与教材的关联… <button class="ai-followup-chip gk-ai-cancel" type="button">取消</button></div>';
     resultEl.classList.remove('hidden');
 
-    const request = window.SunAI.ask(`${API}/api/gaokao/chat`, { question_id: Number(questionId), phase: PHASE });
+    const request = window.SunAI.ask(`${API}/api/gaokao/chat`, { question_id: Number(questionId), phase: '高中' });
     const cancelBtn = resultEl.querySelector('.gk-ai-cancel');
     if (cancelBtn) cancelBtn.addEventListener('click', event => { event.stopPropagation(); request.cancel(); });
 
@@ -2380,7 +2446,7 @@ async function loadInsights() {
     insightsLoaded = true;
     // Populate subject selector from stats
     try {
-        const sr = await fetch(`${API}/api/stats?phase=${encodeURIComponent(PHASE)}`);
+        const sr = await fetch(`${API}/api/stats`);
         const sd = await sr.json();
         const sel = document.getElementById('freq-subject');
         sd.subjects.forEach(s => {
@@ -2406,7 +2472,7 @@ async function loadFreqChart() {
     const source = document.getElementById('freq-source').value;
     const subject = document.getElementById('freq-subject').value;
     try {
-        const url = `${API}/api/analytics/word-freq?source=${source}&limit=30&phase=${encodeURIComponent(PHASE)}${subject ? '&subject=' + encodeURIComponent(subject) : ''}`;
+        const url = `${API}/api/analytics/word-freq?source=${source}&limit=30${subject ? '&subject=' + encodeURIComponent(subject) : ''}`;
         const res = await fetch(url);
         const data = await res.json();
         const freqs = data.frequencies || [];
@@ -2485,7 +2551,7 @@ async function loadHeatmap() {
     const container = document.getElementById('heatmap-chart');
     container.innerHTML = '<div class="loading">加载学科关联矩阵…</div>';
     try {
-        const res = await fetch(`${API}/api/analytics/heatmap?phase=${encodeURIComponent(PHASE)}`);
+        const res = await fetch(`${API}/api/analytics/heatmap`);
         const data = await res.json();
         renderHeatmap(container, data);
     } catch (e) { container.innerHTML = `<div class="loading">加载失败: ${e.message}</div>`; }
@@ -2597,7 +2663,7 @@ function renderHeatmap(container, data) {
 // ── Coverage Analysis ──
 async function loadCoverage() {
     try {
-        const res = await fetch(`${API}/api/analytics/coverage?limit=15&phase=${encodeURIComponent(PHASE)}`);
+        const res = await fetch(`${API}/api/analytics/coverage?limit=15`);
         const data = await res.json();
         renderCoverageList('coverage-hidden', data.hidden_exam_focus, 'exam');
         renderCoverageList('coverage-low', data.low_exam_focus, 'textbook');
@@ -2636,7 +2702,7 @@ async function loadBreadth() {
     const container = document.getElementById('breadth-chart');
     container.innerHTML = '<div class="loading">加载概念广度排名…</div>';
     try {
-        const res = await fetch(`${API}/api/analytics/concept-breadth?limit=30&phase=${encodeURIComponent(PHASE)}`);
+        const res = await fetch(`${API}/api/analytics/concept-breadth?limit=30`);
         const data = await res.json();
         renderBreadth(container, data.concepts || []);
     } catch (e) { container.innerHTML = `<div class="loading">加载失败</div>`; }
@@ -2708,7 +2774,7 @@ async function loadSearchGraph(term) {
     if (existing) existing.remove();
 
     try {
-        const res = await fetch(`${API}/api/graph/search?q=${encodeURIComponent(term)}&phase=${encodeURIComponent(PHASE)}`);
+        const res = await fetch(`${API}/api/graph/search?q=${encodeURIComponent(term)}`);
         const data = await res.json();
         if (!data.nodes || data.nodes.length < 3) return;
 

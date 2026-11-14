@@ -1,5 +1,5 @@
 /* ── SUN library tabs: 「PDF 预览」 + 「教材下载」 ──────────────────────────
- * Loaded after app.js on index.html / chuzhong.html.  Plain script, no build
+ * Loaded after app.js on index.html (one page for 初中 and 高中 since r49).  Plain script, no build
  * step, no inline handlers, no eval (CSP-compatible).  Talks only to
  * /api/library/*, /files/pdf/* and the existing /api/search (in-book search).
  * Never calls any AI endpoint.
@@ -15,7 +15,10 @@
     const viewDownloads = document.getElementById('view-downloads');
     if (!viewPdf || !viewDownloads) return;
 
-    const PAGE_PHASE = document.body.dataset.phase || '高中';
+    // 学段 (r49): one page for both.  The PDF grid has its own 学段 select; it and the downloads tab
+    // start on the 学段 chosen on the search page ('' = both).
+    const STAGES = ['初中', '高中'];
+    const pageStage = () => (typeof stageFilter === 'string' && STAGES.includes(stageFilter) ? stageFilter : '');
     const REGION = 'CN'; // carried through API and state; no selector while only CN exists
     const PDFJS_VERSION = '4.10.38';
     const PDFJS_BASE = '/vendor/pdfjs/';
@@ -250,7 +253,7 @@
     // ════════════════════════════════════════════════════════════════════════
     const pdf = {
         built: false, mode: 'grid',
-        subject: '', title: '', items: [], total: 0, listCtl: null,
+        stage: null, subject: '', title: '', items: [], total: 0, listCtl: null,
         edition: null, editionId: '', page: 1, query: '', pendingNotice: null,
         doc: null, loadingTask: null, openCtl: null, openSeq: 0,
         rows: null, printedIndex: null, hasVerified: false,
@@ -317,6 +320,8 @@
             placeholder: '按书名、出版社筛选…', 'aria-label': '按书名筛选',
         });
         d.chips = el('div', { class: 'subject-tabs lib-chips', role: 'group', 'aria-label': '学科' });
+        d.stageSelect = el('select', { id: 'lib-pdf-stage', 'aria-label': '学段' }, [['', '全部学段'], ['初中', '初中'], ['高中', '高中']]
+            .map(([value, label]) => el('option', { value, text: label })));
         d.gridNotices = el('div', { class: 'lib-notices' });
         d.gridStatus = el('div', { class: 'lib-status', 'aria-live': 'polite' });
         d.grid = el('div', { class: 'lib-grid' });
@@ -324,7 +329,8 @@
         d.gridRoot.append(
             el('section', { class: 'gaokao-hero lib-hero' }, [el('h2', { text: 'PDF 预览' }), d.heroSub]),
             el('div', { class: 'gaokao-filters lib-filters' }, [
-                el('div', { class: 'filter-group lib-grow' }, [el('label', { for: 'lib-pdf-title', text: PAGE_PHASE + '教材 · 书名' }), d.titleInput]),
+                el('div', { class: 'filter-group' }, [el('label', { for: 'lib-pdf-stage', text: '学段' }), d.stageSelect]),
+                el('div', { class: 'filter-group lib-grow' }, [el('label', { for: 'lib-pdf-title', text: '教材 · 书名' }), d.titleInput]),
             ]),
             d.chips, d.gridNotices, d.gridStatus, d.grid, el('div', { class: 'lib-more' }, d.more));
         d.titleInput.addEventListener('input', debounce(() => {
@@ -332,6 +338,12 @@
             syncPdfUrl(false);
             loadGrid(false);
         }, 300));
+        d.stageSelect.addEventListener('change', () => {
+            pdf.stage = d.stageSelect.value;
+            pdf.subject = '';
+            syncPdfUrl(false);
+            loadGrid(false);
+        });
         d.more.addEventListener('click', () => loadGrid(true));
     }
 
@@ -342,9 +354,11 @@
         if (!append) { pdf.items = []; clear(d.grid); resetCoverQueue('pdf'); }
         d.gridStatus.textContent = '加载中…';
         d.more.classList.add('hidden');
+        if (pdf.stage === null) pdf.stage = pageStage();
+        d.stageSelect.value = pdf.stage;
         try {
             const data = await api('/api/library/editions', {
-                phase: PAGE_PHASE, subject: pdf.subject, q: pdf.title, region: REGION,
+                phase: pdf.stage, subject: pdf.subject, q: pdf.title, region: REGION,
                 offset: pdf.items.length, limit: GRID_PAGE_SIZE,
             }, ctl.signal);
             if (ctl.signal.aborted) return;
@@ -356,12 +370,14 @@
             }
             d.gridStatus.textContent = pdf.total
                 ? `共 ${pdf.total} 册${pdf.items.length < pdf.total ? `，已显示 ${pdf.items.length} 册` : ''}`
-                : (pdf.subject || pdf.title ? '没有符合条件的教材。' : `目录中暂时没有可预览的${PAGE_PHASE}教材。`);
+                : (pdf.subject || pdf.title ? '没有符合条件的教材。' : `目录中暂时没有可预览的${pdf.stage}教材。`);
             d.more.classList.toggle('hidden', pdf.items.length >= pdf.total);
             getRelease().then(release => {
                 if (!release.available) return;
-                const n = (release.coverage.previewable_by_stage || {})[PAGE_PHASE] || 0;
-                d.heroSub.textContent = `${PAGE_PHASE}教材 ${n} 册可在线预览 · 按需读取页面，不整本下载 · 目录版本 ${release.release_id}`;
+                const byStage = release.coverage.previewable_by_stage || {};
+                const n = pdf.stage ? (byStage[pdf.stage] || 0) : STAGES.reduce((sum, stage) => sum + (byStage[stage] || 0), 0);
+                const parts = pdf.stage ? `${pdf.stage}教材 ${n} 册` : `初中、高中教材 ${n} 册（${STAGES.map(stage => `${stage} ${byStage[stage] || 0}`).join('、')}）`;
+                d.heroSub.textContent = `${parts}可在线预览 · 按需读取页面，不整本下载 · 目录版本 ${release.release_id}`;
             }).catch(() => { /* hero text is optional */ });
         } catch (error) {
             if (error.kind === 'aborted') return;
@@ -399,7 +415,7 @@
         }, [
             coverNode('pdf', item.subject, item.cover_url, null),
             el('span', { class: 'lib-card-text' }, [
-                el('span', { class: 'lib-card-subject', text: item.subject || '' }),
+                el('span', { class: 'lib-card-subject', text: [pdf.stage ? '' : item.stage, item.subject].filter(Boolean).join(' · ') }),
                 el('strong', { class: 'lib-card-title', text: item.title }),
                 el('span', { class: 'lib-card-meta', text: editionLine(item) }),
                 el('span', { class: 'lib-card-meta', text: `共 ${item.pages} 页 · ${formatBytes(item.bytes)}` }),
@@ -453,7 +469,7 @@
         if (pdf.mode === 'viewer' && pdf.editionId) {
             setUrl({ view: 'pdf', edition: pdf.editionId, p: pdf.page > 1 ? pdf.page : '', q: pdf.query }, push);
         } else {
-            setUrl({ view: 'pdf', subject: pdf.subject, t: pdf.title }, push);
+            setUrl({ view: 'pdf', stage: pdf.stage || '', subject: pdf.subject, t: pdf.title }, push);
         }
     }
 
@@ -1186,6 +1202,7 @@
                 openEdition(edition, page, { query: (q.get('q') || '').slice(0, 80) });
                 return;
             }
+            pdf.stage = STAGES.includes(q.get('stage')) ? q.get('stage') : (q.has('stage') ? '' : null);
             pdf.subject = (q.get('subject') || '').slice(0, 60);
             pdf.title = (q.get('t') || '').slice(0, 80);
             showGrid(false);
@@ -1276,8 +1293,8 @@
             try {
                 let facets = await api('/api/library/downloads/facets', { stage: dl.stage || '', subject: dl.subject, region: REGION }, ctl.signal);
                 if (dl.stage === null) {
-                    // First visit without ?stage=: start on this page's 学段 when the catalog has it.
-                    dl.stage = facets.stages.some(s => s.name === PAGE_PHASE) ? PAGE_PHASE : '';
+                    // First visit without ?stage=: start on the 学段 chosen on the search page, when the catalog has it.
+                    dl.stage = facets.stages.some(s => s.name === pageStage()) ? pageStage() : '';
                     if (dl.stage) facets = await api('/api/library/downloads/facets', { stage: dl.stage, subject: dl.subject, region: REGION }, ctl.signal);
                 }
                 if (ctl.signal.aborted) return;

@@ -4463,3 +4463,121 @@ details.search-graph-section .search-graph-container {
     color: #7a5410;
     background: #fbf1d9;
 }
+
+/* ── 学段 switch (r49): one site for 初中 and 高中 ─────────────────────────
+   One search covers both 学段; this switch filters the results and the AI overview.
+   Text ≥ 4.5:1 on the parchment card surface in both states. */
+.stage-switch {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+    margin: 14px auto 0;
+}
+
+.stage-switch-label {
+    color: var(--text-dim);
+    font-size: 13px;
+    margin-right: 2px;
+}
+
+.stage-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 36px;
+    padding: 6px 16px;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    background: #fffdf9;
+    color: var(--text-dim);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.stage-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.stage-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.stage-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+.stage-count {
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Result cards show only the source line, the text and the page image / PDF buttons. */
+.result-meta .result-title {
+    color: var(--text-muted);
+}
+
+.view-page-btn {
+    color: var(--accent);
+}
+
+.view-page-note {
+    color: #7a5410;
+    background: #fbf1d9;
+    border-color: rgba(122, 84, 16, 0.18);
+}
+
+@media (max-width: 480px) {
+    .stage-switch {
+        gap: 6px;
+    }
+
+    .stage-btn {
+        padding: 6px 12px;
+    }
+}
+
+.dict-stage-switch {
+    justify-content: flex-start;
+    margin: 0 0 10px;
+}
+
+/* The overview keeps the 学段 it was written for; switching 学段 shows this note with a re-search button. */
+.ai-stage-note {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    margin: 12px 0 0;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    background: #fbf1d9;
+    color: #6a490e;
+    font-size: 13px;
+}
+
+.ai-stage-note.hidden {
+    display: none;
+}
+
+.ai-stage-research {
+    border: 1px solid rgba(106, 73, 14, 0.35);
+    background: #fffdf9;
+    color: #6a490e;
+    border-radius: 16px;
+    padding: 4px 12px;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.ai-stage-research:hover {
+    border-color: #6a490e;
+}

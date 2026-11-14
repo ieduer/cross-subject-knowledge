@@ -1,5 +1,14 @@
 const API = '';
-const PHASE = document.body.dataset.phase || '高中';
+// 学段 (r49): one dictionary page for 初中 and 高中. Textbook hits come from both 学段 (tagged by the
+// server); the switch above them filters the list and sets the scope of the AI answer. '' = both.
+const STAGES = ['初中', '高中'];
+let tbStage = (() => {
+    try {
+        const value = new URLSearchParams(location.search).get('stage');
+        return STAGES.includes(value) ? value : '';
+    } catch (_) { return ''; }
+})();
+let tbAllResults = [];
 
 const state = {
     mode: 'lookup',
@@ -206,7 +215,7 @@ function updateCopyButton() {
 const CHAT_OFFER_LABEL = '让 AI 结合检索结果解答';
 
 function buildChatOfferPrompt(query) {
-    return `请分析「${query}」这个字或词：先抓教材中的核心义项，再对应${PHASE === '高中' ? '真题拿分点' : '考点'}。`;
+    return `请分析「${query}」这个字或词：先抓教材中的核心义项，再对应${tbStage === '初中' ? '考点' : '真题拿分点'}。`;
 }
 
 function renderChatMessages() {
@@ -1084,7 +1093,7 @@ function buildMoeIdiomContext(entries) {
 function buildTextbookContext(results) {
     return (results || []).slice(0, 8).map(item => {
         const page = item.logical_page != null ? `p${item.logical_page}` : '';
-        return `[教材·${item.display_title || item.title}·${page}] ${(item.text || '').slice(0, 260)}`;
+        return `[教材·${STAGES.includes(item.phase) ? `${item.phase}·` : ''}${item.display_title || item.title}·${page}] ${(item.text || '').slice(0, 260)}`;
     }).join('\n\n');
 }
 
@@ -1095,15 +1104,51 @@ function buildGaokaoContext(results) {
     }).join('\n\n');
 }
 
-function renderTextbookResults(results) {
+function tbItemStage(item) {
+    if (STAGES.includes(item.phase)) return item.phase;
+    const key = String(item.book_key || '');
+    return key.startsWith('初中_') ? '初中' : (key.startsWith('高中_') ? '高中' : '');
+}
+
+function renderTbStageSwitch() {
+    const box = document.getElementById('tb-stage-switch');
+    if (!box) return;
+    const counts = { '': tbAllResults.length, 初中: 0, 高中: 0 };
+    tbAllResults.forEach(item => { const stage = tbItemStage(item); if (stage) counts[stage] += 1; });
+    box.innerHTML = [['', '全部'], ['初中', '初中'], ['高中', '高中']].map(([value, label]) => {
+        const active = value === tbStage;
+        return `<button type="button" class="stage-btn${active ? ' active' : ''}" data-stage="${escHtml(value)}" aria-pressed="${active}">${escHtml(label)}<span class="stage-count">${counts[value]}</span></button>`;
+    }).join('');
+}
+
+function setTbStage(stage) {
+    const next = STAGES.includes(stage) ? stage : '';
+    if (next === tbStage) return;
+    tbStage = next;
+    if (state.query) history.replaceState({}, '', `/dict.html?q=${encodeURIComponent(state.query)}${tbStage ? `&stage=${encodeURIComponent(tbStage)}` : ''}`);
+    renderTextbookResults(tbAllResults);
+}
+
+document.addEventListener('click', event => {
+    const button = event.target.closest('#tb-stage-switch .stage-btn');
+    if (button) setTbStage(button.dataset.stage || '');
+});
+
+function renderTextbookResults(allResults) {
+    tbAllResults = Array.isArray(allResults) ? allResults : [];
+    renderTbStageSwitch();
+    const results = tbStage ? tbAllResults.filter(item => tbItemStage(item) === tbStage) : tbAllResults;
     el.tbCount.textContent = String(results.length);
     if (!results.length) {
-        setEmptyLine(el.tbResults, '没有找到教材中的古文或古诗词命中。');
+        setEmptyLine(el.tbResults, tbStage && tbAllResults.length
+            ? `${tbStage}教材没有命中；切换到「全部」可看另一个学段的 ${tbAllResults.length} 条。`
+            : '没有找到教材中的古文或古诗词命中。');
         return;
     }
     el.tbResults.innerHTML = results.map(item => {
         const meta = [];
         const displayTitle = item.display_title || item.title || '';
+        if (!tbStage && tbItemStage(item)) meta.push(`<span>${escHtml(tbItemStage(item))}</span>`);
         if (displayTitle) meta.push(`<span class="dict-card-title">${escHtml(displayTitle)}</span>`);
         if (item.title && item.title !== displayTitle) meta.push(`<span>${escHtml(item.title)}</span>`);
         if (item.classical_kind) meta.push(`<span>${escHtml(item.classical_kind)}</span>`);
@@ -1430,7 +1475,7 @@ async function sendChatMessage(message, { silentUser = false, queryKey = state.q
 
     const historyForRequest = window.SunAI.boundedHistory(state.chatHistory);
     const shownUserMessage = silentUser
-        ? `请系统梳理「${state.query}」的教材、词典${PHASE === '高中' ? '与真题' : ''}要点。`
+        ? `请系统梳理「${state.query}」的教材、词典${tbStage === '初中' ? '' : '与真题'}要点。`
         : userMessage;
     const pendingItem = { role: 'assistant', content: '思考中…', pending: true };
     state.chatHistory.push({ role: 'user', content: shownUserMessage });
@@ -1441,7 +1486,7 @@ async function sendChatMessage(message, { silentUser = false, queryKey = state.q
         headword: state.query,
         user_message: userMessage,
         history: historyForRequest,
-        phase: PHASE,
+        ...(tbStage ? { phase: tbStage } : {}),
     });
     state.chatRequest = request;
     setChatPending(true);
@@ -1477,16 +1522,14 @@ async function runSearch(initialQuery) {
     state.queryKey = queryKey;
     el.input.value = query;
     resetPanelsForSearch();
-    history.replaceState({}, '', `${PHASE === '初中' ? '/chuzhong-dict.html' : '/dict.html'}?q=${encodeURIComponent(query)}`);
+    history.replaceState({}, '', `/dict.html?q=${encodeURIComponent(query)}${tbStage ? `&stage=${encodeURIComponent(tbStage)}` : ''}`);
 
     try {
         const fetches = [
-            fetchJson(`${API}/api/dict/textbook?q=${encodeURIComponent(query)}&limit=30&phase=${encodeURIComponent(PHASE)}`),
+            fetchJson(`${API}/api/dict/textbook?q=${encodeURIComponent(query)}&limit=30`),
             fetchJson(`${API}/api/dict/search?q=${encodeURIComponent(query)}&limit=20`),
             fetchJson(`${API}/api/dict/moe-revised?q=${encodeURIComponent(query)}&limit=6`),
-            PHASE === '高中'
-                ? fetchJson(`${API}/api/dict/gaokao?q=${encodeURIComponent(query)}&limit=20`)
-                : Promise.resolve({ results: [] }),
+            fetchJson(`${API}/api/dict/gaokao?q=${encodeURIComponent(query)}&limit=20`),
             fetchJson(`${API}/api/dict/moe-idioms?q=${encodeURIComponent(query)}&limit=6`),
         ];
         const [textbookResult, dictResult, moeResult, gaokaoResult, idiomResult] = await Promise.allSettled(fetches);
@@ -1545,7 +1588,7 @@ async function runSearch(initialQuery) {
         state.dictContext = [buildDictContext(dictPayload.entries || []), buildMoeRevisedContext(moePayload.entries || []), buildMoeIdiomContext(idiomPayload.entries || [])]
             .filter(Boolean)
             .join('\n\n');
-        state.textbookContext = buildTextbookContext(textbook.results || []);
+        state.textbookContext = buildTextbookContext((textbook.results || []).filter(item => !tbStage || tbItemStage(item) === tbStage));
         state.gaokaoContext = buildGaokaoContext(gaokao.results || []);
 
         el.chatInput.placeholder = `继续追问「${query}」…`;
