@@ -5,6 +5,10 @@ Build or verify the supplemental textbook page vector index.
 Examples:
   python3 scripts/build_supplemental_vector_index.py build
   python3 scripts/build_supplemental_vector_index.py verify
+
+r50 (2026-11-14): direct mode embeds in length-aware batches (rows x longest_tokens^2 <= --attention-budget) and
+releases the MPS cache after every batch; a fixed batch of long pages exhausted unified memory on an 18 GB Mac.
+Vectors are added in source order, as before. vector_source.path records the file name only.
 """
 
 from __future__ import annotations
@@ -102,6 +106,21 @@ def write_index_atomic(path: Path, index) -> None:
     tmp_path.replace(path)
 
 
+def passage_windows(text: str, chars: int, stride: int, min_new: int = 48) -> list[str]:
+    """Overlapping windows of one page (same rule as build_primary_vector_index.py); chars=0 = one vector per page."""
+    if chars <= 0 or len(text) <= chars:
+        return [text]
+    windows, start = [], 0
+    while True:
+        windows.append(text[start:start + chars])
+        covered = start + chars
+        if covered >= len(text):
+            return windows
+        start += stride
+        if len(text) - covered < min_new:
+            return windows
+
+
 def load_pages(source_path: Path, text_limit: int) -> tuple[list[str], list[str]]:
     opener = gzip.open if source_path.suffix == ".gz" else open
     entry_ids: list[str] = []
@@ -161,13 +180,16 @@ def build_manifest(
     text_limit: int,
     batch_size: int,
     fingerprint: str,
+    source_rows: int | None = None,
+    passages: dict | None = None,
 ) -> dict:
+    source_rows = vector_rows if source_rows is None else source_rows
     return {
         "schema_version": 1,
         "built_at": utc_now_iso(),
         "index": {
             "path": index_path.name,
-            "type": "IndexFlatIP",
+            "type": "IndexIDMap(IndexFlatIP)" if passages else "IndexFlatIP",
             "metric": "inner_product_on_normalized_embeddings",
             "dimension": dimension,
             "vector_rows": vector_rows,
@@ -176,10 +198,11 @@ def build_manifest(
             "name": model_name,
             "text_limit_chars": text_limit,
             "batch_size": batch_size,
+            **({"passages": passages} if passages else {}),
         },
         "vector_source": {
-            "path": str(source_path),
-            "row_count": vector_rows,
+            "path": source_path.name,
+            "row_count": source_rows,
             "fingerprint_sha256": fingerprint,
             "sha256": source_sha256,
             "size_bytes": source_path.stat().st_size,
@@ -307,7 +330,49 @@ def run_build(args: argparse.Namespace) -> int:
     start_time = time.time()
     total = len(entry_ids)
     index = None
-    for start in range(0, total, args.batch_size):
+    if worker_mode == "direct":
+        try:
+            import torch
+            empty_cache = torch.mps.empty_cache if torch.backends.mps.is_available() else (lambda: None)
+        except Exception:
+            empty_cache = lambda: None
+        vector_ids, embed_texts = [], []
+        for ordinal, text in enumerate(texts):
+            for window in passage_windows(text, args.passage_chars, args.passage_stride):
+                vector_ids.append(ordinal)
+                embed_texts.append(window)
+        print(f"{len(texts)} pages -> {len(embed_texts)} vectors", file=sys.stderr)
+        texts_for_vectors = texts
+        texts = embed_texts
+        total = len(texts)
+        lengths = [len(model.tokenizer(text, add_special_tokens=True, truncation=False)["input_ids"]) for text in texts]
+        order = sorted(range(total), key=lambda i: lengths[i])
+        batches, current = [], []
+        for i in order:
+            if current and (len(current) >= args.batch_size or (len(current) + 1) * lengths[i] * lengths[i] > args.attention_budget):
+                batches.append(current)
+                current = []
+            current.append(i)
+        if current:
+            batches.append(current)
+        full = None
+        for number, positions in enumerate(batches, 1):
+            block = np.asarray(model.encode([texts[i] for i in positions], batch_size=len(positions),
+                                            show_progress_bar=False, normalize_embeddings=True), dtype="float32")
+            if full is None:
+                full = np.zeros((total, int(block.shape[1])), dtype="float32")
+            full[np.asarray(positions)] = block
+            empty_cache()
+            if number % 50 == 0 or number == len(batches):
+                print(f"Batch {number}/{len(batches)}, longest {lengths[positions[-1]]} tokens, {time.time() - start_time:.0f}s", file=sys.stderr, flush=True)
+        if args.passage_chars > 0:
+            index = faiss.IndexIDMap(faiss.IndexFlatIP(int(full.shape[1])))
+            index.add_with_ids(full, np.asarray(vector_ids, dtype="int64"))
+        else:
+            index = faiss.IndexFlatIP(int(full.shape[1]))
+            index.add(full)
+        texts = texts_for_vectors
+    for start in range(0, total if worker_mode != "direct" else 0, args.batch_size):
         batch_texts = texts[start:start + args.batch_size]
         if worker_mode == "direct":
             embeddings = model.encode(
@@ -344,6 +409,9 @@ def run_build(args: argparse.Namespace) -> int:
         text_limit=args.text_limit,
         batch_size=args.batch_size,
         fingerprint=fingerprint,
+        source_rows=len(entry_ids),
+        passages=({"chars": args.passage_chars, "stride": args.passage_stride, "min_new_chars": 48,
+                   "vectors": int(index.ntotal), "chunks": len(entry_ids)} if args.passage_chars > 0 else None),
     )
 
     write_index_atomic(index_path, index)
@@ -422,7 +490,10 @@ def run_verify(args: argparse.Namespace) -> int:
     index = faiss.read_index(str(index_path))
     expected_rows = len(entry_ids)
 
-    checks.append({"name": "vector_rows_match_source", "ok": index.ntotal == expected_rows, "detail": f"index={index.ntotal}, source={expected_rows}"})
+    passages = (manifest.get("model") or {}).get("passages") or {}
+    expected_vectors = sum(len(passage_windows(text, int(passages.get("chars") or 0), int(passages.get("stride") or 0))) for text in texts)
+    checks.append({"name": "vector_rows_match_source", "ok": index.ntotal == expected_vectors, "detail": f"index={index.ntotal}, expected={expected_vectors}, source_pages={expected_rows}"})
+    checks.append({"name": "manifest_source_rows", "ok": (manifest.get("vector_source") or {}).get("row_count") == expected_rows})
     checks.append({"name": "manifest_rows_match_index", "ok": (manifest.get("index") or {}).get("vector_rows") == index.ntotal})
     checks.append({"name": "manifest_model", "ok": (manifest.get("model") or {}).get("name") == args.model, "detail": (manifest.get("model") or {}).get("name")})
     checks.append({"name": "fingerprint_match", "ok": (manifest.get("vector_source") or {}).get("fingerprint_sha256") == fingerprint})
@@ -449,6 +520,9 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument("--index", type=Path, default=DEFAULT_INDEX)
             subparser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
             subparser.add_argument("--text-limit", type=int, default=DEFAULT_TEXT_LIMIT)
+            subparser.add_argument("--attention-budget", type=int, default=4_200_000)
+            subparser.add_argument("--passage-chars", type=int, default=0)
+            subparser.add_argument("--passage-stride", type=int, default=400)
         if name == "build":
             subparser.add_argument("--worker-mode", choices=("auto", "direct", "isolated"), default="auto")
         if name == "encode-batch":

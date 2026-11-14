@@ -401,6 +401,45 @@ class MainIntegrationTests(unittest.IsolatedAsyncioTestCase):
         check = main.ai_guard.check_citations(f"一句话 {citations[1]}", payload["evidence"])
         self.assertEqual(check["unverified_count"], 0, "a 学段-labelled citation still verifies")
 
+    def test_vector_gate_accepts_declared_passages_only(self):
+        """r50: several passage vectors per chunk pass the gate only when the manifest declares them."""
+        class FakeIndex:
+            d, ntotal = 1024, 5
+        con = sqlite3.connect(main.DB_PATH)
+        try:
+            con.execute("DROP TABLE IF EXISTS chunks")
+            con.execute("CREATE TABLE chunks (id INTEGER PRIMARY KEY, source TEXT, text TEXT)")
+            con.executemany("INSERT INTO chunks VALUES (?,?,?)", [(1, "mineru", "甲" * 900), (2, "mineru", "乙" * 300), (3, "gaokao", "题")])
+            con.commit()
+            rows, fingerprint = main._compute_vector_source_fingerprint(2048)
+            self.assertEqual(rows, 2)
+            base = {"model": {"name": main.EMBEDDER_NAME, "text_limit_chars": 2048},
+                    "index": {"dimension": 1024, "vector_rows": 5}, "vector_source": {"row_count": 2, "fingerprint_sha256": fingerprint}}
+            single = main._validate_faiss_manifest(FakeIndex(), 2, base)
+            self.assertTrue(any(issue.startswith("index_rows=5 expected_rows=2") for issue in single), single)
+            declared = json.loads(json.dumps(base))
+            declared["model"]["passages"] = {"chars": 512, "stride": 400, "vectors": 5, "chunks": 2}
+            self.assertEqual(main._validate_faiss_manifest(FakeIndex(), 2, declared), [])
+            wrong = json.loads(json.dumps(declared))
+            wrong["model"]["passages"]["vectors"] = 4
+            self.assertTrue(any(issue.startswith("passage_vectors=4") for issue in main._validate_faiss_manifest(FakeIndex(), 2, wrong)))
+            self.assertEqual(main._passages_per_row(FakeIndex(), 2), 2.5)
+            self.assertEqual(main._passages_per_row(None, 2), 1.0)
+        finally:
+            con.execute("DROP TABLE IF EXISTS chunks")
+            con.commit()
+            con.close()
+        saved = main._compute_supplemental_vector_source_fingerprint
+        main._compute_supplemental_vector_source_fingerprint = lambda limit: (2, "fp")
+        try:
+            supp = {"model": {"name": main.EMBEDDER_NAME, "text_limit_chars": 4096, "passages": {"chars": 512, "stride": 400, "vectors": 5, "chunks": 2}},
+                    "index": {"dimension": 1024, "vector_rows": 5}, "vector_source": {"row_count": 2, "fingerprint_sha256": "fp"}}
+            self.assertEqual(main._validate_supplemental_vector_manifest(FakeIndex(), supp), [])
+            del supp["model"]["passages"]
+            self.assertTrue(main._validate_supplemental_vector_manifest(FakeIndex(), supp))
+        finally:
+            main._compute_supplemental_vector_source_fingerprint = saved
+
     def test_overview_context_from_the_ids_on_screen(self):
         """Real SQL over a throwaway chunks table: the overview reloads exactly the rows the
         reader sees, in their order, with original text and without exam solutions."""

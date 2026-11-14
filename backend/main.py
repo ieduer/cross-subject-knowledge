@@ -157,6 +157,8 @@ app.add_middleware(
 # ── Global AI Models ──────────────────────────────────────────────────
 faiss_index = None
 supplemental_faiss_index = None
+faiss_passage_factor = 1.0           # vectors per textbook chunk (r50: passage vectors)
+supplemental_passage_factor = 1.0    # vectors per supplemental page
 embedder = None
 reranker = None
 EMBEDDER_NAME = os.getenv("EMBEDDER", "BAAI/bge-m3")  # upgraded from bge-small-zh-v1.5
@@ -428,6 +430,23 @@ def _load_faiss_manifest() -> Optional[dict]:
         return None
 
 
+def _manifest_passages(manifest: Optional[dict], source_rows: Optional[int]) -> Optional[dict]:
+    """r50: an index may hold several passage vectors per source row (all carrying the row's id). The manifest
+    declares it under model.passages = {chars, stride, vectors, chunks}; None when it is one vector per row."""
+    passages = ((manifest or {}).get("model") or {}).get("passages")
+    if not isinstance(passages, dict) or int(passages.get("chars") or 0) <= 0:
+        return None
+    return passages
+
+
+def _passages_per_row(index_obj, source_rows: Optional[int]) -> float:
+    """How many vectors one source row has on average (1.0 for a one-vector-per-row index): searches fetch that many
+    times more neighbours so that, after merging a row's passages, as many distinct rows come back as before."""
+    if index_obj is None or not source_rows:
+        return 1.0
+    return max(1.0, float(index_obj.ntotal) / float(source_rows))
+
+
 def _validate_faiss_manifest(index_obj, expected_rows: Optional[int], manifest: Optional[dict]) -> list[str]:
     issues = []
     if manifest is None:
@@ -446,8 +465,15 @@ def _validate_faiss_manifest(index_obj, expected_rows: Optional[int], manifest: 
     if manifest_rows != index_obj.ntotal:
         issues.append(f"manifest_rows={manifest_rows} index_rows={index_obj.ntotal}")
 
-    if expected_rows is not None and index_obj.ntotal != expected_rows:
-        issues.append(f"index_rows={index_obj.ntotal} expected_rows={expected_rows}")
+    passages = _manifest_passages(manifest, expected_rows)
+    if passages is None:
+        if expected_rows is not None and index_obj.ntotal != expected_rows:
+            issues.append(f"index_rows={index_obj.ntotal} expected_rows={expected_rows}")
+    else:
+        if int(passages.get("vectors") or -1) != index_obj.ntotal:
+            issues.append(f"passage_vectors={passages.get('vectors')} index_rows={index_obj.ntotal}")
+        if expected_rows is not None and (int(passages.get("chunks") or -1) != expected_rows or index_obj.ntotal < expected_rows):
+            issues.append(f"passage_chunks={passages.get('chunks')} expected_rows={expected_rows} index_rows={index_obj.ntotal}")
 
     vector_source = manifest.get("vector_source") or {}
     manifest_source_rows = vector_source.get("row_count")
@@ -550,16 +576,21 @@ def _validate_supplemental_vector_manifest(index_obj, manifest: Optional[dict]) 
 
     vector_source = manifest.get("vector_source") or {}
     manifest_source_rows = vector_source.get("row_count")
-    if manifest_source_rows != index_obj.ntotal:
-        issues.append(f"manifest_source_rows={manifest_source_rows} index_rows={index_obj.ntotal}")
+    passages = _manifest_passages(manifest, manifest_source_rows)
+    # one vector per page, or (r50) passage vectors whose ids are the page ordinals
+    expected_source_rows = index_obj.ntotal if passages is None else int(passages.get("chunks") or -1)
+    if passages is not None and int(passages.get("vectors") or -1) != index_obj.ntotal:
+        issues.append(f"passage_vectors={passages.get('vectors')} index_rows={index_obj.ntotal}")
+    if manifest_source_rows != expected_source_rows:
+        issues.append(f"manifest_source_rows={manifest_source_rows} expected_source_rows={expected_source_rows}")
 
     manifest_text_limit = int((manifest.get("model") or {}).get("text_limit_chars") or 512)
     current_rows, current_fingerprint = _compute_supplemental_vector_source_fingerprint(manifest_text_limit)
     if current_rows is None or current_fingerprint is None:
         issues.append("vector_source_fingerprint_unavailable")
     else:
-        if current_rows != index_obj.ntotal:
-            issues.append(f"current_source_rows={current_rows} index_rows={index_obj.ntotal}")
+        if current_rows != expected_source_rows:
+            issues.append(f"current_source_rows={current_rows} expected_source_rows={expected_source_rows}")
         manifest_fingerprint = vector_source.get("fingerprint_sha256")
         if manifest_fingerprint != current_fingerprint:
             issues.append("vector_source_fingerprint_mismatch")
@@ -699,6 +730,7 @@ if FAISS_AVAILABLE and FAISS_INDEX_PATH.exists():
         else:
             # Keep the offline-built index as-is. Runtime auto-conversion can break explicit ID mapping.
             faiss_index = raw_index
+            faiss_passage_factor = _passages_per_row(faiss_index, expected_rows)
             embedder = _load_sentence_transformer(EMBEDDER_NAME)
             print(f"FAISS index loaded with {faiss_index.ntotal} vectors. Model: {EMBEDDER_NAME}", flush=True)
     except Exception as e:
@@ -729,6 +761,8 @@ if FAISS_AVAILABLE and SUPPLEMENTAL_VECTOR_ENABLED:
                 )
             else:
                 supplemental_faiss_index = raw_supplemental_index
+                supplemental_passage_factor = _passages_per_row(
+                    supplemental_faiss_index, ((supplemental_faiss_manifest or {}).get("vector_source") or {}).get("row_count"))
                 if embedder is None:
                     embedder = _load_sentence_transformer(EMBEDDER_NAME)
                 print(
@@ -3796,7 +3830,7 @@ def _search_textbook_semantic_candidates(
     # Oversample 3x (or 9x with phase filter) for post-filter precision
     oversample = 3 if not phase else 9
     try:
-        distances, ids = faiss_index.search(query_vec, limit * oversample)
+        distances, ids = faiss_index.search(query_vec, int(math.ceil(limit * oversample * faiss_passage_factor)))
     except Exception:
         return []
 
@@ -3875,7 +3909,7 @@ def _search_supplemental_semantic_candidates(
     if query_vec is None:
         return []
     try:
-        distances, ids = supplemental_faiss_index.search(query_vec, limit * 6)
+        distances, ids = supplemental_faiss_index.search(query_vec, int(math.ceil(limit * 6 * supplemental_passage_factor)))
     except Exception:
         return []
 
@@ -8887,7 +8921,7 @@ def gaokao_link(
             try:
                 # Encode the query text with the runtime embedding model.
                 query_vec = embedder.encode([text[:512]], normalize_embeddings=True).astype('float32')
-                D, I = faiss_index.search(query_vec, limit * 2)
+                D, I = faiss_index.search(query_vec, int(math.ceil(limit * 2 * faiss_passage_factor)))
                 
                 faiss_ids = []
                 for score, match_id in zip(D[0], I[0]):
@@ -9118,7 +9152,7 @@ def textbook_links(
         if faiss_index and embedder:
             try:
                 query_vec = embedder.encode([text[:512]], normalize_embeddings=True).astype('float32')
-                D, I = faiss_index.search(query_vec, limit * 2)
+                D, I = faiss_index.search(query_vec, int(math.ceil(limit * 2 * faiss_passage_factor)))
                 
                 faiss_ids = []
                 for score, match_id in zip(D[0], I[0]):
@@ -9763,7 +9797,10 @@ def health():
             "model": (faiss_manifest or {}).get("model", {}).get("name"),
             "vector_rows": (faiss_manifest or {}).get("index", {}).get("vector_rows"),
             "dimension": (faiss_manifest or {}).get("index", {}).get("dimension"),
+            "text_limit_chars": (faiss_manifest or {}).get("model", {}).get("text_limit_chars"),
+            "passages": (faiss_manifest or {}).get("model", {}).get("passages"),
         },
+        "vectors_per_chunk": round(faiss_passage_factor, 3),
     }
     # Model check
     status["model"] = {
@@ -9795,7 +9832,10 @@ def health():
             "model": (supplemental_faiss_manifest or {}).get("model", {}).get("name"),
             "vector_rows": (supplemental_faiss_manifest or {}).get("index", {}).get("vector_rows"),
             "dimension": (supplemental_faiss_manifest or {}).get("index", {}).get("dimension"),
+            "text_limit_chars": (supplemental_faiss_manifest or {}).get("model", {}).get("text_limit_chars"),
+            "passages": (supplemental_faiss_manifest or {}).get("model", {}).get("passages"),
         },
+        "vectors_per_page": round(supplemental_passage_factor, 3),
     }
     status["supplemental"] = {
         "ok": supplemental_ok,

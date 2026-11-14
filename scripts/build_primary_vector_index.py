@@ -1,0 +1,831 @@
+#!/usr/bin/env python3
+"""Build, refresh, or verify the primary textbook FAISS index.
+
+The primary dense index is derived from the immutable textbook subset of
+``textbook_mineru_fts.db``. A successful build atomically replaces each output
+file and publishes the fingerprint manifest last; ``verify`` fails closed when
+the database, index, IDs, fingerprint, model, or vector dimensions no longer
+match.
+
+Examples:
+  python3 scripts/build_primary_vector_index.py build
+  python3 scripts/build_primary_vector_index.py verify
+
+r50 (2026-11-14): ported from codex/sun-promotion-contract-20260716 (50e0923), where the 2026-10-10 pair was built.
+``--text-preparation strip-page-furniture-v1`` embeds ``prepare(text[:text_limit])`` with OCR page furniture removed
+(image Markdown, publisher watermark lines and their misreads, the "personal study only" notice, bare ``$$`` lines).
+The vector-source fingerprint stays over the raw ``text[:text_limit]``: it is what the runtime gate in
+backend/main.py recomputes. The runtime reads only model.name, model.text_limit_chars, index.dimension,
+index.vector_rows, vector_source.row_count and vector_source.fingerprint_sha256.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import sqlite3
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+faiss = None
+np = None
+SentenceTransformer = None
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from primary_vector_contract import (  # noqa: E402
+    INDEX_VECTOR_DIGEST_ALGORITHM,
+    faiss_index_ids,
+    faiss_index_inner_type,
+    faiss_index_vector_digest,
+    vector_source_schema_sha256,
+)
+
+
+def _default_data_root() -> Path:
+    primary = ROOT / "data"
+    alternate = ROOT.parent / "data"
+    if not (primary / "index").exists() and (alternate / "index").exists():
+        return alternate
+    return primary
+
+
+DATA_ROOT = Path(os.getenv("DATA_ROOT", _default_data_root())).expanduser().resolve()
+DEFAULT_DB = DATA_ROOT / "index" / "textbook_mineru_fts.db"
+DEFAULT_INDEX = DATA_ROOT / "index" / "textbook_chunks.index"
+DEFAULT_MANIFEST = DATA_ROOT / "index" / "textbook_chunks.manifest.json"
+DEFAULT_MODEL = os.getenv("EMBEDDER", "BAAI/bge-m3")
+DEFAULT_TEXT_LIMIT = int(os.getenv("VECTOR_TEXT_LIMIT_CHARS", "512"))
+DEFAULT_BATCH_SIZE = int(os.getenv("VECTOR_BATCH_SIZE", "128"))
+SOURCE_SQL = "source != 'gaokao' AND text IS NOT NULL AND text != ''"
+TEXT_PREPARATIONS = ("raw", "strip-page-furniture-v1")
+_IMAGE_MARKDOWN_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+_PAGE_FURNITURE_LINE_RE = re.compile(
+    r"^[ \t]*(?:人民[教都旅傲]育出版社|仅供个人学习使用，未经授权不得另做他用|\$\$)[ \t]*$", re.M
+)
+
+
+def passage_windows(text: str, chars: int, stride: int, min_new: int = 48) -> list[str]:
+    """Overlapping windows of one chunk's prepared text. chars=0 keeps one vector per chunk (the r49 shape)."""
+    if chars <= 0 or len(text) <= chars:
+        return [text]
+    windows, start = [], 0
+    while True:
+        windows.append(text[start:start + chars])
+        covered = start + chars
+        if covered >= len(text):
+            return windows
+        start += stride
+        if len(text) - covered < min_new:
+            return windows
+
+
+def chunk_passages(chunk_ids: list[int], texts: list[str], preparation: str, chars: int, stride: int) -> tuple[list[int], list[str]]:
+    ids, windows = [], []
+    for chunk_id, text in zip(chunk_ids, texts):
+        for window in passage_windows(prepare_text(text, preparation), chars, stride):
+            ids.append(chunk_id)
+            windows.append(window)
+    return ids, windows
+
+
+def prepare_text(text: str, preparation: str) -> str:
+    """Text that is embedded for one chunk (the fingerprint is always over the raw text)."""
+    if preparation == "raw":
+        return text
+    if preparation == "strip-page-furniture-v1":
+        text = _IMAGE_MARKDOWN_RE.sub("", text)
+        text = _PAGE_FURNITURE_LINE_RE.sub("", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+    raise ValueError(f"unknown text preparation: {preparation}")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+
+def positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def ensure_faiss() -> None:
+    global faiss
+    if faiss is None:
+        import faiss as faiss_module
+
+        faiss = faiss_module
+
+
+def ensure_numpy() -> None:
+    global np
+    if np is None:
+        import numpy as np_module
+
+        np = np_module
+
+
+def ensure_sentence_transformer() -> None:
+    global SentenceTransformer
+    if SentenceTransformer is None:
+        from sentence_transformers import SentenceTransformer as sentence_transformer_cls
+
+        SentenceTransformer = sentence_transformer_cls
+
+
+def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(chunk_size), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def connect_vector_db(path: Path) -> sqlite3.Connection:
+    uri = f"file:{path}?mode=ro&immutable=1"
+    conn = sqlite3.connect(uri, uri=True)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def load_chunks(db_path: Path, text_limit: int) -> tuple[list[int], list[str]]:
+    with connect_vector_db(db_path) as conn:
+        rows = conn.execute(
+            f"SELECT id, text FROM chunks WHERE {SOURCE_SQL} ORDER BY id"
+        ).fetchall()
+    chunk_ids = [int(row["id"]) for row in rows]
+    texts = [str(row["text"] or "")[:text_limit] for row in rows]
+    return chunk_ids, texts
+
+
+def compute_vector_source_fingerprint(chunk_ids: list[int], texts: list[str]) -> str:
+    digest = hashlib.sha256()
+    for chunk_id, text in zip(chunk_ids, texts):
+        payload = json.dumps([chunk_id, text], ensure_ascii=False, separators=(",", ":"))
+        digest.update(payload.encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def write_json_atomic(path: Path, payload: dict[str, object]) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def write_index_atomic(path: Path, index: object) -> None:
+    ensure_faiss()
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    faiss.write_index(index, str(temporary))
+    temporary.replace(path)
+
+
+def _model_cache_roots() -> list[Path]:
+    roots: list[Path] = []
+    if os.getenv("HF_HUB_CACHE"):
+        roots.append(Path(os.environ["HF_HUB_CACHE"]).expanduser())
+    if os.getenv("HF_HOME"):
+        roots.append(Path(os.environ["HF_HOME"]).expanduser() / "hub")
+    roots.append(Path.home() / ".cache" / "huggingface" / "hub")
+    return roots
+
+
+def has_local_model_snapshot(model_name: str) -> bool:
+    direct_path = Path(model_name).expanduser()
+    if direct_path.exists():
+        return True
+    cache_key = f"models--{model_name.replace('/', '--')}"
+    for root in _model_cache_roots():
+        snapshots = root / cache_key / "snapshots"
+        if snapshots.exists() and any(path.is_dir() for path in snapshots.iterdir()):
+            return True
+    return False
+
+
+def model_kwargs(model_name: str) -> dict[str, object]:
+    if has_local_model_snapshot(model_name):
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        return {"local_files_only": True}
+    return {}
+
+
+def build_manifest(
+    *,
+    db_path: Path,
+    index_path: Path,
+    model_name: str,
+    dimension: int,
+    vector_rows: int,
+    text_limit: int,
+    batch_size: int,
+    text_preparation: str,
+    passage_chars: int,
+    passage_stride: int,
+    vector_source_fingerprint: str,
+    vector_source_schema_sha256: str,
+    index_sha256: str,
+    index_size_bytes: int,
+    index_vector_digest_sha256: str,
+    source_rows: int | None = None,
+) -> dict[str, object]:
+    source_rows = vector_rows if source_rows is None else source_rows
+    return {
+        "schema_version": 2,
+        "built_at": utc_now_iso(),
+        "index": {
+            "path": index_path.name,
+            "type": "IndexIDMap(IndexFlatIP)",
+            "metric": "inner_product_on_normalized_embeddings",
+            "dimension": dimension,
+            "vector_rows": vector_rows,
+            "sha256": index_sha256,
+            "size_bytes": index_size_bytes,
+            "vector_digest_algorithm": INDEX_VECTOR_DIGEST_ALGORITHM,
+            "vector_digest_sha256": index_vector_digest_sha256,
+        },
+        "model": {
+            "name": model_name,
+            "text_limit_chars": text_limit,
+            "batch_size": batch_size,
+            "text_preparation": text_preparation,
+            # r50: several vectors per chunk, all carrying the chunk id (the runtime gate reads this block)
+            **({"passages": {"chars": passage_chars, "stride": passage_stride, "min_new_chars": 48,
+                             "vectors": vector_rows, "chunks": source_rows}} if passage_chars > 0 else {}),
+        },
+        "vector_source": {
+            "source_sql": SOURCE_SQL,
+            "row_count": source_rows,
+            "fingerprint_sha256": vector_source_fingerprint,
+            "schema_sha256": vector_source_schema_sha256,
+        },
+        "db": {
+            "path": db_path.name,
+            "sha256": sha256_file(db_path),
+            "size_bytes": db_path.stat().st_size,
+            "file_identity_role": "backup_audit_only",
+            "source_sql": SOURCE_SQL,
+            "row_count": source_rows,
+        },
+    }
+
+
+def index_ids(index: object) -> list[int] | None:
+    return faiss_index_ids(index)
+
+
+def index_inner_type(index: object) -> str | None:
+    return faiss_index_inner_type(index)
+
+
+def resolve_paths(args: argparse.Namespace) -> tuple[Path, Path, Path]:
+    return (
+        args.db.expanduser().resolve(),
+        args.index.expanduser().resolve(),
+        args.manifest.expanduser().resolve(),
+    )
+
+
+def run_build(args: argparse.Namespace) -> int:
+    try:
+        ensure_faiss()
+        ensure_numpy()
+        ensure_sentence_transformer()
+    except ImportError:
+        print("ERROR: faiss-cpu, numpy, and sentence-transformers are required", file=sys.stderr)
+        return 2
+
+    db_path, index_path, manifest_path = resolve_paths(args)
+    if not db_path.is_file():
+        print(f"ERROR: database missing: {db_path}", file=sys.stderr)
+        return 1
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    chunk_ids, texts = load_chunks(db_path, args.text_limit)
+    if not chunk_ids:
+        print("ERROR: no primary textbook chunks found", file=sys.stderr)
+        return 1
+    if len(chunk_ids) != len(set(chunk_ids)):
+        print("ERROR: duplicate chunk IDs in primary vector source", file=sys.stderr)
+        return 1
+
+    print(f"Loading SentenceTransformer model {args.model}...", file=sys.stderr)
+    model = SentenceTransformer(args.model, **model_kwargs(args.model))
+    total = len(chunk_ids)
+    print(f"Embedding {total} primary textbook chunks...", file=sys.stderr)
+    started = time.time()
+    index = None
+
+    vector_ids, embed_texts = chunk_passages(chunk_ids, texts, args.text_preparation, args.passage_chars, args.passage_stride)
+    total = len(embed_texts)
+    print(f"{len(chunk_ids)} chunks -> {total} vectors", file=sys.stderr)
+    # Batches are sized by length: rows x (longest tokens)^2 stays under --attention-budget, because the attention
+    # tensor grows with the square of the length (a fixed batch of 16 long pages exhausted 18 GB of unified memory).
+    # Similar lengths share a batch; vectors are added in id order afterwards. Progress is checkpointed.
+    tokenizer = model.tokenizer
+    lengths = [len(tokenizer(text, add_special_tokens=True, truncation=False)["input_ids"]) for text in embed_texts]
+    order = sorted(range(total), key=lambda i: lengths[i])
+    batches, current = [], []
+    for i in order:
+        longest = lengths[i]
+        if current and (len(current) >= args.batch_size or (len(current) + 1) * longest * longest > args.attention_budget):
+            batches.append(current)
+            current = []
+        current.append(i)
+    if current:
+        batches.append(current)
+    fingerprint_for_checkpoint = compute_vector_source_fingerprint(chunk_ids, texts)
+    checkpoint_key = f"{fingerprint_for_checkpoint}|{args.text_limit}|{args.text_preparation}|{args.model}|{args.passage_chars}|{args.passage_stride}"
+    matrix, done_mask = None, np.zeros(total, dtype=bool)
+    if args.checkpoint and Path(args.checkpoint).is_file():
+        saved = np.load(args.checkpoint, allow_pickle=False)
+        if str(saved["key"]) == checkpoint_key:
+            matrix, done_mask = saved["matrix"], saved["done"]
+            print(f"Resuming from checkpoint: {int(done_mask.sum())}/{total} done", file=sys.stderr)
+    try:
+        import torch
+        empty_cache = torch.mps.empty_cache if torch.backends.mps.is_available() else (lambda: None)
+    except Exception:
+        empty_cache = lambda: None
+    last_saved = time.time()
+    for number, positions in enumerate(batches, 1):
+        if done_mask[positions].all():
+            continue
+        embeddings = model.encode(
+            [embed_texts[i] for i in positions],
+            batch_size=len(positions),
+            show_progress_bar=False,
+            normalize_embeddings=True,
+        )
+        block = np.asarray(embeddings, dtype="float32")
+        if matrix is None:
+            matrix = np.zeros((total, int(block.shape[1])), dtype="float32")
+        matrix[np.asarray(positions)] = block
+        done_mask[np.asarray(positions)] = True
+        empty_cache()
+        if args.checkpoint and (time.time() - last_saved > 120 or number == len(batches)):
+            tmp = Path(args.checkpoint + ".tmp.npz")
+            np.savez(tmp, matrix=matrix, done=done_mask, key=np.array(checkpoint_key))
+            tmp.replace(args.checkpoint)
+            last_saved = time.time()
+        if number % 50 == 0 or number == len(batches):
+            elapsed = max(time.time() - started, 0.001)
+            print(f"Batch {number}/{len(batches)}: {int(done_mask.sum())}/{total} chunks, longest {lengths[positions[-1]]} tokens, {elapsed:.0f}s", file=sys.stderr, flush=True)
+    assert done_mask.all()
+    index = faiss.IndexIDMap(faiss.IndexFlatIP(int(matrix.shape[1])))
+    index.add_with_ids(matrix, np.asarray(vector_ids, dtype="int64"))
+
+    elapsed = time.time() - started
+    fingerprint = compute_vector_source_fingerprint(chunk_ids, texts)
+    write_index_atomic(index_path, index)
+    index_sha256 = sha256_file(index_path)
+    index_vector_digest_sha256 = faiss_index_vector_digest(index)
+    manifest = build_manifest(
+        db_path=db_path,
+        index_path=index_path,
+        model_name=args.model,
+        dimension=int(index.d),
+        vector_rows=int(index.ntotal),
+        text_limit=args.text_limit,
+        batch_size=args.batch_size,
+        text_preparation=args.text_preparation,
+        passage_chars=args.passage_chars,
+        passage_stride=args.passage_stride,
+        source_rows=len(chunk_ids),
+        vector_source_fingerprint=fingerprint,
+        vector_source_schema_sha256=vector_source_schema_sha256(db_path),
+        index_sha256=index_sha256,
+        index_size_bytes=index_path.stat().st_size,
+        index_vector_digest_sha256=index_vector_digest_sha256,
+    )
+    write_json_atomic(manifest_path, manifest)
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "index": str(index_path),
+                "manifest": str(manifest_path),
+                "model": args.model,
+                "dimension": int(index.d),
+                "vector_rows": int(index.ntotal),
+                "text_limit_chars": args.text_limit,
+                "text_preparation": args.text_preparation,
+                "vector_source_fingerprint": fingerprint,
+                "index_sha256": index_sha256,
+                "index_vector_digest_sha256": index_vector_digest_sha256,
+                "elapsed_sec": round(elapsed, 2),
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
+def _append_check(
+    checks: list[dict[str, object]],
+    name: str,
+    ok: bool,
+    detail: object | None = None,
+) -> None:
+    item: dict[str, object] = {"name": name, "ok": bool(ok)}
+    if detail is not None:
+        item["detail"] = detail
+    checks.append(item)
+
+
+def run_verify(args: argparse.Namespace) -> int:
+    try:
+        ensure_faiss()
+    except ImportError:
+        print("ERROR: faiss-cpu is required", file=sys.stderr)
+        return 2
+
+    db_path, index_path, manifest_path = resolve_paths(args)
+    result: dict[str, object] = {
+        "ok": False,
+        "db": str(db_path),
+        "index": str(index_path),
+        "manifest": str(manifest_path),
+        "checks": [],
+    }
+    checks: list[dict[str, object]] = result["checks"]  # type: ignore[assignment]
+    for path, name in (
+        (db_path, "db_exists"),
+        (index_path, "index_exists"),
+        (manifest_path, "manifest_exists"),
+    ):
+        _append_check(checks, name, path.is_file(), None if path.is_file() else "missing")
+    if not all(item["ok"] for item in checks):
+        print(json.dumps(result, ensure_ascii=False))
+        return 1
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    model_payload = manifest.get("model") or {}
+    index_payload = manifest.get("index") or {}
+    source_payload = manifest.get("vector_source") or {}
+    db_payload = manifest.get("db") or {}
+    text_limit = int(model_payload.get("text_limit_chars") or args.text_limit)
+    chunk_ids, texts = load_chunks(db_path, text_limit)
+    expected_fingerprint = compute_vector_source_fingerprint(chunk_ids, texts)
+    passages_payload = model_payload.get("passages") or {}
+    vector_ids, _ = chunk_passages(chunk_ids, texts, model_payload.get("text_preparation") or "raw",
+                                   int(passages_payload.get("chars") or 0), int(passages_payload.get("stride") or 0))
+    current_db_sha256 = sha256_file(db_path)
+    current_db_size = db_path.stat().st_size
+    current_index_sha256 = sha256_file(index_path)
+    current_index_size = index_path.stat().st_size
+    index = faiss.read_index(str(index_path))
+    current_index_vector_digest = faiss_index_vector_digest(index)
+    current_source_schema_sha256 = vector_source_schema_sha256(db_path)
+    stored_ids = index_ids(index)
+    inner_type = index_inner_type(index)
+
+    _append_check(checks, "manifest_schema", manifest.get("schema_version") == 2, manifest.get("schema_version"))
+    _append_check(checks, "manifest_model", model_payload.get("name") == args.model, model_payload.get("name"))
+    _append_check(
+        checks,
+        "manifest_text_limit",
+        int(model_payload.get("text_limit_chars", -1)) == args.text_limit,
+        model_payload.get("text_limit_chars"),
+    )
+    _append_check(
+        checks,
+        "manifest_text_preparation",
+        (model_payload.get("text_preparation") or "raw") == args.text_preparation,
+        model_payload.get("text_preparation") or "raw",
+    )
+    _append_check(
+        checks,
+        "manifest_index_type",
+        index_payload.get("type") == "IndexIDMap(IndexFlatIP)",
+        index_payload.get("type"),
+    )
+    _append_check(
+        checks,
+        "manifest_index_metric",
+        index_payload.get("metric") == "inner_product_on_normalized_embeddings",
+        index_payload.get("metric"),
+    )
+    _append_check(
+        checks,
+        "manifest_source_sql",
+        source_payload.get("source_sql") == SOURCE_SQL,
+        source_payload.get("source_sql"),
+    )
+    _append_check(
+        checks,
+        "manifest_db_source_sql",
+        db_payload.get("source_sql") == SOURCE_SQL,
+        db_payload.get("source_sql"),
+    )
+    audit_sha256 = str(db_payload.get("sha256") or "")
+    audit_size = int(db_payload.get("size_bytes", -1))
+    _append_check(
+        checks,
+        "manifest_db_audit_identity",
+        db_payload.get("file_identity_role") == "backup_audit_only"
+        and len(audit_sha256) == 64
+        and all(char in "0123456789abcdef" for char in audit_sha256)
+        and audit_size > 0,
+        {
+            "role": db_payload.get("file_identity_role"),
+            "sha256": audit_sha256,
+            "size_bytes": audit_size,
+        },
+    )
+    _append_check(
+        checks,
+        "vector_source_schema",
+        source_payload.get("schema_sha256") == current_source_schema_sha256,
+        source_payload.get("schema_sha256"),
+    )
+    _append_check(checks, "db_rows", bool(chunk_ids), len(chunk_ids))
+    _append_check(
+        checks,
+        "manifest_db_rows",
+        int(db_payload.get("row_count", -1)) == len(chunk_ids),
+        db_payload.get("row_count"),
+    )
+    _append_check(
+        checks,
+        "manifest_index_bytes",
+        index_payload.get("sha256") == current_index_sha256
+        and int(index_payload.get("size_bytes", -1)) == current_index_size,
+        {
+            "sha256": index_payload.get("sha256"),
+            "size_bytes": index_payload.get("size_bytes"),
+        },
+    )
+    _append_check(
+        checks,
+        "manifest_index_vector_digest",
+        index_payload.get("vector_digest_algorithm")
+        == INDEX_VECTOR_DIGEST_ALGORITHM
+        and index_payload.get("vector_digest_sha256")
+        == current_index_vector_digest,
+        {
+            "algorithm": index_payload.get("vector_digest_algorithm"),
+            "sha256": index_payload.get("vector_digest_sha256"),
+        },
+    )
+    _append_check(checks, "index_outer_type", type(index).__name__ == "IndexIDMap", type(index).__name__)
+    _append_check(checks, "index_inner_type", inner_type == "IndexFlatIP", inner_type)
+    _append_check(
+        checks,
+        "index_metric",
+        getattr(index, "metric_type", None) == faiss.METRIC_INNER_PRODUCT,
+        getattr(index, "metric_type", None),
+    )
+    _append_check(checks, "index_rows", int(index.ntotal) == len(vector_ids), int(index.ntotal))
+    _append_check(
+        checks,
+        "manifest_rows",
+        int(index_payload.get("vector_rows", -1)) == len(vector_ids),
+        index_payload.get("vector_rows"),
+    )
+    _append_check(checks, "manifest_passages", int(passages_payload.get("vectors") or len(vector_ids)) == len(vector_ids)
+                  and int(passages_payload.get("chunks") or len(chunk_ids)) == len(chunk_ids), passages_payload or None)
+    _append_check(
+        checks,
+        "manifest_source_rows",
+        int(source_payload.get("row_count", -1)) == len(chunk_ids),
+        source_payload.get("row_count"),
+    )
+    _append_check(
+        checks,
+        "manifest_dimension",
+        int(index_payload.get("dimension", -1)) == int(index.d),
+        index_payload.get("dimension"),
+    )
+    _append_check(checks, "index_id_map", stored_ids is not None, "present" if stored_ids is not None else "missing")
+    if stored_ids is not None:
+        _append_check(checks, "index_ids", stored_ids == vector_ids, len(stored_ids))
+    _append_check(
+        checks,
+        "vector_source_fingerprint",
+        source_payload.get("fingerprint_sha256") == expected_fingerprint,
+        source_payload.get("fingerprint_sha256"),
+    )
+
+    result.update(
+        {
+            "ok": all(bool(item["ok"]) for item in checks),
+            "db_file_sha256": current_db_sha256,
+            "db_file_size_bytes": current_db_size,
+            "db_file_identity_role": "backup_audit_only",
+            "index_file_sha256": current_index_sha256,
+            "index_vector_digest_sha256": current_index_vector_digest,
+            "vector_source_schema_sha256": current_source_schema_sha256,
+            "vector_source_fingerprint": expected_fingerprint,
+            "index_type": type(index).__name__,
+            "dimension": int(index.d),
+            "vector_rows": int(index.ntotal),
+        }
+    )
+    print(json.dumps(result, ensure_ascii=False))
+    return 0 if result["ok"] else 1
+
+
+def run_manifest(args: argparse.Namespace) -> int:
+    try:
+        ensure_faiss()
+    except ImportError:
+        print("ERROR: faiss-cpu is required", file=sys.stderr)
+        return 2
+
+    db_path, index_path, manifest_path = resolve_paths(args)
+    if not db_path.is_file() or not index_path.is_file() or not manifest_path.is_file():
+        print(
+            "ERROR: database, index, and an existing independently verified manifest "
+            "are required for manifest re-emission",
+            file=sys.stderr,
+        )
+        return 1
+    chunk_ids, texts = load_chunks(db_path, args.text_limit)
+    index = faiss.read_index(str(index_path))
+    stored_ids = index_ids(index)
+    if int(index.ntotal) != len(chunk_ids) or stored_ids != chunk_ids:
+        print("ERROR: index rows or IDs do not match the current vector source", file=sys.stderr)
+        return 1
+    existing_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    existing_index = existing_manifest.get("index") or {}
+    existing_model = existing_manifest.get("model") or {}
+    existing_source = existing_manifest.get("vector_source") or {}
+    existing_db = existing_manifest.get("db") or {}
+    current_fingerprint = compute_vector_source_fingerprint(chunk_ids, texts)
+    current_index_sha256 = sha256_file(index_path)
+    current_index_size = index_path.stat().st_size
+    current_index_vector_digest = faiss_index_vector_digest(index)
+    current_source_schema_sha256 = vector_source_schema_sha256(db_path)
+    inner_type = index_inner_type(index)
+    exact_index_metadata = (
+        existing_index.get("sha256") == current_index_sha256
+        and int(existing_index.get("size_bytes", -1)) == current_index_size
+    )
+    legacy_index_metadata_missing = (
+        "sha256" not in existing_index
+        or "size_bytes" not in existing_index
+    )
+    if legacy_index_metadata_missing:
+        if not args.allow_legacy_index_metadata_upgrade:
+            print(
+                "ERROR: legacy index metadata cannot be re-signed; "
+                "run a full build or provide independently retained expected digests",
+                file=sys.stderr,
+            )
+            return 1
+        expected_index_sha256 = str(args.expected_index_sha256 or "")
+        expected_vector_digest_sha256 = str(
+            args.expected_vector_digest_sha256 or ""
+        )
+        if (
+            expected_index_sha256 != current_index_sha256
+            or expected_vector_digest_sha256 != current_index_vector_digest
+        ):
+            print(
+                "ERROR: legacy index metadata anchors are missing or do not match; "
+                "refusing to re-sign current index bytes",
+                file=sys.stderr,
+            )
+            return 1
+    index_metadata_ok = exact_index_metadata or legacy_index_metadata_missing
+    existing_vector_digest = existing_index.get("vector_digest_sha256")
+    vector_digest_ok = (
+        existing_vector_digest == current_index_vector_digest
+        and existing_index.get("vector_digest_algorithm")
+        == INDEX_VECTOR_DIGEST_ALGORITHM
+    ) or (
+        existing_vector_digest is None
+        and exact_index_metadata
+    ) or legacy_index_metadata_missing
+    existing_schema_sha256 = existing_source.get("schema_sha256")
+    schema_ok = (
+        existing_schema_sha256 == current_source_schema_sha256
+        or (
+            existing_schema_sha256 is None
+            and existing_source.get("fingerprint_sha256")
+            == current_fingerprint
+        )
+    )
+    existing_identity_ok = (
+        existing_manifest.get("schema_version") == 2
+        and existing_model.get("name") == args.model
+        and int(existing_model.get("text_limit_chars", -1)) == args.text_limit
+        and existing_index.get("type") == "IndexIDMap(IndexFlatIP)"
+        and existing_index.get("metric") == "inner_product_on_normalized_embeddings"
+        and index_metadata_ok
+        and vector_digest_ok
+        and existing_source.get("source_sql") == SOURCE_SQL
+        and int(existing_source.get("row_count", -1)) == len(chunk_ids)
+        and existing_source.get("fingerprint_sha256") == current_fingerprint
+        and schema_ok
+        and existing_db.get("source_sql") == SOURCE_SQL
+        and int(existing_db.get("row_count", -1)) == len(chunk_ids)
+        and int(existing_index.get("vector_rows", -1)) == int(index.ntotal)
+        and int(existing_index.get("dimension", -1)) == int(index.d)
+        and type(index).__name__ == "IndexIDMap"
+        and inner_type == "IndexFlatIP"
+        and getattr(index, "metric_type", None) == faiss.METRIC_INNER_PRODUCT
+    )
+    if not existing_identity_ok:
+        print(
+            "ERROR: existing manifest no longer proves this DB/index vector identity; "
+            "run a full build instead of re-emitting metadata",
+            file=sys.stderr,
+        )
+        return 1
+
+    manifest = build_manifest(
+        db_path=db_path,
+        index_path=index_path,
+        model_name=args.model,
+        dimension=int(index.d),
+        vector_rows=int(index.ntotal),
+        text_limit=args.text_limit,
+        batch_size=args.batch_size,
+        text_preparation=existing_model.get("text_preparation") or "raw",
+        passage_chars=0,
+        passage_stride=0,
+        vector_source_fingerprint=current_fingerprint,
+        vector_source_schema_sha256=current_source_schema_sha256,
+        index_sha256=current_index_sha256,
+        index_size_bytes=current_index_size,
+        index_vector_digest_sha256=current_index_vector_digest,
+    )
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(manifest_path, manifest)
+    print(json.dumps({"ok": True, "manifest": str(manifest_path)}, ensure_ascii=False))
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Build or verify the primary textbook FAISS index.")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    for command in ("build", "verify", "manifest"):
+        subparser = subparsers.add_parser(command)
+        subparser.add_argument("--db", type=Path, default=DEFAULT_DB)
+        subparser.add_argument("--index", type=Path, default=DEFAULT_INDEX)
+        subparser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
+        subparser.add_argument("--model", default=DEFAULT_MODEL)
+        subparser.add_argument("--text-limit", type=positive_int, default=DEFAULT_TEXT_LIMIT)
+        subparser.add_argument("--text-preparation", choices=TEXT_PREPARATIONS, default="raw")
+        if command in {"build", "manifest"}:
+            subparser.add_argument("--batch-size", type=positive_int, default=DEFAULT_BATCH_SIZE)
+        if command == "build":
+            subparser.add_argument("--attention-budget", type=positive_int, default=4_200_000,
+                                   help="max rows x longest_tokens^2 per batch (16 x 512^2 by default)")
+            subparser.add_argument("--checkpoint", default="", help="npz file for resumable progress")
+            subparser.add_argument("--passage-chars", type=int, default=0, help="window size; 0 = one vector per chunk")
+            subparser.add_argument("--passage-stride", type=int, default=400)
+        if command == "manifest":
+            subparser.add_argument(
+                "--allow-legacy-index-metadata-upgrade",
+                action="store_true",
+                help=(
+                    "Allow a one-time upgrade only when index hash/size are absent "
+                    "and independently retained index/vector digest anchors are supplied."
+                ),
+            )
+            subparser.add_argument(
+                "--expected-index-sha256",
+                help="Independent retained SHA-256 anchor required for legacy metadata.",
+            )
+            subparser.add_argument(
+                "--expected-vector-digest-sha256",
+                help="Independent retained vector digest anchor required for legacy metadata.",
+            )
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    command = args.command
+    if command == "build":
+        return run_build(args)
+    if command == "verify":
+        return run_verify(args)
+    if command == "manifest":
+        return run_manifest(args)
+    parser.error(f"unknown command: {command}")
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
