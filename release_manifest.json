@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-12T15:05:56.862215+00:00",
-  "git_head": "8d58c1d25c33525dfe27a462cfdd848b17603900",
-  "frontend_version": "2026.11.12-r48",
+  "generated_at": "2026-11-14T02:00:12.146722+00:00",
+  "git_head": "75de5e1e3b059ad9756b83b960655d1e2139d342",
+  "frontend_version": "2026.11.13-r49",
   "source_of_truth": {
     "local_workspace": "authoritative",
     "github": "authoritative_for_code_only_after_push",
@@ -31,8 +31,8 @@
     {
       "kind": "source",
       "logical_path": "backend/main.py",
-      "size": 396174,
-      "sha256": "71fc4314cd95419647e1f565fc951a576256b440f2ec31ec9fefba4533fe1723"
+      "size": 402640,
+      "sha256": "369265922b341a7b34626b1a724b0b035c0cb219f7eb20e25540c10fe23176b1"
     },
     {
       "kind": "source",
@@ -49,8 +49,8 @@
     {
       "kind": "source",
       "logical_path": "backend/page_images.py",
-      "size": 31361,
-      "sha256": "74df04bbbea1a5468fd65a997e80d4269aa944845f673142f34197423d68777f"
+      "size": 31431,
+      "sha256": "3b8f715f846b6e12b733b9bf9e3f1dc669265547528579d6266e38a05da8dcaa"
     },
     {
       "kind": "source",
@@ -115,26 +115,14 @@
     {
       "kind": "source",
       "logical_path": "frontend/index.html",
-      "size": 15541,
-      "sha256": "fd26dd4503d897c903fba8673148e2ff025a1d04c1475297881a3e1aa85891ec"
+      "size": 15851,
+      "sha256": "ea5a2bec5dc6b3a9bdae7ade9aad3c31ee6af6e77708c28cdb4e96386d071192"
     },
     {
       "kind": "source",
       "logical_path": "frontend/dict.html",
-      "size": 10915,
-      "sha256": "7f0ecb509f86b06fe48feb1dcedc7171becdfdf4f12270e466912e025f07072b"
-    },
-    {
-      "kind": "source",
-      "logical_path": "frontend/chuzhong.html",
-      "size": 12172,
-      "sha256": "cdca7d0af61191a1bd3e392ce09fd23482a0014455bc652c9a251c70325a3c42"
-    },
-    {
-      "kind": "source",
-      "logical_path": "frontend/chuzhong-dict.html",
-      "size": 10876,
-      "sha256": "3c2f52ff5b2ed6c5e4c68ae59a14cb69fc5afa3bbd66f0b278b186067dbb87bb"
+      "size": 10932,
+      "sha256": "f61560ff2d25c34009fbc5e5e7ff987f086687db69c61c35c28f624016b9ab71"
     },
     {
       "kind": "source",
@@ -145,14 +133,14 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/app.js",
-      "size": 125816,
-      "sha256": "4e429d9829bc351f8598da58648e68ef8f545f9a0d153e715c7d5d5fe966d9b5"
+      "size": 129583,
+      "sha256": "743f4659569663974822136005f84e78c08be655b1d49bd140ee6b1c2d85cff3"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/style.css",
-      "size": 92119,
-      "sha256": "e7480725ae56c83275c27453b277bbaae634f1359d4308e8b6a3b5e8ffc8b1bd"
+      "size": 94560,
+      "sha256": "96bae9516f322785575a7d8aa7e545a45fa874ab88febae9a6fb7d3d7e304a93"
     },
     {
       "kind": "source",
@@ -163,8 +151,8 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/dict.js",
-      "size": 80376,
-      "sha256": "18f92d39655afee806eae5bb2f6116a197b92aa3286bd84f95065fa914eb1149"
+      "size": 82702,
+      "sha256": "66580c3151416a4b85b802dae677b338c176891bed258bed04564699e84aa7c3"
     },
     {
       "kind": "source",
@@ -181,14 +169,14 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/library.js",
-      "size": 101083,
-      "sha256": "ee833d5bc0845b62a05bfe3b8a04a40a07c0df5a80af138be7b5f73beb2d721e"
+      "size": 102512,
+      "sha256": "8894d33e931595d0e2b9fbe5c541e0e305def463fa6f57a3f637a8902549e141"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/version.json",
-      "size": 16107,
-      "sha256": "1b16dd4bec0d138defe2c16896c035ee859a28f6ee9ef5c883b5636a6ddb2546"
+      "size": 16868,
+      "sha256": "89171188b09f8b83cfaa889b1c0f2935557ea110744b4a8c6569ac910f9c52cb"
     },
     {
       "kind": "source",
@@ -199,20 +187,20 @@
     {
       "kind": "source",
       "logical_path": "scripts/deploy_vps.sh",
-      "size": 25794,
-      "sha256": "20e51de947ec2e676ba88b7e07e0d0023a53b041bf375420c2c39c3362648d65"
+      "size": 25761,
+      "sha256": "f6b3f6a837a7a2cbe1bf9bba5132695d796889810b7eada17f5c165527f5d153"
     },
     {
       "kind": "source",
       "logical_path": "scripts/stage_clean_release.py",
-      "size": 9322,
-      "sha256": "f1272caf96d880f71cb450d62e5ee5393667eeab56bca883d38fa7a8ea19d74d"
+      "size": 9257,
+      "sha256": "a6b835c186e7f923469b6fb40d4d7eb4f90c41979f19877eb5a03e8b1c0fac4f"
     },
     {
       "kind": "source",
       "logical_path": "scripts/build_release_manifest.py",
-      "size": 15758,
-      "sha256": "7e1992c8037062c4a2058ae5811568c20611f6ed0f71598316fbdf7905e68fde"
+      "size": 15693,
+      "sha256": "2ed5fcf34561c22b306803e8b410654fd7f463c1d755f90f231fd41497d3391a"
     },
     {
       "kind": "source",
@@ -1494,8 +1482,8 @@
     }
   ],
   "runtime_assets_carried_from": {
-    "generated_at": "2026-11-04T04:58:16.282869+00:00",
-    "git_head": "453c9acdd486d4bf05f0b43e0dbc6e4965366b77",
+    "generated_at": "2026-11-12T15:05:56.862215+00:00",
+    "git_head": "8d58c1d25c33525dfe27a462cfdd848b17603900",
     "note": "runtime half not re-measured in this build; deploy_vps.sh verifies it on the VPS",
     "corrections": [
       {
