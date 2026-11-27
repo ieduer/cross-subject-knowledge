@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Rebuild the download list of a catalog release from the platform's own catalog parts.
 
-  refresh_downloads.py --parent <releases>/<id> --parts <dir> --out <releases> --stamp <YYYY-MM-DDTHH:MM:SSZ>
+  refresh_downloads.py --parent <releases>/<id> --parts <dir> --checked <dir> --out <releases> --stamp <YYYY-MM-DDTHH:MM:SSZ>
 
 `--parts` holds `data_version.json` (module, module_version, urls) and the part files it names, saved as
 `part_<n>.json` in the order of `urls`. The parts list every record the platform currently offers
-(tch_material, ONLINE only); a withdrawn record is simply absent. Metadata only: no PDF is fetched.
+(tch_material, ONLINE only); a withdrawn record is simply absent. The parts carry no file items, so whether
+a record has a downloadable PDF comes from `--checked`: one file per id, written by the host job from the
+platform's details record ({"http_status", "pdf", "size", "checked_at"}). A record without a check, or whose
+details answer 403 / 404 or name no PDF, is left out (it would be a dead link). Metadata only: no PDF is fetched.
 
 Carried from the parent byte for byte: editions, page maps, covers, reassembly records (only
 `release_id` / `generated_at` change in catalog.json). The download list is rebuilt:
@@ -58,6 +61,23 @@ def tag(item: dict, dim: str) -> str | None:
     return next((t.get("tag_name") for t in item.get("tag_list") or [] if t.get("tag_dimension_id") == dim), None)
 
 
+def in_scope(item: dict) -> tuple[bool, str]:
+    """The rule set shared with the host job (which checks the files of exactly these records)."""
+    sid, title = item.get("id"), (item.get("title") or "").strip()
+    stage_raw, subject_raw = tag(item, "zxxxd"), tag(item, "zxxxk")
+    if item.get("status") != "ONLINE":
+        return False, "not ONLINE"
+    if stage_raw not in STAGES:
+        return False, "no school 学段 tag (特殊教育, untagged, other)"
+    if TEACHER_RE.search(title):
+        return False, "教师用书"
+    if not subject_raw or not sid or not title:
+        return False, "no 学科 tag, id or title"
+    if SPECIAL_RE.search(title) and display_subject(subject_raw, title) not in CORE_SUBJECTS:
+        return False, "特殊教育 title outside the first catalog's subjects"
+    return True, ""
+
+
 def display_subject(raw: str, title: str) -> str:
     subject = SUBJECT_MAP.get(raw, raw)
     if subject == "艺术":
@@ -104,7 +124,7 @@ def held_maps(editions: list[dict]):
 
 
 def build(args) -> int:
-    parent_dir, parts_dir, out_root = Path(args.parent), Path(args.parts), Path(args.out)
+    parent_dir, parts_dir, out_root, checked_dir = Path(args.parent), Path(args.parts), Path(args.out), Path(args.checked)
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", args.stamp):
         raise SystemExit("--stamp must be YYYY-MM-DDTHH:MM:SSZ")
     parent_release = read_json(parent_dir / "RELEASE.json")
@@ -120,23 +140,16 @@ def build(args) -> int:
     for item in items:
         sid, title = item.get("id"), (item.get("title") or "").strip()
         stage_raw, subject_raw = tag(item, "zxxxd"), tag(item, "zxxxk")
-        if item.get("status") != "ONLINE":
-            left_out["not ONLINE"] += 1
+        ok, why = in_scope(item)
+        if not ok:
+            left_out[why] += 1
             continue
-        if stage_raw not in STAGES:
-            left_out["no school 学段 tag (特殊教育, untagged, other)"] += 1
+        check = read_json(checked_dir / f"{sid}.json", None) if (checked_dir / f"{sid}.json").exists() else None
+        held_here = bool(current.get(sid)) or any(by_eid[e]["storage"]["vps"] for e in other.get(sid, []))
+        if not held_here and not (check and check.get("http_status") == 200 and check.get("pdf")):
+            left_out["no downloadable file on the platform (details 403 / 404, no PDF, or not checked)"] += 1
             continue
-        if TEACHER_RE.search(title):
-            left_out["教师用书"] += 1
-            continue
-        if not subject_raw or not sid or not title:
-            left_out["no 学科 tag, id or title"] += 1
-            continue
-        if SPECIAL_RE.search(title) and display_subject(subject_raw, title) not in CORE_SUBJECTS:
-            left_out["特殊教育 title outside the first catalog's subjects"] += 1
-            continue
-        size = next((int(t["ti_size"]) for t in item.get("ti_items") or []
-                     if (t.get("ti_format") or "").lower() == "pdf" and t.get("ti_file_flag") == "source" and t.get("ti_size")), None)
+        size = (check or {}).get("size")
         sources = [{"kind": "upstream", "url": UPSTREAM_PDF + sid, "edition_id": current.get(sid) or pending.get(sid),
                     "platform_current": True}]
         for eid in [current.get(sid)] + sorted(other.get(sid, [])):
@@ -206,8 +219,10 @@ def build(args) -> int:
             "subjects_after": sorted({r["subject"] for r in after.values()})}
 
     module_version = version.get("module_version")
+    checks = sorted(checked_dir.glob("*.json"))
     inputs = {"parent/SHA256SUMS": file_hashes(parent_dir / "SHA256SUMS", ("sha256",))["sha256"],
-              **{"parts/" + k: v for k, v in sorted(part_hashes.items())}}
+              **{"parts/" + k: v for k, v in sorted(part_hashes.items())},
+              "checked/*": sha256_text("\n".join(f"{f.name}:{json.dumps({k: v for k, v in read_json(f).items() if k != 'checked_at'}, sort_keys=True)}" for f in checks))}
     tool = {Path(p).name: file_hashes(Path(p), ("sha256",))["sha256"] for p in
             (__file__, Path(__file__).with_name("extend_downloads.py"), Path(__file__).with_name("build_catalog.py"))}
     input_hash = sha256_text(dumps({"inputs": inputs, "tool": tool}))
@@ -264,6 +279,7 @@ def main(argv=None) -> int:
     p.add_argument("--parent", required=True)
     p.add_argument("--parts", required=True)
     p.add_argument("--out", required=True)
+    p.add_argument("--checked", required=True, help="per-id file checks written by the host job")
     p.add_argument("--stamp", required=True, help="retrieval time of the parts, YYYY-MM-DDTHH:MM:SSZ")
     return build(p.parse_args(argv))
 

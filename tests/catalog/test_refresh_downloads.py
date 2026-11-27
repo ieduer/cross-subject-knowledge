@@ -45,7 +45,13 @@ class RefreshDownloadsTests(unittest.TestCase):
             record(uid(8), "盲校义务教育实验教科书·英语七年级", subject="英语"),
             record(uid(9), "特殊教育读本", stage="特殊教育", subject="语文"),
             record(uid(10), "义务教育教科书·英语（三年级起点）四年级上册", stage="小学（五•四学制）", subject="英语（三年级起点）"),
+            record(uid(11), "（根据2022年版课程标准修订）义务教育教科书•体育与健康 一年级（全一册）", stage="小学", subject="体育与健康"),
         ]
+        self.checked = self.tmp / "checked"; self.checked.mkdir()
+        for x in r:
+            ok = x["id"] != uid(11)                                   # uid(11): platform lists it, no file yet
+            write_json(self.checked / f"{x['id']}.json", {"http_status": 200 if ok else 403, "pdf": ok, "size": 2048 if ok else None,
+                                                          "checked_at": "2026-11-27T00:00:00Z"})
         write_json(self.parts / "data_version.json", {"module": "tch_material", "module_version": 42, "urls": "u1,u2"})
         write_json(self.parts / "part_1.json", r[:6])
         write_json(self.parts / "part_2.json", r[6:])
@@ -57,7 +63,7 @@ class RefreshDownloadsTests(unittest.TestCase):
     def build(self, name="out"):
         out = self.tmp / name; out.mkdir()
         self.assertEqual(refresh_downloads.main(["--parent", str(self.parent), "--parts", str(self.parts), "--out", str(out),
-                                                 "--stamp", "2026-11-27T05:00:00Z"]), 0)
+                                                 "--checked", str(self.checked), "--stamp", "2026-11-27T05:00:00Z"]), 0)
         (release,) = [p for p in out.iterdir() if p.is_dir() and not p.name.startswith(".")]
         return release
 
@@ -83,6 +89,7 @@ class RefreshDownloadsTests(unittest.TestCase):
         self.assertEqual((rows[uid(10)]["stage"], rows[uid(10)]["subject"]), ("小学", "英语"))
         self.assertEqual(rows[uid(1)]["publisher"], "人民教育出版社")
         self.assertEqual(rows[uid(1)]["size_bytes"], 2048)
+        self.assertNotIn(uid(11), rows)                              # no downloadable file on the platform
         self.assertEqual(rows[uid(1)]["sources"], [{"kind": "upstream", "url": refresh_downloads.UPSTREAM_PDF + uid(1),
                                                     "edition_id": None, "platform_current": True}])
         # a row of a held edition gets the same sources build_catalog gave it (attribution included)
@@ -100,6 +107,13 @@ class RefreshDownloadsTests(unittest.TestCase):
             rel = p.relative_to(self.parent)
             if p.is_file() and str(rel) not in ("catalog.json", "downloads.json", "RELEASE.json", "SHA256SUMS"):
                 self.assertEqual((release / rel).read_bytes(), p.read_bytes(), rel)
+
+    def test_unchecked_record_left_out_and_newer_fileless_record_does_not_supersede(self):
+        (self.checked / f"{uid(1)}.json").unlink()                   # the revised record has no check
+        release = self.build("unchecked")
+        rows = {r["source_id"]: r for r in json.loads((release / "downloads.json").read_text())["rows"]}
+        self.assertNotIn(uid(1), rows)
+        self.assertIn(uid(2), rows)                                  # the older, downloadable record of the book stays
 
     def test_too_few_records_refused(self):
         refresh_downloads.MIN_RECORDS = 100

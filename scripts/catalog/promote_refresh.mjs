@@ -2,6 +2,7 @@
 // sun.bdfz.net 教材下载 refresh — promotion driver (runs on the owner's Mac; launchd daily, or by hand).
 //   node promote.mjs run                         promote the host's newest `ready` candidate, if any
 //   node promote.mjs approve <release_id> "<basis>"   promote a `ready` or `held` candidate after the owner approved it
+//   node promote.mjs rollback "<reason>"         switch back to accepted.catalog_previous (registry, Status kind rollback)
 //   node promote.mjs status                      print the host state and the channel record
 // The host job (catalog_refresh_host.py) builds and checks candidates; only this driver switches
 // data/catalog/CURRENT, so production, the release registry and Status change together. It never touches
@@ -168,28 +169,85 @@ print('switched')`;
   say({ promoted: rec.release_id, parent: live, added: rec.added, withdrawn: rec.withdrawn, evidence: runDir });
 }
 
+async function rollback(reason, local) {
+  const acc0 = project().accepted, live = ssh(`cat ${HROOT}/data/catalog/CURRENT`).trim(), back = acc0.catalog_previous;
+  if (!back) throw new Error('no catalog_previous recorded');
+  if (acc0.catalog_release !== live) throw new Error(`registry names ${acc0.catalog_release}, live is ${live}`);
+  const runDir = path.join(EVIDENCE_ROOT, live, 'rollback-' + now().replace(/[:.]/g, '')); fs.mkdirSync(runDir, { recursive: true });
+  const switched = ssh(`python3 -c "import os;r='${HROOT}/data/catalog';assert open(r+'/CURRENT').read().strip()=='${live}';assert os.path.isfile(r+'/releases/${back}/SHA256SUMS');open(r+'/.CURRENT.refresh.tmp','w').write('${back}\\n');os.replace(r+'/.CURRENT.refresh.tmp',r+'/CURRENT');print('switched')"`).trim();
+  if (switched !== 'switched') throw new Error('rollback switch not confirmed');
+  const t0 = Date.now(); let seen = null;
+  while (Date.now() - t0 < 180000) { try { seen = await getJson(SITE + '/api/library/release'); if (seen.release_id === back) break; } catch { /* retry */ } await sleep(10000); }
+  if (!seen || seen.release_id !== back) throw new Error('site did not confirm the rollback');
+  const effectiveAt = now();
+  ssh(`cat > ${HSTATE}/vps-sun-readback.py`, fs.readFileSync(READBACK, 'utf8'));
+  const readback = ssh(`python3 ${HSTATE}/vps-sun-readback.py`); const rb = JSON.parse(readback);
+  if (rb.catalog_release !== back || !rb.health_ok) throw new Error('readback does not match the rollback');
+  const evidence = runDir + '/sun-live-readback.json'; fs.writeFileSync(evidence, readback);
+  fs.writeFileSync(runDir + '/rollback.json', JSON.stringify({ at: effectiveAt, from: live, to: back, reason, release: seen }, null, 2) + '\n');
+  const acc = await withRegistry('sun-catalog-rollback-' + live, (reg, p) => {
+    if (p.accepted.catalog_release !== live) throw new Error('registry catalog moved');
+    p.accepted = { ...p.accepted, catalog_release: back, catalog_previous: live, catalog_accepted_at: now(), catalog_effective_at: effectiveAt,
+      evidence, evidence_sha256: sha(fs.readFileSync(evidence)), live_readback_evidence_sha256: sha(fs.readFileSync(evidence)) };
+    for (const k of ['public_update', 'status_publication', 'status_public_url', 'status_evidence']) delete p.accepted[k];
+    const ch = p.catalog_refresh_channel;
+    ch.runs = [...(ch.runs || []), { at: now(), rollback: true, from: live, to: back, reason, evidence: runDir }].slice(-20);
+    p.observed = { at: now(), health: 'ok', host: HOST, identity_evidence: evidence };
+    return { ...p.accepted, effective_at: effectiveAt };
+  });
+  local.rolled_back = [...(local.rolled_back || []), live].slice(-20);
+  if (process.env.ROLLBACK_STATUS_SUMMARY && process.env.ROLLBACK_STATUS_DETAILS) {
+    const update = { schemaVersion: 'bdfz-public-update-v1', public: true, id: effectiveAt.slice(0, 10).replace(/-/g, '') + '-sun-catalog-rollback-' + live.slice(-8), revision: 1, kind: 'rollback', siteKeys: ['sun'],
+      summary: process.env.ROLLBACK_STATUS_SUMMARY, details: process.env.ROLLBACK_STATUS_DETAILS, effectiveAt, publishedAt: now(), verification: 'verified' };
+    const note = { update, releases: [{ projectId: PID, sourceCommit: acc.source_commit, deployment: acc.deployment, siteKeys: ['sun'], evidencePath: evidence, evidenceSha256: sha(fs.readFileSync(evidence)) }] };
+    const notePath = runDir + '/STATUS-NOTE.json'; fs.writeFileSync(notePath, JSON.stringify(note, null, 1) + '\n', { mode: 0o600 });
+    execFileSync(process.execPath, [PUBLISHER, notePath, '--check'], { encoding: 'utf8', timeout: 300000 });
+    execFileSync(process.execPath, [PUBLISHER, notePath, '--publish'], { encoding: 'utf8', timeout: 300000 });
+    const url = 'https://status.bdfz.net/?update=' + update.id + '&revision=1#updates';
+    const r = await fetch('https://status.bdfz.net/api/updates/' + update.id + '/1', { cache: 'no-store', signal: AbortSignal.timeout(20000) });
+    if (r.status !== 200 || (await r.json()).summary !== update.summary) throw new Error('Status read-back failed');
+    await withRegistry('sun-catalog-rollback-status-' + live, (reg, p) => { Object.assign(p.accepted, { public_update: url, status_publication: 'published', status_public_url: url, status_evidence: [notePath] }); });
+  }
+  say({ rolled_back: live, to: back, evidence: runDir });
+}
+
 const [mode, arg, basis] = process.argv.slice(2);
 const local = readJson(LOCAL_STATE, {});
-try {
-  if (mode === 'status') { console.log(ssh(`python3 ${HSTATE}/tool/catalog_refresh_host.py status`)); console.log(JSON.stringify(project().catalog_refresh_channel, null, 1)); process.exit(0); }
-  if (!['run', 'approve'].includes(mode)) throw new Error('usage: run | approve <release_id> "<basis>" | status');
-  const ch = channelCheck(mode);
-  if (!ch) { say({ skipped: 'channel is not active for automatic promotion' }); process.exit(0); }
-  const rec = JSON.parse(ssh(`cat ${HSTATE}/latest.json 2>/dev/null || echo '{}'`) || '{}');
-  if (!rec.release_id) { say({ nothing: 'no candidate yet' }); process.exit(0); }
-  const live = ssh(`cat ${HROOT}/data/catalog/CURRENT`).trim();
-  if (rec.release_id === live || (local.promoted || []).includes(rec.release_id)) { say({ nothing: 'newest candidate is live', live }); process.exit(0); }
-  if (mode === 'run') {
-    if (rec.status === 'held') { noteHeld(rec, local); say({ held: rec.release_id, reasons: rec.reasons }); }
-    else if (rec.status !== 'ready') say({ nothing: `newest candidate is ${rec.status}`, candidate: rec.release_id });
-    else if (rec.subjects_new?.some((s) => !HANT[s])) { rec.status = 'held'; rec.reasons = [...(rec.reasons || []), 'new subject without a reviewed name: ' + rec.subjects_new.join(', ')]; noteHeld(rec, local); say({ held: rec.release_id, reasons: rec.reasons }); }
-    else await promote(rec, null, local);
-  } else {
-    if (arg !== rec.release_id) throw new Error(`newest candidate is ${rec.release_id}, not ${arg}`);
-    if (!['ready', 'held'].includes(rec.status)) throw new Error('candidate status ' + rec.status);
-    if (!basis || basis.length < 10) throw new Error('approval basis required');
-    await promote(rec, basis, local);
+
+async function main() {
+  if (mode === 'status') {
+    console.log(ssh(`python3 ${HSTATE}/tool/catalog_refresh_host.py status`)); console.log(JSON.stringify(project().catalog_refresh_channel, null, 1)); return;
   }
+  if (!['run', 'approve', 'rollback'].includes(mode)) throw new Error('usage: run | approve <release_id> "<basis>" | rollback "<reason>" | status');
+  if (mode === 'rollback') {
+    if (!arg || arg.length < 10) throw new Error('rollback reason required');
+    channelCheck('approve'); await rollback(arg, local); return;
+  }
+  const ch = channelCheck(mode);
+  if (!ch) { say({ skipped: 'channel is not active for automatic promotion' }); return; }
+  const rec = JSON.parse(ssh(`cat ${HSTATE}/latest.json 2>/dev/null || echo '{}'`) || '{}');
+  if (!rec.release_id) { say({ nothing: 'no candidate yet' }); return; }
+  const live = ssh(`cat ${HROOT}/data/catalog/CURRENT`).trim();
+  if (rec.release_id === live || (local.promoted || []).includes(rec.release_id) || (local.rolled_back || []).includes(rec.release_id)) {
+    say({ nothing: 'newest candidate is live, already promoted or rolled back', live, candidate: rec.release_id }); return;
+  }
+  if (mode === 'run') {
+    if (rec.status === 'held') { noteHeld(rec, local); say({ held: rec.release_id, reasons: rec.reasons }); return; }
+    if (rec.status !== 'ready') { say({ nothing: `newest candidate is ${rec.status}`, candidate: rec.release_id }); return; }
+    if (rec.subjects_new?.some((s) => !HANT[s])) {
+      rec.status = 'held'; rec.reasons = [...(rec.reasons || []), 'new subject without a reviewed name: ' + rec.subjects_new.join(', ')];
+      noteHeld(rec, local); say({ held: rec.release_id, reasons: rec.reasons }); return;
+    }
+    await promote(rec, null, local); return;
+  }
+  if (arg !== rec.release_id) throw new Error(`newest candidate is ${rec.release_id}, not ${arg}`);
+  if (!['ready', 'held'].includes(rec.status)) throw new Error('candidate status ' + rec.status);
+  if (!basis || basis.length < 10) throw new Error('approval basis required');
+  await promote(rec, basis, local);
+}
+
+try {
+  await main();
 } catch (e) {
   say({ error: String(e.message || e).slice(0, 400) }); process.exitCode = 1;
 } finally {

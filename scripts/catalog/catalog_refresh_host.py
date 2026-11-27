@@ -7,7 +7,10 @@
 1. Reads the live release (`data/catalog/CURRENT`) and the platform's `data_version.json`. When the
    platform's module_version equals the one the live release was built from, it records a heartbeat
    and stops: one small request.
-2. Otherwise it downloads the parts named there, builds a candidate with refresh_downloads.py,
+2. Otherwise it downloads the parts named there, checks the platform's details record of every record in
+   scope (cached in <state>/checked, refreshed after 30 days, a missing file after 3 days; one request per
+   second, at most 3,500 per run) so that only books with a downloadable PDF are listed, builds a
+   candidate with refresh_downloads.py,
    validates it (validate_release.py), installs it under `data/catalog/releases/<id>` (inert: CURRENT
    is never written here) and has the running container's own library code load it (read-only).
 3. Guards decide `ready` (the Mac driver may switch to it) or `held` (only an owner-approved switch):
@@ -31,6 +34,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -45,6 +49,8 @@ GUARDS = {"max_withdrawn_share": 0.05, "max_added_share": 0.20, "min_rows": 1000
 KEEP_BUILT = 4
 RUN_DAYS = 30
 UA = {"User-Agent": "Mozilla/5.0 (sun.bdfz.net catalog refresh)", "Accept": "application/json"}
+DETAILS_PATH = "/zxx/ndrv2/resources/tch_material/details/{id}.json"
+CHECK_TTL_OK, CHECK_TTL_MISSING, MAX_CHECKS, CHECK_PAUSE = 30 * 86400, 3 * 86400, 3500, 1.0
 
 
 def now() -> str:
@@ -92,6 +98,49 @@ def get_any(path_or_url: str) -> bytes:
             last = exc
             time.sleep(2)
     raise OSError(f"all hosts failed: {last}")
+
+
+def check_files(items: list[dict]) -> dict:
+    """Write <state>/checked/<id>.json for the records in scope whose check is missing or stale."""
+    sys.path.insert(0, str(TOOL))
+    import refresh_downloads as rd  # noqa: E402  (same tool directory, same rules)
+    checked = STATE / "checked"
+    checked.mkdir(parents=True, exist_ok=True)
+    ids = [x["id"] for x in items if rd.in_scope(x)[0]]
+    stats = {"in_scope": len(ids), "fetched": 0, "cached": 0, "errors": 0, "capped": 0}
+    for sid in ids:
+        f = checked / f"{sid}.json"
+        old = read_json(f, None)
+        if old:
+            age = time.time() - datetime.strptime(old["checked_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+            if age < (CHECK_TTL_OK if old.get("http_status") == 200 and old.get("pdf") else CHECK_TTL_MISSING):
+                stats["cached"] += 1
+                continue
+        if stats["fetched"] + stats["errors"] >= MAX_CHECKS:
+            stats["capped"] += 1
+            continue
+        result = None
+        for host in S_FILE_HOSTS:
+            try:
+                body = json.loads(get(host + DETAILS_PATH.format(id=sid), 40))
+                items_ = body.get("ti_items") or []
+                pdf = [t for t in items_ if (t.get("ti_format") or "").lower() == "pdf"]
+                size = next((int(t["ti_size"]) for t in pdf if t.get("ti_file_flag") == "source" and t.get("ti_size")), None)
+                result = {"http_status": 200, "pdf": bool(pdf), "size": size, "status": body.get("status")}
+                break
+            except urllib.error.HTTPError as exc:
+                if exc.code in (403, 404):
+                    result = {"http_status": exc.code, "pdf": False, "size": None}
+                    break
+            except Exception:  # noqa: BLE001
+                continue
+        time.sleep(CHECK_PAUSE)
+        if result is None:
+            stats["errors"] += 1
+            continue
+        write_json(f, {**result, "checked_at": now()})
+        stats["fetched"] += 1
+    return stats
 
 
 def catalog_dir() -> Path:
@@ -224,12 +273,17 @@ def run(force: bool) -> int:
     except Exception as exc:  # noqa: BLE001
         log({"result": "error", "step": "parts", "module_version": mv, "error": str(exc)[:200]})
         return 2
+    items = []
+    for n in range(1, len(urls) + 1):
+        items += json.loads((parts / f"part_{n}.json").read_bytes())
+    checks = check_files(items)
+    log({"result": "checked", "module_version": mv, **checks})
     out = run_dir / "out"
     out.mkdir(exist_ok=True)
     built = subprocess.run([sys.executable, str(TOOL / "refresh_downloads.py"), "--parent", str(parent), "--parts", str(parts),
-                            "--out", str(out), "--stamp", stamp], capture_output=True, text=True, timeout=900)
+                            "--checked", str(STATE / "checked"), "--out", str(out), "--stamp", stamp], capture_output=True, text=True, timeout=900)
     (run_dir / "build.log").write_text(built.stdout + built.stderr, encoding="utf-8")
-    record = {"module_version": mv, "parent": live, "built_at": stamp, "run": str(run_dir)}
+    record = {"module_version": mv, "parent": live, "built_at": stamp, "run": str(run_dir), "file_checks": checks}
     if built.returncode != 0:
         record.update(status="rejected", reasons=["build failed: " + (built.stderr or built.stdout)[-300:]])
         return finish(state, record, 2)
