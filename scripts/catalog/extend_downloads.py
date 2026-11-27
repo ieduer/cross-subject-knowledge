@@ -7,8 +7,8 @@ never enumerated (信息技术, 通用技术, 艺术, 音乐, 美术, 体育与�
 Metadata only (owner 2026-11-26: the new subjects are listed and downloaded from the source site;
 no PDF of them is fetched or stored). Every added row has exactly one source, the platform's
 current file through jks-ai (`kind: upstream`), and no edition id. The parent's editions, page
-maps, covers and reassembly records are carried over byte for byte (only `release_id` changes in
-catalog.json); its download rows are kept, with two subject-name corrections:
+maps, covers and reassembly records are carried over byte for byte (only `release_id` and
+`generated_at` change in catalog.json); its download rows are kept, with two subject-name corrections:
 
   * a 思想政治-group row whose title is a 道德与法治 book is listed under 道德与法治;
   * the service group 生物 is listed under the curriculum name 生物学 (as in the search corpus).
@@ -131,9 +131,11 @@ def build(args) -> int:
                  "groups": all_groups, "not_enumerated": not_enumerated, "rows": rows, "release_id": release_id}
     catalog = read_json(parent_dir / "catalog.json")
     catalog["release_id"] = release_id
+    catalog["generated_at"] = stamp
     page_maps = {p.stem: read_json(p) for p in sorted((parent_dir / "page-maps").glob("*.json"))}
     release = dict(parent_release)
     release["release_id"] = release_id
+    release["generated_at"] = stamp
     release["derived_from"] = {"release_id": parent_id, "input_hash": parent_release["input_hash"],
                                "generated_at": parent_release["generated_at"],
                                "change": "download list extended with the subject groups the parent did not enumerate; "

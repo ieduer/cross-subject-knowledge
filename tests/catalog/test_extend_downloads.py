@@ -86,7 +86,9 @@ class ExtendDownloadsTests(unittest.TestCase):
                 self.assertEqual((release / rel).read_bytes(), p.read_bytes(), rel)
         old = json.loads((self.parent / "catalog.json").read_text())
         new = json.loads((release / "catalog.json").read_text())
-        self.assertEqual({**old, "release_id": None}, {**new, "release_id": None})
+        self.assertEqual({**old, "release_id": None, "generated_at": None}, {**new, "release_id": None, "generated_at": None})
+        self.assertEqual(new["generated_at"], "2026-11-26T10:00:02Z")
+        self.assertEqual(json.loads((release / "RELEASE.json").read_text())["generated_at"], "2026-11-26T10:00:02Z")
 
     def test_subject_name_corrections(self):
         self.assertEqual(extend_downloads.clean_subject({"subject_group": "思想政治", "title": "义务教育教科书·道德与法治七年级上册"}), "道德与法治")
