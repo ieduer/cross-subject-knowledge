@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily sun.bdfz.net textbook catalog check (03:30 Beijing)
+
+[Timer]
+OnCalendar=*-*-* 19:30:00 UTC
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

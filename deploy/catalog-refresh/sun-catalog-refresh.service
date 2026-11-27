@@ -1,0 +1,15 @@
+[Unit]
+Description=sun.bdfz.net textbook catalog check (builds candidate catalog releases; never switches CURRENT)
+Documentation=file:///root/cross-subject-knowledge/state/catalog-refresh/tool/catalog_refresh_host.py
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /root/cross-subject-knowledge/state/catalog-refresh/tool/catalog_refresh_host.py run
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=1800
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
