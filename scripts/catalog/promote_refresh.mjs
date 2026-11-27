@@ -86,7 +86,7 @@ function statusNote(rec, runDir, acc) {
     summary: `AI 教材（sun.bdfz.net）「教材下載」書目與國家中小學智慧教育平臺同步：新增 ${rec.added} 冊，${rec.withdrawn} 冊不再列出（平臺已下架或同一冊的舊記錄）。`,
     details: (rec.added ? `新增：${byText(rec.added_by_stage_subject)}。` : '') + (rec.withdrawn ? `不再列出：${byText(rec.withdrawn_by_stage_subject)}（其中平臺已下架 ${removedOffline} 冊，其餘為同一冊重複上架的舊記錄，保留較新的一條）。` : '') +
       ((rec.changed || {}).publisher ? `另有 ${rec.changed.publisher} 冊按平臺記錄更正出版社。` : '') +
-      `平臺資料版本 ${rec.module_version}。每冊下載時仍直接取官方平臺當前的文件。`,
+      `平臺數據版本 ${rec.module_version}。每冊下載時仍直接取官方平臺當前的文件。`,
     effectiveAt: acc.effective_at, publishedAt: now(), verification: 'verified' };
   const evidencePath = acc.evidence;
   return { update, releases: [{ projectId: PID, sourceCommit: acc.source_commit, deployment: acc.deployment, siteKeys: ['sun'], evidencePath, evidenceSha256: sha(fs.readFileSync(evidencePath)) }] };
