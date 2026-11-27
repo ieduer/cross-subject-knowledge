@@ -83,9 +83,9 @@ function statusNote(rec, runDir, acc) {
   const removedOffline = rec.withdrawn - (rec.superseded_withdrawn || 0);
   const update = {
     schemaVersion: 'bdfz-public-update-v1', public: true, id: rec.release_id.slice(0, 8) + '-sun-catalog-' + rec.release_id.slice(-8), revision: 1, kind: 'maintenance', siteKeys: ['sun'],
-    summary: `AI 教材（sun.bdfz.net）「教材下載」書目與國家中小學智慧教育平臺同步：新增 ${rec.added} 冊，${rec.withdrawn} 冊不再列出（平臺已下架或同一冊的舊紀錄）。`,
-    details: (rec.added ? `新增：${byText(rec.added_by_stage_subject)}。` : '') + (rec.withdrawn ? `不再列出：${byText(rec.withdrawn_by_stage_subject)}（其中平臺已下架 ${removedOffline} 冊，其餘為同一冊重複上架的舊紀錄，保留較新的一筆）。` : '') +
-      ((rec.changed || {}).publisher ? `另有 ${rec.changed.publisher} 冊依平臺紀錄更正出版社。` : '') +
+    summary: `AI 教材（sun.bdfz.net）「教材下載」書目與國家中小學智慧教育平臺同步：新增 ${rec.added} 冊，${rec.withdrawn} 冊不再列出（平臺已下架或同一冊的舊記錄）。`,
+    details: (rec.added ? `新增：${byText(rec.added_by_stage_subject)}。` : '') + (rec.withdrawn ? `不再列出：${byText(rec.withdrawn_by_stage_subject)}（其中平臺已下架 ${removedOffline} 冊，其餘為同一冊重複上架的舊記錄，保留較新的一條）。` : '') +
+      ((rec.changed || {}).publisher ? `另有 ${rec.changed.publisher} 冊按平臺記錄更正出版社。` : '') +
       `平臺資料版本 ${rec.module_version}。每冊下載時仍直接取官方平臺當前的文件。`,
     effectiveAt: acc.effective_at, publishedAt: now(), verification: 'verified' };
   const evidencePath = acc.evidence;
