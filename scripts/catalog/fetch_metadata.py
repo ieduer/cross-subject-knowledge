@@ -27,6 +27,9 @@ DETAILS_URL = "https://s-file-1.ykt.cbern.com.cn/zxx/ndrv2/resources/tch_materia
 SEARCH_URL = "https://jks-ai.bdfz.net/search"
 PHASES = ["小学", "初中", "高中"]
 SUBJECTS = ["语文", "数学", "英语", "物理", "化学", "生物", "历史", "地理", "思想政治"]
+# r51: the groups the service's 27 UI groups never offered (build_catalog.NOT_ENUMERATED until r51).
+EXTRA_SUBJECTS = ["信息技术", "信息科技", "通用技术", "科学", "艺术", "音乐", "美术", "体育与健康",
+                  "劳动", "日语", "俄语", "法语", "德语", "西班牙语"]
 
 
 def get(url: str, timeout: float = 40.0) -> tuple[int, dict, bytes]:
@@ -102,6 +105,8 @@ def main(argv=None) -> int:
     s.add_argument("--out", required=True)
     s.add_argument("--max", type=int, required=True)
     s.add_argument("--pause", type=float, default=1.0)
+    s.add_argument("--subjects", default="", help="comma list; 'extra' = EXTRA_SUBJECTS; default the 9 UI subjects")
+    s.add_argument("--phases", default="", help="comma list; default 小学,初中,高中")
     args = p.parse_args(argv)
     if args.cmd == "details":
         ids = read_json(args.ids)
@@ -111,8 +116,11 @@ def main(argv=None) -> int:
             return 2
         tasks = [(i, DETAILS_URL.format(id=i)) for i in ids]
     else:
+        subjects = (EXTRA_SUBJECTS if args.subjects == "extra"
+                    else [x for x in args.subjects.split(",") if x] or SUBJECTS)
+        phases = [x for x in args.phases.split(",") if x] or PHASES
         tasks = [(f"{ph}__{sj}", SEARCH_URL + "?" + urllib.parse.urlencode({"phase": ph, "subject": sj}))
-                 for ph in PHASES for sj in SUBJECTS]
+                 for ph in phases for sj in subjects]
     return run(tasks, Path(args.out), args.max, max(args.pause, 1.0))
 
 

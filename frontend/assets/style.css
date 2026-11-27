@@ -106,6 +106,22 @@ body {
     background: var(--bg-hover);
 }
 
+/* r51: every tab carries an icon; phones show it above a two-character label */
+.nav-btn .nav-ico {
+    margin-right: 5px;
+    font-size: 0.95em;
+    line-height: 1;
+}
+
+.nav-btn .nav-label-short {
+    display: none;
+}
+
+.nav-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
 .nav-btn.active {
     color: var(--accent-light);
     background: rgba(108, 92, 231, 0.15);
@@ -371,6 +387,28 @@ body {
 .stat-chip .count {
     color: var(--accent-light);
     font-weight: 600;
+}
+
+.stats-bar-label {
+    flex-basis: 100%;
+    grid-column: 1 / -1;
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-top: 6px;
+}
+
+a.stat-chip-download {
+    color: inherit;
+    text-decoration: none;
+    border-style: dashed;
+    cursor: pointer;
+}
+
+a.stat-chip-download:hover,
+a.stat-chip-download:focus-visible {
+    border-color: var(--accent);
+    border-style: solid;
 }
 
 /* ── Cross Hint ──────────────────────────────────────────── */
@@ -1819,9 +1857,14 @@ body {
 .gk-card-preview {
     font-size: 13px;
     color: var(--text-dim);
-    max-height: 2.6em;
+    max-height: 3.2em;
     overflow: hidden;
     line-height: 1.6;
+    /* r51: two whole lines (2.6em at line-height 1.6 cut the second line through) */
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
 }
 
 /* Expanded state */
@@ -2381,6 +2424,30 @@ body {
         background: rgba(108, 92, 231, 0.1);
     }
 
+    .nav-btn .nav-ico {
+        display: block;
+        margin: 0 0 2px;
+        font-size: 17px;
+    }
+
+    /* the full label stays available to screen readers; the short one is what fits on a phone */
+    .nav-btn .nav-label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        clip-path: inset(50%);
+        white-space: nowrap;
+    }
+
+    .nav-btn .nav-label-short {
+        display: block;
+        font-size: 11px;
+        line-height: 1.15;
+        letter-spacing: 0;
+    }
+
     .nav-btn.active::after {
         content: '';
         position: absolute;
@@ -2479,10 +2546,10 @@ body {
         min-height: 32px;
     }
 
-    /* Stats Bar: 3-column grid */
+    /* Stats Bar: 3-column grid; each chip stacks 学科 over its counts so names never break per character */
     .stats-bar {
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 6px;
         padding: 10px 0;
         margin-bottom: 10px;
@@ -2490,9 +2557,24 @@ body {
 
     .stat-chip {
         padding: 6px 8px;
+        font-size: 12px;
+        flex-direction: column;
+        align-items: flex-start;
+        justify-content: flex-start;
+        gap: 2px;
+        min-width: 0;
+        border-radius: 12px;
+        line-height: 1.35;
+    }
+
+    .stat-chip .stat-name {
+        white-space: nowrap;
+        font-weight: 600;
+    }
+
+    .stat-chip .count {
         font-size: 11px;
-        justify-content: center;
-        gap: 4px;
+        overflow-wrap: anywhere;
     }
 
     /* Cross Hint */
@@ -3278,12 +3360,12 @@ mark {
     }
 
     .stats-bar {
-        grid-template-columns: repeat(2, 1fr);
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .stat-chip {
-        font-size: 10px;
-        padding: 5px 6px;
+        font-size: 12px;
+        padding: 5px 8px;
     }
 
     .subject-tab {
@@ -4276,6 +4358,27 @@ body.has-search #stats-bar {
     font-size: 17px;
     font-weight: 600;
     color: var(--text);
+}
+
+@media (max-width: 640px) {
+    .evidence-head {
+        align-items: center;
+    }
+
+    .evidence-head .evidence-toggle-all {
+        margin-left: auto;
+    }
+
+    .evidence-head .evidence-summary {
+        order: 3;
+        flex-basis: 100%;
+    }
+}
+
+.gk-card-header:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
 }
 
 .evidence-summary {

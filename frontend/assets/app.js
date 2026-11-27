@@ -19,7 +19,7 @@ window._subjectMeta = {};
 // AI runs only on an explicit user action and only through this site's own server
 // (assets/ai-client.js → POST /api/chat). The browser never contacts a model gateway.
 const IMG_CDN = 'https://img.rdfzer.com';
-const DEFAULT_FRONTEND_VERSION = '2026.11.13-r49';
+const DEFAULT_FRONTEND_VERSION = '2026.11.26-r51';
 const FRONTEND_VERSION_FILE = '/assets/version.json';
 const AI_MEMORY_LIMIT = 12;
 const DOWNLOADABLE_LIBRARY_BOOKS = 316;
@@ -767,7 +767,18 @@ const filterImages = document.getElementById('filter-images');
 advToggle.addEventListener('click', () => {
     advPanel.classList.toggle('hidden');
     advToggle.classList.toggle('active');
+    advToggle.setAttribute('aria-expanded', String(!advPanel.classList.contains('hidden')));
 });
+
+// r51: on phones the filters start folded (⚙ opens them) so the search box, 试试 and the subject list fit the first screen.
+const PHONE_QUERY = window.matchMedia('(max-width: 640px)');
+if (PHONE_QUERY.matches) {
+    advPanel.classList.add('hidden');
+    advToggle.classList.remove('active');
+    document.getElementById('search-input').placeholder = '搜索概念，如：光合作用';
+}
+advToggle.setAttribute('aria-controls', 'advanced-panel');
+advToggle.setAttribute('aria-expanded', String(!advPanel.classList.contains('hidden')));
 
 // Load books into dropdown on first toggle open
 let booksLoaded = false;
@@ -1657,7 +1668,9 @@ async function loadGraph(mode = 'cross', subject = '') {
 }
 
 function renderGraphNew(data, container, mode) {
-    const W = Math.max(container.clientWidth, 600);
+    // r51: on a phone the layout uses the real (narrow, tall) box and pulls clusters toward its middle column.
+    const narrow = container.clientWidth < 600;
+    const W = narrow ? Math.max(container.clientWidth, 280) : Math.max(container.clientWidth, 600);
     const H = Math.max(container.clientHeight, 500);
     const rawNodes = data.nodes || [];
     const rawLinks = data.links || [];
@@ -1748,8 +1761,8 @@ function renderGraphNew(data, container, mode) {
             .strength(d => d.type === 'subject' ? -400 : -100))
         .force('center', d3.forceCenter(W / 2, H / 2))
         .force('collision', d3.forceCollide().radius(d => d.r + 8))
-        .force('x', d3.forceX(W / 2).strength(0.03))
-        .force('y', d3.forceY(H / 2).strength(0.03));
+        .force('x', d3.forceX(W / 2).strength(narrow ? 0.12 : 0.03))
+        .force('y', d3.forceY(H / 2).strength(narrow ? 0.02 : 0.03));
 
     // Draw links
     const link = zoomGroup.append('g')
@@ -1939,8 +1952,20 @@ function renderGraphNew(data, container, mode) {
     resetBtn.textContent = '🔄 重置';
     resetBtn.className = 'graph-reset-btn';
     resetBtn.style.cssText = 'position:absolute;top:10px;right:10px;padding:6px 12px;border:1px solid rgba(108,92,231,0.3);border-radius:8px;background:rgba(20,20,40,0.7);color:#fff;cursor:pointer;font-size:12px;backdrop-filter:blur(5px);z-index:10;';
+    // r51: fit the settled layout into the box (on phones the force layout spreads past the visible area).
+    let graphFitted = false;
+    const fitGraph = () => {
+        const pad = 46;
+        const minX = d3.min(allNodes, n => n.x - (n.r || 8)) - pad, maxX = d3.max(allNodes, n => n.x + (n.r || 8)) + pad;
+        const minY = d3.min(allNodes, n => n.y - (n.r || 8)) - pad, maxY = d3.max(allNodes, n => n.y + (n.r || 8)) + pad;
+        if (![minX, maxX, minY, maxY].every(Number.isFinite)) return;
+        const k = Math.max(narrow ? 0.55 : 0.3, Math.min(1.4, Math.min(W / (maxX - minX), H / (maxY - minY))));
+        const t = d3.zoomIdentity.translate(W / 2 - k * (minX + maxX) / 2, H / 2 - k * (minY + maxY) / 2).scale(k);
+        svg.transition().duration(600).call(zoom.transform, t);
+    };
+    simulation.on('end.fit', () => { if (!graphFitted) { graphFitted = true; fitGraph(); } });
     resetBtn.addEventListener('click', () => {
-        svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity);
+        graphFitted = false;
         simulation.alpha(0.5).restart();
     });
     container.style.position = 'relative';
@@ -2056,6 +2081,39 @@ function applyLiveStatsToUI(data) {
     }
 }
 
+// r51: subjects that are not in the searchable corpus but have textbooks in 教材下载 (official source files only).
+const DOWNLOAD_SUBJECT_ICONS = {
+    '道德与法治': '⚖️', '思想政治': '⚖️', '科学': '🔬', '信息技术': '💻', '信息科技': '💻', '通用技术': '🛠️',
+    '艺术': '🎭', '音乐': '🎵', '美术': '🎨', '体育与健康': '⚽', '劳动': '🧰',
+    '日语': '🗣️', '俄语': '🗣️', '法语': '🗣️', '德语': '🗣️', '西班牙语': '🗣️',
+};
+
+async function appendDownloadOnlySubjects(bar, searchable) {
+    try {
+        const res = await fetch(`${API}/api/library/downloads/facets?region=CN`);
+        if (!res.ok) return;
+        const facets = await res.json();
+        const extra = (facets.subjects || []).filter(s => s.name && !searchable.has(s.name)
+            && !(s.name === '思想政治' && searchable.has('道德与法治')));
+        if (!extra.length) return;
+        const label = document.createElement('div');
+        label.className = 'stats-bar-label';
+        label.textContent = '以下学科暂未收录全文检索，可在「教材下载」从官方平台下载教材：';
+        bar.append(label);
+        extra.forEach(s => {
+            const link = document.createElement('a');
+            const q = new URLSearchParams({ view: 'downloads', stage: 'all', subject: s.name });
+            link.className = 'stat-chip stat-chip-download';
+            link.href = `/?${q}`;
+            link.dataset.libView = 'downloads';
+            link.setAttribute('data-lib-url', '');
+            link.innerHTML = `<span class="stat-name">${DOWNLOAD_SUBJECT_ICONS[s.name] || '📘'} ${escHtml(s.name)}</span> `
+                + `<span class="count">下载 ${Number(s.count).toLocaleString()} 册</span>`;
+            bar.append(link);
+        });
+    } catch (_) { /* silent: the searchable subjects are already shown */ }
+}
+
 (async function init() {
     // Fetch subject metadata for this phase
     try {
@@ -2071,10 +2129,11 @@ function applyLiveStatsToUI(data) {
         el.innerHTML = data.subjects.map(s => {
             const exam = examBySubject.get(s.name) || 0;
             const textbook = Math.max(0, s.count - exam);
-            return `<div class="stat-chip">${s.icon} ${escHtml(s.name)} <span class="count">教材 ${textbook.toLocaleString()} 段${exam ? ` · 真题 ${exam.toLocaleString()} 条` : ''}</span></div>`;
+            return `<div class="stat-chip"><span class="stat-name">${s.icon} ${escHtml(s.name)}</span> <span class="count">教材 ${textbook.toLocaleString()} 段${exam ? ` · 真题 ${exam.toLocaleString()} 条` : ''}</span></div>`;
         }).join('');
         el.classList.remove('hidden');
         applyLiveStatsToUI(data);
+        appendDownloadOnlySubjects(el, new Set(data.subjects.map(s => s.name)));
     } catch (e) { /* silent */ }
 
 })();
@@ -2178,7 +2237,7 @@ function renderGaokaoResults(questions) {
 
         return `
         <div class="gaokao-card" data-id="${q.id}">
-            <div class="gk-card-header" onclick="this.parentElement.classList.toggle('expanded')">
+            <div class="gk-card-header" role="button" tabindex="0" aria-expanded="false" onclick="toggleGaokaoCard(this)" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleGaokaoCard(this); }">
                 <div class="gk-card-meta">
                     <span class="gk-badge" style="--badge-color:${q.color || '#6c5ce7'}">${q.icon || '📚'} ${q.subject}</span>
                     <span class="gk-year">${q.year}年</span>
@@ -2187,7 +2246,7 @@ function renderGaokaoResults(questions) {
                     ${q.score ? `<span class="gk-score">${q.score}分</span>` : ''}
                 </div>
                 <div class="gk-card-title">${escHtml(q.title)}</div>
-                <div class="gk-card-preview">${sanitizeSnippet(questionText.slice(0, 200))}</div>
+                <div class="gk-card-preview">${sanitizeSnippet(stripMarkdownMarks(questionText.slice(0, 240)))}</div>
             </div>
             <div class="gk-card-body">
                 <div class="gk-question">${renderGaokaoText(questionText)}</div>
@@ -2371,10 +2430,21 @@ async function requestGaokaoAI(questionId, btn) {
 }
 
 // Render gaokao question text with images from R2 CDN
+function toggleGaokaoCard(header) {
+    const expanded = header.parentElement.classList.toggle('expanded');
+    header.setAttribute('aria-expanded', String(expanded));
+}
+
+// r51: question stems carry markdown emphasis (**…**); previews drop the markers, the full text shows them bold.
+function stripMarkdownMarks(text) {
+    return String(text || '').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*\*/g, '').replace(/__([^_]+)__/g, '$1');
+}
+
 function renderGaokaoText(text) {
     if (!text) return '';
     // Escape HTML
     let s = escHtml(text);
+    s = s.replace(/\*\*([^*\n]{1,400}?)\*\*/g, '<strong>$1</strong>');
     // Convert markdown images to <img> tags using R2 CDN
     s = s.replace(/!\[([^\]]*)\]\(https:\/\/img\.rdfzer\.com\/gaokao\/([^)]+)\)/g, (_, alt, src) => {
         return `<img class="gk-question-img" src="https://img.rdfzer.com/gaokao/${src}" alt="${alt || '题目图片'}" loading="lazy">`;
@@ -2483,8 +2553,12 @@ async function loadFreqChart() {
 
 function renderFreqBars(container, data) {
     container.innerHTML = '';
-    const margin = { top: 10, right: 40, bottom: 30, left: 100 };
     const W = Math.min(container.clientWidth, 700);
+    // Left margin fits the longest term (8-character terms were clipped at the fixed 100px), capped at 45% of the width.
+    const measureCtx = document.createElement('canvas').getContext('2d');
+    measureCtx.font = `600 12px ${getComputedStyle(container).fontFamily || 'sans-serif'}`;
+    const longest = d3.max(data, d => measureCtx.measureText(String(d.term)).width) || 0;
+    const margin = { top: 10, right: 40, bottom: 30, left: Math.round(Math.min(W * 0.45, Math.max(72, longest + 14))) };
     const barH = 26;
     const H = margin.top + margin.bottom + data.length * barH;
 

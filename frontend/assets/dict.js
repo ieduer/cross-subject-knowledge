@@ -1827,6 +1827,8 @@ window.addEventListener('resize', () => {
 }, { passive: true });
 
 async function initializeDictPage() {
+    // r51: the full example list does not fit a phone's search box.
+    if (el.input && window.matchMedia('(max-width: 640px)').matches) el.input.placeholder = '输入字或词，如：之、乎、者';
     setupScrollAffordances();
     loadStatus();
     const hashApplied = await applyExamHashSelection();

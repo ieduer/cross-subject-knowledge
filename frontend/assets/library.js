@@ -1821,6 +1821,14 @@
         const link = event.target && event.target.closest ? event.target.closest('a[data-lib-view]') : null;
         const name = link && link.dataset.libView;
         if (name !== 'pdf' && name !== 'downloads') return;
+        if (link.hasAttribute('data-lib-url')) {
+            // The link's own query (e.g. ?view=downloads&stage=all&subject=信息技术) selects the filters.
+            event.preventDefault();
+            history.pushState(null, '', link.href);
+            route();
+            window.scrollTo(0, 0);
+            return;
+        }
         if (!activateView(name)) return;
         event.preventDefault();
         if (name === 'pdf') enterPdf(false); else enterDownloads(false);

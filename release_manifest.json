@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-14T04:22:22.577354+00:00",
-  "git_head": "f4ae268ceca15d9a3098a0cb869add34c2eaaff4",
-  "frontend_version": "2026.11.13-r49",
+  "generated_at": "2026-11-27T03:10:31.224831+00:00",
+  "git_head": "15030f4780cd4333c1ebbd485a2dc8f5eda1b514",
+  "frontend_version": "2026.11.26-r51",
   "source_of_truth": {
     "local_workspace": "authoritative",
     "github": "authoritative_for_code_only_after_push",
@@ -43,8 +43,8 @@
     {
       "kind": "source",
       "logical_path": "backend/library.py",
-      "size": 94001,
-      "sha256": "43a70a8bcdfcbe22944fe12966cbd4b03361134190c5a7ae6e9f0dcb1f7eb354"
+      "size": 94639,
+      "sha256": "e3fcb0caa06ac6b36b1c6bbdff9b5d9842e82987e983dd2589d498fe964e4796"
     },
     {
       "kind": "source",
@@ -115,14 +115,14 @@
     {
       "kind": "source",
       "logical_path": "frontend/index.html",
-      "size": 15851,
-      "sha256": "ea5a2bec5dc6b3a9bdae7ade9aad3c31ee6af6e77708c28cdb4e96386d071192"
+      "size": 16945,
+      "sha256": "09ca00f3214bb7f55eec42f04137d4312fd6c25c145e41a4073223131600e2d1"
     },
     {
       "kind": "source",
       "logical_path": "frontend/dict.html",
-      "size": 10932,
-      "sha256": "f61560ff2d25c34009fbc5e5e7ff987f086687db69c61c35c28f624016b9ab71"
+      "size": 12114,
+      "sha256": "deeffa325e8fce8fab171a8ac72f713c575dfc3e521d67b2535b6dfedadca1cf"
     },
     {
       "kind": "source",
@@ -133,14 +133,14 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/app.js",
-      "size": 129583,
-      "sha256": "743f4659569663974822136005f84e78c08be655b1d49bd140ee6b1c2d85cff3"
+      "size": 134447,
+      "sha256": "c8efa0e574ff85ee24f4fa540c28aff545475a3cb48732f3e35d767b59951aad"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/style.css",
-      "size": 94560,
-      "sha256": "96bae9516f322785575a7d8aa7e545a45fa874ab88febae9a6fb7d3d7e304a93"
+      "size": 96849,
+      "sha256": "96cf2fa7fb079086578423f22c9662d862a794c3c8c6ee8411796164ebf7c9dd"
     },
     {
       "kind": "source",
@@ -151,8 +151,8 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/dict.js",
-      "size": 82702,
-      "sha256": "66580c3151416a4b85b802dae677b338c176891bed258bed04564699e84aa7c3"
+      "size": 82906,
+      "sha256": "6b54b0930c209b9eaaedd16d7d917b127061cacdc84faa00497ca1f32a6ae78f"
     },
     {
       "kind": "source",
@@ -163,20 +163,20 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/library.css",
-      "size": 17321,
-      "sha256": "55bc9f2e5fc35f22cde27198049b62763a20879287c93dac2ca00322f3c14e8e"
+      "size": 17766,
+      "sha256": "e23228af260a963ced4da198dae17df6ecfd15fa5ddf6e874484fbb60adac9cc"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/library.js",
-      "size": 102512,
-      "sha256": "8894d33e931595d0e2b9fbe5c541e0e305def463fa6f57a3f637a8902549e141"
+      "size": 102846,
+      "sha256": "4e97ea7e9359ed0faf00ee991bd27222e2b7b5f02a616861d49e7ae929f5a87d"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/version.json",
-      "size": 16868,
-      "sha256": "89171188b09f8b83cfaa889b1c0f2935557ea110744b4a8c6569ac910f9c52cb"
+      "size": 18200,
+      "sha256": "dcad37d20282eb878d32c9740598a22356466e3c65f316e09e62b49f6d33b348"
     },
     {
       "kind": "source",
@@ -1482,8 +1482,8 @@
     }
   ],
   "runtime_assets_carried_from": {
-    "generated_at": "2026-11-14T02:00:12.146722+00:00",
-    "git_head": "75de5e1e3b059ad9756b83b960655d1e2139d342",
+    "generated_at": "2026-11-14T04:22:22.577354+00:00",
+    "git_head": "f4ae268ceca15d9a3098a0cb869add34c2eaaff4",
     "note": "runtime half not re-measured in this build; deploy_vps.sh verifies it on the VPS",
     "corrections": [
       {
@@ -1521,7 +1521,8 @@
           "size": 814
         }
       ]
-    }
+    },
+    "r51_note": "r51 changes code and the frontend only (and a catalog release under data/catalog, which this manifest does not cover); runtime assets carried from the r50 manifest unchanged, corrections and r50 notes kept"
   },
   "page_mapping": {
     "book_count": 144,

@@ -1174,6 +1174,17 @@ def _matches(haystack: str, terms: list[str]) -> bool:
     return all(term in haystack for term in terms)
 
 
+# r51: subject facets follow the curriculum order instead of first appearance in the row order.
+SUBJECT_ORDER = {name: i for i, name in enumerate((
+    "语文", "数学", "英语", "道德与法治", "思想政治", "历史", "地理", "物理", "化学", "生物学", "生物", "科学",
+    "信息技术", "信息科技", "通用技术", "艺术", "音乐", "美术", "体育与健康", "劳动",
+    "日语", "俄语", "法语", "德语", "西班牙语"))}
+
+
+def _subject_counts(values) -> list[dict]:
+    return sorted(_counts(values), key=lambda s: (SUBJECT_ORDER.get(s["name"], len(SUBJECT_ORDER)), s["name"]))
+
+
 def _counts(values) -> list[dict]:
     counts: dict[str, int] = {}
     for value in values:
@@ -1487,7 +1498,7 @@ class Library:
             pool = [e for e in release.editions.values()
                     if e.record["in_grid"]
                     and (not phase or e.stage == phase) and (not region or e.region == region)]
-            subjects = _counts(e.subject for e in pool)
+            subjects = _subject_counts(e.subject for e in pool)
             rows = [e for e in pool if (not subject or e.subject == subject) and _matches(e.haystack, terms)]
             return lib._json({
                 "total": len(rows), "offset": start, "limit": size,
@@ -1708,7 +1719,7 @@ class Library:
             return lib._json({
                 "total": len(in_region),
                 "stages": stages,
-                "subjects": _counts(row.subject for row in in_stage),
+                "subjects": _subject_counts(row.subject for row in in_stage),
                 "publishers": sorted(_counts(row.publisher for row in in_subject), key=lambda p: -p["count"]),
                 "regions": release.summary["regions"],
             }, release)

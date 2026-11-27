@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.11.13-r49",
-  "updated_at": "2026-11-13",
+  "frontend_refactor_version": "2026.11.26-r51",
+  "updated_at": "2026-11-26",
   "history": [
+    {
+      "date": "2026-11-26",
+      "version": "2026.11.26-r51",
+      "summary": "phones: the 教材下载 cards no longer widen the page at narrow widths or large text (the download button wraps, grid columns minmax(0,1fr)); the subject list on the search page stacks each 学科 over its counts instead of breaking names per character; the 数据 word chart fits its longest term; every tab carries an icon and phones show it above a two-character label, and the dictionary page now links PDF 预览 and 教材下载 too; on phones the search filters start folded and the placeholders are shorter; the retrieved-originals header wraps cleanly; 真题 previews no longer show markdown asterisks and the full text renders them bold, cards open from the keyboard; the knowledge graph fits its settled layout into the box. 教材下载 adds the subject groups the first catalog never enumerated — 信息技术, 通用技术, 科学, 艺术, 音乐, 美术, 体育与健康, 日语, 俄语, 法语, 德语, 西班牙语 (1,343 rows, official platform source links only, no file held here) — lists 道德与法治 and 生物学 under their own names and orders subjects by the curriculum; the search page lists those subjects as download chips that open 教材下载 filtered to that subject; asset cache key 20261126a"
+    },
     {
       "date": "2026-11-13",
       "version": "2026.11.13-r49",

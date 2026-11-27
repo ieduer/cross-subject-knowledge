@@ -432,7 +432,13 @@
 @media (max-width: 640px) {
     .lib-view { padding-left: 12px; padding-right: 12px; }
     .lib-hero { padding: 26px 0 14px; }
-    .lib-grid, .lib-dl-list { grid-template-columns: 1fr; }
+    /* minmax(0,…): a card's min-content (long titles, the download button) must not widen the page */
+    .lib-grid, .lib-dl-list { grid-template-columns: minmax(0, 1fr); }
+    .lib-dl-card, .lib-card { min-width: 0; }
+    .lib-dl-card { gap: 10px; padding: 12px; }
+    .lib-dl-actions .lib-btn, .lib-dl-btn { white-space: normal; max-width: 100%; text-align: center; flex-wrap: wrap; }
+    .lib-dl-btn { padding: 8px 14px; }
+    .lib-dl-title, .lib-dl-meta, .lib-dl-state { overflow-wrap: anywhere; }
     .lib-viewer-download { width: 100%; }
     .lib-download-main { width: 100%; }
     .lib-zoom { width: 100%; justify-content: space-between; }
