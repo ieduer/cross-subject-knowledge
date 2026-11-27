@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-27T04:33:33.707553+00:00",
-  "git_head": "9f90ff7baafa5cf73b982895fc3f6473be2332f6",
+  "generated_at": "2026-11-27T05:06:54.266529+00:00",
+  "git_head": "fc2ba4776097fb51a8b538ea0569f922f8f8d353",
   "frontend_version": "2026.11.27-r52",
   "source_of_truth": {
     "local_workspace": "authoritative",

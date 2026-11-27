@@ -17,7 +17,8 @@ r52 (with --details, the SmartEdu details JSON of each row, read-only and cached
   * a row listed under the platform's own name (智慧中小学) or none gets the publisher the record names
     (provider_list), the listed value kept as `publisher_listed`; size, update time and the subject
     tag are filled in from the same record;
-  * among the added rows, a record the platform marks OFFLINE is left out (nothing to download), and
+  * a record the platform marks OFFLINE loses its platform link (rows of the parent list stay only for a
+    file held on this site); among the added rows such a record is left out, and
     of the records for one book — same 学段, 学科, publisher and title — only
     the platform's current record is listed (same title once the revision marker is removed): a title
     revised to a newer curriculum standard first, then the later online / update time. The left-out ids are named in RELEASE.json.
@@ -149,11 +150,20 @@ def build(args) -> int:
 
     rows = []
     publisher_fixed = 0
+    offline = []
     for row in parent_downloads["rows"]:
         row = dict(row)
         row["subject"] = clean_subject(row)
-        apply_facts(row, details_facts(details_dir, row["source_id"]), status=False)
+        facts = details_facts(details_dir, row["source_id"])
+        apply_facts(row, facts, status=False)
         publisher_fixed += "publisher_listed" in row
+        if facts and facts["status"] == "OFFLINE":
+            # the platform no longer serves this record: no upstream link; the row stays only for a file held here
+            row["upstream_status"] = "OFFLINE"
+            row["sources"] = [x for x in row["sources"] if x["kind"] != "upstream"]
+            if not row["sources"]:
+                offline.append({"source_id": row["source_id"], "title": row["title"], "listed_before": True})
+                continue
         rows.append(row)
     added = []
     for sid, entry in found.items():
@@ -171,7 +181,7 @@ def build(args) -> int:
             "upstream_status": None, "edition_id": None, "held_other_edition_ids": [],
         })
     # r52: details facts, OFFLINE records, one current record per book
-    offline, groups_by_work, facts_of = [], {}, {}
+    groups_by_work, facts_of = {}, {}
     for row in added:
         facts = facts_of[row["source_id"]] = details_facts(details_dir, row["source_id"])
         apply_facts(row, facts, status=True)
@@ -225,7 +235,7 @@ def build(args) -> int:
                                          + ("; with the platform's details records: publishers named, OFFLINE records and "
                                             "superseded records of the same book left out" if details_dir else "")}
     release["extension"] = {"tool": "extend_downloads.py", "tool_sha256": tool, "inputs": inputs, "input_hash": input_hash,
-                            "added_rows": len(found) - len(offline) - len(superseded), "special_education_rows_left_out": len(special),
+                            "added_rows": len(kept_added), "special_education_rows_left_out": len(special),
                             "details_dir_files": len(list(details_dir.glob("*-*-*-*-*.json"))) if details_dir else 0,
                             "publisher_corrected_rows": publisher_fixed,
                             "offline_left_out": offline, "superseded_left_out": sorted(superseded, key=lambda x: x["source_id"]),
@@ -256,7 +266,7 @@ def build(args) -> int:
     for name, data in files.items():
         write_atomic(tmp / name, data)
     tmp.rename(target)
-    print(f"built {release_id} files={len(files)} rows={len(rows)} added={len(found) - len(offline) - len(superseded)} "
+    print(f"built {release_id} files={len(files)} rows={len(rows)} added={len(kept_added)} "
           f"special_left_out={len(special)} offline={len(offline)} superseded={len(superseded)} publisher_fixed={publisher_fixed}")
     print(target)
     return 0

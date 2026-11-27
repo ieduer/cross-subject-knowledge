@@ -156,6 +156,22 @@ class ExtendDownloadsDetailsTests(unittest.TestCase):
         for name in ("downloads.json", "RELEASE.json"):
             self.assertNotIn("最新", (release / name).read_text())
 
+    def test_parent_row_offline_loses_its_platform_link(self):
+        from test_build_validate import SID_A
+        write_json(self.details / f"{SID_A}.json", {"body": {"status": "OFFLINE", "provider_list": [], "tag_list": [], "ti_items": []}})
+        out = self.tmp / "out2"; out.mkdir()
+        self.assertEqual(extend_downloads.main(["--parent", str(self.parent), "--extra", str(self.extra), "--out", str(out),
+                                                "--details", str(self.details)]), 0)
+        (release,) = [p for p in out.iterdir() if p.is_dir() and not p.name.startswith(".")]
+        self.assertEqual(validate_release.validate(release, HOLD), [])
+        rows = {r["source_id"]: r for r in json.loads((release / "downloads.json").read_text())["rows"]}
+        parent = {r["source_id"]: r for r in json.loads((self.parent / "downloads.json").read_text())["rows"]}
+        if any(x["kind"] == "vps" for x in parent[SID_A]["sources"]):
+            self.assertEqual([x["kind"] for x in rows[SID_A]["sources"]], ["vps"] * len(rows[SID_A]["sources"]))
+            self.assertEqual(rows[SID_A]["upstream_status"], "OFFLINE")
+        else:
+            self.assertNotIn(SID_A, rows)
+
 
 if __name__ == "__main__":
     unittest.main()
