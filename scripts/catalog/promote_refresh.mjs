@@ -4,9 +4,13 @@
 //   node promote.mjs approve <release_id> "<basis>"   promote a `ready` or `held` candidate after the owner approved it
 //   node promote.mjs rollback "<reason>"         switch back to accepted.catalog_previous (registry, Status kind rollback)
 //   node promote.mjs status                      print the host state and the channel record
+//   node promote.mjs check-links <id>... | <release_id>   read-only: do these platform ids (or the release's added
+//                                                books, as a switch checks them) download as a PDF (first bytes only)
 // The host job (catalog_refresh_host.py) builds and checks candidates; only this driver switches
 // data/catalog/CURRENT, so production, the release registry and Status change together. It never touches
-// the image or the container. A switch the site does not confirm within 3 minutes is written back.
+// the image or the container. Before a switch, up to 5 of the added books' download links must each return a
+// PDF (otherwise nothing is switched; a scheduled run notes it in PROJECT_STATE.md and retries the next day).
+// A switch the site does not confirm within 3 minutes is written back.
 // Registered as release-authority projects[sun-bdfz-net].catalog_refresh_channel; this file's sha256 must
 // match channel.mac.driver_sha256 before any production write.
 import fs from 'node:fs'; import path from 'node:path'; import crypto from 'node:crypto'; import { execFileSync } from 'node:child_process';
@@ -24,6 +28,7 @@ const PROJECT_STATE = '/Users/ylsuen/CF/platforms/cross-subject-knowledge/PROJEC
 const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
 const now = () => new Date().toISOString();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const UPSTREAM = 'https://jks-ai.bdfz.net/pdf/', LINK_CHECKS = 5, RELEASE_ID = /^\d{8}T\d{6}Z-[0-9a-f]{8}$/, SOURCE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const readJson = (p, d) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return d; } };
 const say = (o) => console.log(JSON.stringify({ at: now(), ...o }));
 
@@ -54,6 +59,39 @@ async function withRegistry(change, fn) {
   } finally { fs.closeSync(fd); fs.unlinkSync(REG + '.lock'); }
 }
 
+// One download link: 200, a PDF content type and the %PDF- signature in the first bytes; the body is cancelled
+// after those bytes. One retry after 15 s for a network error or a 5xx; a 4xx is final.
+async function checkLink(id) {
+  for (let attempt = 1; ; attempt++) {
+    const res = { id, attempt };
+    try {
+      const r = await fetch(UPSTREAM + id, { redirect: 'follow', cache: 'no-store', signal: AbortSignal.timeout(60000) });
+      res.status = r.status; res.type = r.headers.get('content-type');
+      let head = Buffer.alloc(0);
+      if (r.body) {
+        const reader = r.body.getReader();
+        while (head.length < 5) { const { done, value } = await reader.read(); if (done) break; head = Buffer.concat([head, Buffer.from(value)]); }
+        await reader.cancel().catch(() => {});
+      }
+      res.head = head.subarray(0, 5).toString('latin1');
+      res.ok = r.status === 200 && /application\/pdf/i.test(res.type || '') && res.head === '%PDF-';
+    } catch (e) { res.ok = false; res.error = String(e.message || e).slice(0, 200); }
+    if (res.ok || attempt >= 2 || (res.status && res.status < 500)) return res;
+    await sleep(15000);
+  }
+}
+const spread = (ids, n) => (ids.length <= n ? ids : Array.from({ length: n }, (_, i) => ids[Math.round((i * (ids.length - 1)) / (n - 1))]));
+// expected: the candidate's own count of added rows (null from check-links)
+async function checkNewLinks(releaseId, expected) {
+  if (!RELEASE_ID.test(releaseId)) throw new Error('bad release id ' + releaseId);
+  const all = JSON.parse(ssh(`python3 - ${HROOT}/data/catalog/releases/${releaseId}/RELEASE.json`,
+    'import json,sys\nprint(json.dumps(json.load(open(sys.argv[1]))["refresh"]["diff"]["added_ids"]))'));
+  if ((expected !== null && all.length !== expected) || all.some((x) => !SOURCE_ID.test(x))) throw new Error('added ids in RELEASE.json do not match the candidate');
+  const results = [];
+  for (const id of spread(all, LINK_CHECKS)) results.push(await checkLink(id));
+  return { at: now(), added: all.length, checked: results.length, failed: results.filter((x) => !x.ok).length, results };
+}
+
 async function getJson(url) {
   const r = await fetch(url + (url.includes('?') ? '&' : '?') + 'nocache=' + Date.now(), { cache: 'no-store', signal: AbortSignal.timeout(30000) });
   if (!r.ok) throw new Error(url + ' ' + r.status);
@@ -78,6 +116,16 @@ function noteHeld(rec, local) {
   local.noted_held.push(rec.release_id);
 }
 
+function noteLinks(rec, links, local) {
+  local.noted_links = local.noted_links || [];
+  if (local.noted_links.includes(rec.release_id)) return;
+  const bad = links.results.filter((x) => !x.ok).map((x) => `\`${x.id}\`（${x.status || x.error}${x.type ? ' ' + x.type : ''}）`).join('、');
+  const line = `## 教材下載更新未發布：新增書的下載鏈接檢查未通過 — ${now()}\n\n候選目錄 \`${rec.release_id}\` 抽查新增 ${links.added} 冊中的 ${links.checked} 冊，${links.failed} 冊的下載鏈接沒有拿到 PDF：${bad}。` +
+    `現行目錄沒有切換；每日排程會再查，通過才發布。證據：\`${EVIDENCE_ROOT}/${rec.release_id}/link-check.json\`。\n\n`;
+  fs.writeFileSync(PROJECT_STATE, line + fs.readFileSync(PROJECT_STATE, 'utf8'));
+  local.noted_links.push(rec.release_id);
+}
+
 function statusNote(rec, runDir, acc) {
   const byText = (m) => Object.entries(m || {}).sort().map(([k, n]) => k.split('/').map((x) => HANT[x] || x).join('·') + ' ' + n).join('、');
   const removedOffline = rec.withdrawn - (rec.superseded_withdrawn || 0);
@@ -100,8 +148,17 @@ async function promote(rec, basis, local) {
   const image = ssh(`docker inspect ${'textbook-knowledge'} --format '{{.Image}}'`).trim();
   if (image !== acc0.image_id) throw new Error('running image is not the accepted one');
   const health = await getJson(SITE + '/api/health'); if (health.status !== 'ok') throw new Error('site health ' + health.status);
+  if (!RELEASE_ID.test(rec.release_id || '')) throw new Error('bad release id ' + rec.release_id);
   const runDir = path.join(EVIDENCE_ROOT, rec.release_id); fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(runDir + '/candidate.json', JSON.stringify(rec, null, 2) + '\n');
+  // the links the new list adds must download before it goes live (nothing is switched otherwise)
+  const links = rec.added ? await checkNewLinks(rec.release_id, rec.added) : { at: now(), added: 0, checked: 0, failed: 0, results: [] };
+  fs.writeFileSync(runDir + '/link-check.json', JSON.stringify(links, null, 2) + '\n');
+  if (links.failed) {
+    const why = `${links.failed} of ${links.checked} checked new download links did not return a PDF`;
+    if (!basis) { noteLinks(rec, links, local); say({ held: rec.release_id, reasons: [why], evidence: runDir + '/link-check.json' }); return; }
+    throw new Error(why + '; nothing switched (' + runDir + '/link-check.json)');
+  }
   // switch (host verifies the candidate's checksums and that CURRENT is still the parent)
   const SWITCH = `import json,hashlib,os,sys
 root='${HROOT}/data/catalog'; cand,parent=sys.argv[1],sys.argv[2]
@@ -125,10 +182,8 @@ print('switched')`;
   }
   const effectiveAt = now();
   const facets = await getJson(SITE + '/api/library/downloads/facets?region=CN');
-  const sample = (rec.added_ids_sample || [])[0];
-  let link = null;
-  if (sample) { const r = await fetch('https://jks-ai.bdfz.net/pdf/' + sample, { signal: AbortSignal.timeout(60000) }); link = { id: sample, status: r.status, type: r.headers.get('content-type') }; try { await r.body?.cancel(); } catch { /* */ } }
-  fs.writeFileSync(runDir + '/production.json', JSON.stringify({ at: effectiveAt, release: seen, facets: { total: facets.total, subjects: facets.subjects.length }, sample_link: link, basis }, null, 2) + '\n');
+  fs.writeFileSync(runDir + '/production.json', JSON.stringify({ at: effectiveAt, release: seen, facets: { total: facets.total, subjects: facets.subjects.length },
+    link_check: { added: links.added, checked: links.checked, failed: links.failed }, sample_link: links.results[0] || null, basis }, null, 2) + '\n');
   // live identity readback (the Status adapter compares it with the registry)
   ssh(`cat > ${HSTATE}/vps-sun-readback.py`, fs.readFileSync(READBACK, 'utf8'));
   const readback = ssh(`python3 ${HSTATE}/vps-sun-readback.py`); const rb = JSON.parse(readback);
@@ -218,7 +273,13 @@ async function main() {
   if (mode === 'status') {
     console.log(ssh(`python3 ${HSTATE}/tool/catalog_refresh_host.py status`)); console.log(JSON.stringify(project().catalog_refresh_channel, null, 1)); return;
   }
-  if (!['run', 'approve', 'rollback'].includes(mode)) throw new Error('usage: run | approve <release_id> "<basis>" | rollback "<reason>" | status');
+  if (mode === 'check-links') {
+    const ids = process.argv.slice(3);
+    if (ids.length === 1 && RELEASE_ID.test(ids[0])) { console.log(JSON.stringify(await checkNewLinks(ids[0], null), null, 1)); return; }
+    if (!ids.length || ids.some((x) => !SOURCE_ID.test(x))) throw new Error('check-links <platform id>... | <release_id>');
+    for (const id of ids) console.log(JSON.stringify(await checkLink(id))); return;
+  }
+  if (!['run', 'approve', 'rollback'].includes(mode)) throw new Error('usage: run | approve <release_id> "<basis>" | rollback "<reason>" | status | check-links <id>...');
   if (mode === 'rollback') {
     if (!arg || arg.length < 10) throw new Error('rollback reason required');
     channelCheck('approve'); await rollback(arg, local); return;
@@ -251,5 +312,5 @@ try {
 } catch (e) {
   say({ error: String(e.message || e).slice(0, 400) }); process.exitCode = 1;
 } finally {
-  fs.writeFileSync(LOCAL_STATE, JSON.stringify(local, null, 1) + '\n');
+  if (['run', 'approve', 'rollback'].includes(mode)) fs.writeFileSync(LOCAL_STATE, JSON.stringify(local, null, 1) + '\n');
 }
