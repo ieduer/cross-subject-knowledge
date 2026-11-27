@@ -339,8 +339,7 @@
             loadGrid(false);
         }, 300));
         d.stageSelect.addEventListener('change', () => {
-            pdf.stage = d.stageSelect.value;
-            pdf.subject = '';
+            pdf.stage = d.stageSelect.value;   // r52: the chosen subject tab stays when the new 学段 has it (loadGrid checks)
             syncPdfUrl(false);
             loadGrid(false);
         });
@@ -362,6 +361,11 @@
                 offset: pdf.items.length, limit: GRID_PAGE_SIZE,
             }, ctl.signal);
             if (ctl.signal.aborted) return;
+            if (!append && pdf.subject && !(data.subjects || []).some(s => s.name === pdf.subject)) {
+                pdf.subject = '';
+                syncPdfUrl(false);
+                return loadGrid(false);
+            }
             pdf.total = data.total;
             renderChips(data.subjects || []);
             for (const item of data.editions) {
@@ -1256,8 +1260,10 @@
             ]),
             d.notices, d.status, d.list, d.pager);
         viewDownloads.querySelector('form').addEventListener('submit', event => event.preventDefault());
-        d.stage.addEventListener('change', () => { dl.stage = d.stage.value; dl.subject = ''; dl.publisher = ''; dl.page = 1; dl.row = ''; refreshDownloads(true); });
-        d.subject.addEventListener('change', () => { dl.subject = d.subject.value; dl.publisher = ''; dl.page = 1; dl.row = ''; refreshDownloads(true); });
+        // r52: a chosen 学科 / 出版社 stays chosen when the other filters change, as long as the new selection still has it
+        // (refreshDownloads drops it only when it is not offered any more).
+        d.stage.addEventListener('change', () => { dl.stage = d.stage.value; dl.page = 1; dl.row = ''; refreshDownloads(true); });
+        d.subject.addEventListener('change', () => { dl.subject = d.subject.value; dl.page = 1; dl.row = ''; refreshDownloads(true); });
         d.publisher.addEventListener('change', () => { dl.publisher = d.publisher.value; dl.page = 1; dl.row = ''; refreshDownloads(false); });
         d.q.addEventListener('input', debounce(() => { dl.q = d.q.value.trim(); dl.page = 1; dl.row = ''; refreshDownloads(false); }, 300));
         d.prev.addEventListener('click', () => { if (dl.page > 1) { dl.page--; refreshDownloads(false, true); } });
@@ -1291,17 +1297,27 @@
             if (dl.facetCtl) dl.facetCtl.abort();
             const ctl = dl.facetCtl = new AbortController();
             try {
-                let facets = await api('/api/library/downloads/facets', { stage: dl.stage || '', subject: dl.subject, region: REGION }, ctl.signal);
+                const facetsFor = (stage, subject) => api('/api/library/downloads/facets', { stage: stage || '', subject, region: REGION }, ctl.signal);
+                let facets = await facetsFor(dl.stage, dl.subject);
                 if (dl.stage === null) {
-                    // First visit without ?stage=: start on the 学段 chosen on the search page, when the catalog has it.
-                    dl.stage = facets.stages.some(s => s.name === pageStage()) ? pageStage() : '';
-                    if (dl.stage) facets = await api('/api/library/downloads/facets', { stage: dl.stage, subject: dl.subject, region: REGION }, ctl.signal);
+                    // First visit without ?stage=: start on the 学段 chosen on the search page, when the catalog has it
+                    // (and, for a link that names a 学科, when that 学段 offers it; otherwise all 学段).
+                    const wanted = facets.stages.some(s => s.name === pageStage()) ? pageStage() : '';
+                    const staged = wanted ? await facetsFor(wanted, dl.subject) : facets;
+                    const keeps = !dl.subject || staged.subjects.some(s => s.name === dl.subject);
+                    dl.stage = keeps ? wanted : '';
+                    if (keeps) facets = staged;
+                }
+                // The publisher list depends on the 学科: re-read it when the 学科 is not offered in this 学段.
+                if (dl.subject && !facets.subjects.some(s => s.name === dl.subject)) {
+                    dl.subject = '';
+                    facets = await facetsFor(dl.stage, '');
                 }
                 if (ctl.signal.aborted) return;
                 dl.stage = fillSelect(d.stage, '全部学段', facets.stages, dl.stage);
                 dl.subject = fillSelect(d.subject, '全部学科', facets.subjects, dl.subject);
                 dl.publisher = fillSelect(d.publisher, '全部出版社', facets.publishers, dl.publisher);
-                d.heroSub.textContent = `共收录 ${facets.total} 册教材 PDF · 选好学段、学科后直接下载`;
+                d.heroSub.textContent = `共收录 ${facets.total} 册教材 PDF · 每册只列官方平台现行的一份，下载时直接取平台当前文件`;
             } catch (error) {
                 if (error.kind === 'aborted') return;
                 if (dl.stage === null) dl.stage = '';

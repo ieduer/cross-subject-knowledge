@@ -924,10 +924,12 @@ def load_release(catalog_root: Path, settings: Settings, release_id: Optional[st
         held = editions.get(row.record["edition_id"]) if row.record["edition_id"] else None
         if held is not None and held.record["newer_edition_id"]:
             row.record["newer_edition"] = _edition_brief(editions, downloads, held.record["newer_edition_id"])
-    # stable sort; the title key puts a file held on this site next to the platform's
-    # entry for the same book (platform entry first)
-    downloads.sort(key=lambda row: (STAGE_ORDER.get(row.stage or "", 9), row.subject or "", row.record["title"],
-                                    row.record["platform_current"] is False))
+    # stable sort; subjects in curriculum order (r52: code-point order put 体育与健康 first);
+    # the title key puts a file held on this site next to the platform's entry for the same
+    # book (platform entry first)
+    downloads.sort(key=lambda row: (STAGE_ORDER.get(row.stage or "", 9),
+                                    SUBJECT_ORDER.get(row.subject or "", len(SUBJECT_ORDER)), row.subject or "",
+                                    row.record["title"], row.record["platform_current"] is False))
 
     # Old links and search links name a reader book.  Which edition owns a reader book is
     # read from catalog.reader_books when the release has it (never from legacy.offset, and

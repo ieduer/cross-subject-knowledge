@@ -13,6 +13,15 @@ maps, covers and reassembly records are carried over byte for byte (only `releas
   * a 思想政治-group row whose title is a 道德与法治 book is listed under 道德与法治;
   * the service group 生物 is listed under the curriculum name 生物学 (as in the search corpus).
 
+r52 (with --details, the SmartEdu details JSON of each row, read-only and cached):
+  * a row listed under the platform's own name (智慧中小学) or none gets the publisher the record names
+    (provider_list), the listed value kept as `publisher_listed`; size, update time and the subject
+    tag are filled in from the same record;
+  * among the added rows, a record the platform marks OFFLINE is left out (nothing to download), and
+    of the records for one book — same 学段, 学科, publisher and title — only
+    the platform's current record is listed (same title once the revision marker is removed): a title
+    revised to a newer curriculum standard first, then the later online / update time. The left-out ids are named in RELEASE.json.
+
 `subject_group` always keeps the service's group name. Rows of special-education editions
 (盲校 / 聋校 / 培智) in the added groups are left out and counted in `not_enumerated`, as the
 first build did for those rows outside its groups.
@@ -26,6 +35,7 @@ from __future__ import annotations
 import argparse
 import re
 import shutil
+import unicodedata
 import sys
 from collections import Counter
 from pathlib import Path
@@ -38,6 +48,52 @@ SUBJECT_PRIORITY = ["信息技术", "信息科技", "通用技术", "体育与�
                     "德语", "西班牙语", "劳动", "艺术", "科学"]
 SPECIAL_RE = re.compile(r"盲校|聋校|培智")
 SUBJECT_RENAME = {"生物": "生物学"}
+PLATFORM_PUBLISHERS = {"智慧中小学", ""}
+REVISION_RE = re.compile(r"根据(\d{4})年版课程标准修订")
+NOTATION_RE = re.compile(r"五线谱|简谱")
+
+
+def details_facts(details_dir: Path | None, sid: str) -> dict | None:
+    if details_dir is None:
+        return None
+    f = details_dir / f"{sid}.json"
+    if not f.exists():
+        return None
+    body = read_json(f).get("body") or {}
+    tags = {t.get("tag_dimension_id"): t.get("tag_name") for t in body.get("tag_list") or [] if t.get("tag_dimension_id")}
+    size = next((int(t["ti_size"]) for t in body.get("ti_items") or []
+                 if (t.get("ti_format") or "").lower() == "pdf" and t.get("ti_file_flag") == "source" and t.get("ti_size")), None)
+    provider = next((x.get("name") for x in body.get("provider_list") or [] if x.get("name")), None)
+    return {"status": body.get("status"), "update_time": body.get("update_time"), "online_time": body.get("online_time"),
+            "create_time": body.get("create_time"), "size": size, "provider": provider, "tags": tags}
+
+
+def apply_facts(row: dict, facts: dict | None, *, status: bool) -> None:
+    if not facts:
+        return
+    if (row.get("publisher") or "") in PLATFORM_PUBLISHERS and facts["provider"] and facts["provider"] not in PLATFORM_PUBLISHERS:
+        row["publisher_listed"] = row.get("publisher")
+        row["publisher"] = facts["provider"]
+    if row.get("size_bytes") is None and facts["size"]:
+        row["size_bytes"] = facts["size"]
+    row["subject_tag"] = row.get("subject_tag") or facts["tags"].get("zxxxk")
+    if status:
+        row["update_time"] = facts["update_time"]
+        row["upstream_status"] = facts["status"]
+
+
+def work_key(row: dict, facts: dict | None) -> tuple:
+    """One book = same 学段, 学科, publisher and title once the curriculum-revision marker and punctuation are
+    removed. The platform's tags are not used: they do not tell 舞蹈 / 影视 / 戏剧 or 五•四学制 editions apart."""
+    title = REVISION_RE.sub("", unicodedata.normalize("NFKC", row.get("title") or ""))
+    title = re.sub(r"[\s·•・()（）_]", "", title)
+    return (row["stage"], row["subject"], title, row.get("publisher") or "")
+
+
+def recency(row: dict, facts: dict | None) -> tuple:
+    revision = max((int(y) for y in REVISION_RE.findall(row.get("title") or "")), default=0)
+    f = facts or {}
+    return (revision, f.get("online_time") or "", f.get("update_time") or "", f.get("create_time") or "", row["source_id"])
 PARENT_GROUP_SUBJECTS = {"语文", "数学", "英语", "物理", "化学", "生物", "历史", "地理", "思想政治"}
 
 
@@ -58,6 +114,7 @@ def pick_subject(title: str, groups: list[str]) -> str:
 
 def build(args) -> int:
     parent_dir, extra_dir, out_root = Path(args.parent), Path(args.extra), Path(args.out)
+    details_dir = Path(args.details) if getattr(args, "details", "") else None
     parent_release = read_json(parent_dir / "RELEASE.json")
     parent_downloads = read_json(parent_dir / "downloads.json")
     parent_id = parent_release["release_id"]
@@ -91,15 +148,19 @@ def build(args) -> int:
             entry["groups"].append(subject)
 
     rows = []
+    publisher_fixed = 0
     for row in parent_downloads["rows"]:
         row = dict(row)
         row["subject"] = clean_subject(row)
+        apply_facts(row, details_facts(details_dir, row["source_id"]), status=False)
+        publisher_fixed += "publisher_listed" in row
         rows.append(row)
+    added = []
     for sid, entry in found.items():
         r = entry["r"]
         title = r.get("title") or ""
         subject = pick_subject(title, entry["groups"])
-        rows.append({
+        added.append({
             "source_id": sid, "stage": entry["stage"], "subject": subject,
             "subject_group": subject if subject in entry["groups"] else sorted(set(entry["groups"]), key=SUBJECT_PRIORITY.index)[0],
             "subject_tag": None, "title": title or None,
@@ -109,6 +170,24 @@ def build(args) -> int:
                          "edition_id": None, "platform_current": True}],
             "upstream_status": None, "edition_id": None, "held_other_edition_ids": [],
         })
+    # r52: details facts, OFFLINE records, one current record per book
+    offline, groups_by_work, facts_of = [], {}, {}
+    for row in added:
+        facts = facts_of[row["source_id"]] = details_facts(details_dir, row["source_id"])
+        apply_facts(row, facts, status=True)
+        publisher_fixed += "publisher_listed" in row
+        if row["upstream_status"] == "OFFLINE":
+            offline.append({"source_id": row["source_id"], "title": row["title"]})
+            continue
+        groups_by_work.setdefault(work_key(row, facts), []).append(row)
+    superseded, kept_added = [], []
+    for members in groups_by_work.values():
+        members.sort(key=lambda r: recency(r, facts_of[r["source_id"]]), reverse=True)
+        rows.append(members[0])
+        kept_added.append(members[0])
+        for r in members[1:]:
+            superseded.append({"source_id": r["source_id"], "title": r["title"], "publisher": r["publisher"],
+                               "kept": members[0]["source_id"], "kept_title": members[0]["title"]})
     rows.sort(key=lambda r: (PHASE_ORDER.get(r["stage"], 9), r["subject"], r["title"] or "", r["source_id"]))
 
     all_groups = parent_downloads["groups"] + groups
@@ -121,6 +200,9 @@ def build(args) -> int:
     inputs = {"parent/SHA256SUMS": file_hashes(parent_dir / "SHA256SUMS", ("sha256",))["sha256"]}
     for f in group_files:
         inputs[f"downloads-extra/{f.name}"] = file_hashes(f, ("sha256",))["sha256"]
+    if details_dir:
+        inputs["details/*"] = sha256_text("\n".join(f"{f.name}:{file_hashes(f, ('sha256',))['sha256']}"
+                                                    for f in sorted(details_dir.glob("*-*-*-*-*.json"))))
     tool = file_hashes(Path(__file__), ("sha256",))["sha256"]
     input_hash = sha256_text(dumps({"inputs": inputs, "tool": tool}))
     stamp = max(stamps)
@@ -139,11 +221,15 @@ def build(args) -> int:
     release["derived_from"] = {"release_id": parent_id, "input_hash": parent_release["input_hash"],
                                "generated_at": parent_release["generated_at"],
                                "change": "download list extended with the subject groups the parent did not enumerate; "
-                                         "metadata only, source links only; subject names 道德与法治 / 生物学 corrected"}
+                                         "metadata only, source links only; subject names 道德与法治 / 生物学 corrected"
+                                         + ("; with the platform's details records: publishers named, OFFLINE records and "
+                                            "superseded records of the same book left out" if details_dir else "")}
     release["extension"] = {"tool": "extend_downloads.py", "tool_sha256": tool, "inputs": inputs, "input_hash": input_hash,
-                            "added_rows": len(found), "special_education_rows_left_out": len(special),
-                            "added_by_stage_subject": dict(Counter(f"{e['stage']}/{pick_subject(e['r'].get('title') or '', e['groups'])}"
-                                                                   for e in found.values()))}
+                            "added_rows": len(found) - len(offline) - len(superseded), "special_education_rows_left_out": len(special),
+                            "details_dir_files": len(list(details_dir.glob("*-*-*-*-*.json"))) if details_dir else 0,
+                            "publisher_corrected_rows": publisher_fixed,
+                            "offline_left_out": offline, "superseded_left_out": sorted(superseded, key=lambda x: x["source_id"]),
+                            "added_by_stage_subject": dict(Counter(f"{r['stage']}/{r['subject']}" for r in kept_added))}
     release["counts"] = counts(catalog["editions"], page_maps, downloads,
                                {"newer_platform": release.get("newer_platform"),
                                 "indeterminate_platform": release.get("indeterminate_platform")})
@@ -170,7 +256,8 @@ def build(args) -> int:
     for name, data in files.items():
         write_atomic(tmp / name, data)
     tmp.rename(target)
-    print(f"built {release_id} files={len(files)} rows={len(rows)} added={len(found)} special_left_out={len(special)}")
+    print(f"built {release_id} files={len(files)} rows={len(rows)} added={len(found) - len(offline) - len(superseded)} "
+          f"special_left_out={len(special)} offline={len(offline)} superseded={len(superseded)} publisher_fixed={publisher_fixed}")
     print(target)
     return 0
 
@@ -180,6 +267,7 @@ def main(argv=None) -> int:
     p.add_argument("--parent", required=True)
     p.add_argument("--extra", required=True)
     p.add_argument("--out", required=True)
+    p.add_argument("--details", default="", help="directory of cached SmartEdu details JSON (fetch_metadata.py details)")
     return build(p.parse_args(argv))
 
 

@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-27T03:10:31.224831+00:00",
-  "git_head": "15030f4780cd4333c1ebbd485a2dc8f5eda1b514",
-  "frontend_version": "2026.11.26-r51",
+  "generated_at": "2026-11-27T04:33:33.707553+00:00",
+  "git_head": "9f90ff7baafa5cf73b982895fc3f6473be2332f6",
+  "frontend_version": "2026.11.27-r52",
   "source_of_truth": {
     "local_workspace": "authoritative",
     "github": "authoritative_for_code_only_after_push",
@@ -43,8 +43,8 @@
     {
       "kind": "source",
       "logical_path": "backend/library.py",
-      "size": 94639,
-      "sha256": "e3fcb0caa06ac6b36b1c6bbdff9b5d9842e82987e983dd2589d498fe964e4796"
+      "size": 94819,
+      "sha256": "85be59d40b198002ce11734c9eb1881207f8bb939e15c2a71e93e57a974ee343"
     },
     {
       "kind": "source",
@@ -116,7 +116,7 @@
       "kind": "source",
       "logical_path": "frontend/index.html",
       "size": 16945,
-      "sha256": "09ca00f3214bb7f55eec42f04137d4312fd6c25c145e41a4073223131600e2d1"
+      "sha256": "4975c9aadac41a25ab9f42fc7b4b710dfa4d2c89d6a20013dc6ef8dd142e2fe8"
     },
     {
       "kind": "source",
@@ -134,7 +134,7 @@
       "kind": "source",
       "logical_path": "frontend/assets/app.js",
       "size": 134447,
-      "sha256": "c8efa0e574ff85ee24f4fa540c28aff545475a3cb48732f3e35d767b59951aad"
+      "sha256": "7c602d35760b7a0a6a2e1d6821fe298e61db6900faa2b674e64274bb8e111d2b"
     },
     {
       "kind": "source",
@@ -169,14 +169,14 @@
     {
       "kind": "source",
       "logical_path": "frontend/assets/library.js",
-      "size": 102846,
-      "sha256": "4e97ea7e9359ed0faf00ee991bd27222e2b7b5f02a616861d49e7ae929f5a87d"
+      "size": 103959,
+      "sha256": "048ef46ae6137931a7f044ff534437156ef514b88207083a3f95b1731a028125"
     },
     {
       "kind": "source",
       "logical_path": "frontend/assets/version.json",
-      "size": 18200,
-      "sha256": "dcad37d20282eb878d32c9740598a22356466e3c65f316e09e62b49f6d33b348"
+      "size": 19195,
+      "sha256": "5b6f06a572b16de6ec8fb371ce1bccfa5f4cc2896c6845107135be68c5dd534b"
     },
     {
       "kind": "source",
@@ -1482,8 +1482,8 @@
     }
   ],
   "runtime_assets_carried_from": {
-    "generated_at": "2026-11-14T04:22:22.577354+00:00",
-    "git_head": "f4ae268ceca15d9a3098a0cb869add34c2eaaff4",
+    "generated_at": "2026-11-27T03:10:31.224831+00:00",
+    "git_head": "15030f4780cd4333c1ebbd485a2dc8f5eda1b514",
     "note": "runtime half not re-measured in this build; deploy_vps.sh verifies it on the VPS",
     "corrections": [
       {
@@ -1522,7 +1522,8 @@
         }
       ]
     },
-    "r51_note": "r51 changes code and the frontend only (and a catalog release under data/catalog, which this manifest does not cover); runtime assets carried from the r50 manifest unchanged, corrections and r50 notes kept"
+    "r51_note": "r51 changes code and the frontend only (and a catalog release under data/catalog, which this manifest does not cover); runtime assets carried from the r50 manifest unchanged, corrections and r50 notes kept",
+    "r52_note": "r52 changes code and the frontend only (and a catalog release under data/catalog, which this manifest does not cover); runtime assets carried unchanged"
   },
   "page_mapping": {
     "book_count": 144,

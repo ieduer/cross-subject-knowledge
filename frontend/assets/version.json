@@ -1,7 +1,12 @@
 {
-  "frontend_refactor_version": "2026.11.26-r51",
-  "updated_at": "2026-11-26",
+  "frontend_refactor_version": "2026.11.27-r52",
+  "updated_at": "2026-11-27",
   "history": [
+    {
+      "date": "2026-11-27",
+      "version": "2026.11.27-r52",
+      "summary": "教材下载 filters: a chosen 学科 / 出版社 stays chosen when 学段 or 学科 changes as long as the new selection still offers it (it was cleared every time), a link naming a 学科 falls back to all 学段 instead of silently dropping the 学科, and the PDF 预览 subject tab survives a 学段 change the same way; download lists follow the curriculum order instead of code-point order (lists began with 体育与健康); catalog release built with the platform's details records: rows listed under the platform's own name 智慧中小学 name their actual publisher, and for the added subjects only the platform's current record of each book is listed (a title revised to the newer curriculum standard first, then the later online time; OFFLINE records left out), each download still fetching the platform's current file at click time; asset cache key 20261127a for app.js and library.js"
+    },
     {
       "date": "2026-11-26",
       "version": "2026.11.26-r51",
