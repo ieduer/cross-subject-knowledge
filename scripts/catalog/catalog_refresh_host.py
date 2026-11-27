@@ -8,8 +8,8 @@
    platform's module_version equals the one the live release was built from, it records a heartbeat
    and stops: one small request.
 2. Otherwise it downloads the parts named there, checks the platform's details record of every record in
-   scope (cached in <state>/checked, refreshed after 30 days, a missing file after 3 days; one request per
-   second, at most 3,500 per run) so that only books with a downloadable PDF are listed, builds a
+   scope (cached in <state>/checked, refreshed after 30 days, a missing file after 3 days; 3 workers, one
+   per platform data host, each pausing 1 s between requests; at most 3,500 per run) so that only books with a downloadable PDF are listed, builds a
    candidate with refresh_downloads.py,
    validates it (validate_release.py), installs it under `data/catalog/releases/<id>` (inert: CURRENT
    is never written here) and has the running container's own library code load it (read-only).
@@ -50,7 +50,7 @@ KEEP_BUILT = 4
 RUN_DAYS = 30
 UA = {"User-Agent": "Mozilla/5.0 (sun.bdfz.net catalog refresh)", "Accept": "application/json"}
 DETAILS_PATH = "/zxx/ndrv2/resources/tch_material/details/{id}.json"
-CHECK_TTL_OK, CHECK_TTL_MISSING, MAX_CHECKS, CHECK_PAUSE = 30 * 86400, 3 * 86400, 3500, 1.0
+CHECK_TTL_OK, CHECK_TTL_MISSING, MAX_CHECKS, CHECK_PAUSE, CHECK_WORKERS = 30 * 86400, 3 * 86400, 3500, 1.0, 3
 
 
 def now() -> str:
@@ -108,23 +108,26 @@ def check_files(items: list[dict]) -> dict:
     checked.mkdir(parents=True, exist_ok=True)
     ids = [x["id"] for x in items if rd.in_scope(x)[0]]
     stats = {"in_scope": len(ids), "fetched": 0, "cached": 0, "errors": 0, "capped": 0}
+    todo = []
     for sid in ids:
-        f = checked / f"{sid}.json"
-        old = read_json(f, None)
+        old = read_json(checked / f"{sid}.json", None)
         if old:
             age = time.time() - datetime.strptime(old["checked_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
             if age < (CHECK_TTL_OK if old.get("http_status") == 200 and old.get("pdf") else CHECK_TTL_MISSING):
                 stats["cached"] += 1
                 continue
-        if stats["fetched"] + stats["errors"] >= MAX_CHECKS:
-            stats["capped"] += 1
-            continue
+        todo.append(sid)
+    stats["capped"] = max(0, len(todo) - MAX_CHECKS)
+    todo = todo[:MAX_CHECKS]
+
+    def check(job):
+        n, sid = job
+        hosts = S_FILE_HOSTS[n % len(S_FILE_HOSTS):] + S_FILE_HOSTS[:n % len(S_FILE_HOSTS)]   # each worker prefers its own host
         result = None
-        for host in S_FILE_HOSTS:
+        for host in hosts:
             try:
                 body = json.loads(get(host + DETAILS_PATH.format(id=sid), 40))
-                items_ = body.get("ti_items") or []
-                pdf = [t for t in items_ if (t.get("ti_format") or "").lower() == "pdf"]
+                pdf = [t for t in body.get("ti_items") or [] if (t.get("ti_format") or "").lower() == "pdf"]
                 size = next((int(t["ti_size"]) for t in pdf if t.get("ti_file_flag") == "source" and t.get("ti_size")), None)
                 result = {"http_status": 200, "pdf": bool(pdf), "size": size, "status": body.get("status")}
                 break
@@ -135,11 +138,16 @@ def check_files(items: list[dict]) -> dict:
             except Exception:  # noqa: BLE001
                 continue
         time.sleep(CHECK_PAUSE)
-        if result is None:
-            stats["errors"] += 1
-            continue
-        write_json(f, {**result, "checked_at": now()})
-        stats["fetched"] += 1
+        return sid, result
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=CHECK_WORKERS) as pool:
+        for sid, result in pool.map(check, enumerate(todo)):
+            if result is None:
+                stats["errors"] += 1
+                continue
+            write_json(checked / f"{sid}.json", {**result, "checked_at": now()})
+            stats["fetched"] += 1
     return stats
 
 
